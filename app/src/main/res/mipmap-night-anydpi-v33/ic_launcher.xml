@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Night-mode themed launcher (Android 13+).
+     Background = Obsidian; foreground = white K; monochrome = white silhouette
+     so the system-themed icon remains crisp on dark wallpapers. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/kryzz_icon_background" />
+    <foreground android:drawable="@drawable/kryzz_launcher_foreground" />
+    <monochrome android:drawable="@drawable/kryzz_launcher_foreground" />
+</adaptive-icon>

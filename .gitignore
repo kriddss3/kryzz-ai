@@ -1,0 +1,36 @@
+# Gradle / Android build outputs
+.gradle/
+.kotlin/
+build/
+captures/
+.cxx/
+
+# Local SDK config (contains per-machine Android SDK paths)
+local.properties
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Android Studio
+.navigation/
+.externalNativeBuild/
+*.apk.ids
+output.json
+
+# Logs / crash dumps
+*.log
+*.hprof
+
+# Signing material (NEVER commit keystores or credentials)
+*.jks
+*.keystore
+keystore.properties
+
+# Python (only here in case)
+__pycache__/
+*.pyc

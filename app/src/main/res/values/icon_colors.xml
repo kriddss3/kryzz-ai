@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light-mode launcher background: paper tone so the BLACK monogram reads well. -->
+    <color name="kryzz_icon_background">#F4F4F1</color>
+</resources>

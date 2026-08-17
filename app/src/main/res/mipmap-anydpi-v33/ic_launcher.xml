@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light-mode themed launcher (Android 13+).
+     Background = paper tone; foreground = black K-monogram; monochrome = black silhouette
+     so the system-themed icon on Android 13+ also renders correctly in day mode. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/kryzz_icon_background" />
+    <foreground android:drawable="@drawable/kryzz_launcher_foreground_dark" />
+    <monochrome android:drawable="@drawable/kryzz_launcher_foreground_dark" />
+</adaptive-icon>
