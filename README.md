@@ -10,6 +10,22 @@ Build it yourself, read the code, fork it.
 
 ---
 
+## Screenshots
+
+| New chat | Agent workflows |
+| :------: | :-------------: |
+| ![New chat home with Chat/Agent tabs and message composer](work-assets/screenshots/01-chat-home.jpg) | ![Agent workflow picker — Think & Research, Create & Build](work-assets/screenshots/02-agent-workflows.jpg) |
+
+| Voice session | Side drawer |
+| :------------: | :---------: |
+| ![Voice session overlay in Listening state](work-assets/screenshots/03-voice-session.jpg) | ![Side drawer with Chat / Agent / Voice / Cron navigation and recent chats](work-assets/screenshots/04-side-drawer.jpg) |
+
+| Settings | About |
+| :------: | :---: |
+| ![Settings home with sectioned list](work-assets/screenshots/05-settings.jpg) | ![Galactic About overlay — triple-tap logo, credits, version](work-assets/screenshots/06-galactic-about.jpg) |
+
+---
+
 ## What you can do
 
 - **Chat.** Streamed conversations with a model you pick, attachments, reasoning controls, editing, regeneration, cancellation, citations, token usage, and cost details.
@@ -20,6 +36,27 @@ Build it yourself, read the code, fork it.
 - **Generated outputs.** DOCX, XLSX, SQLite, code ZIPs, images, video, and audio, kept in private app storage until you share them.
 
 Multimodal attachments and generated media require a model that supports them. Search and voice features need the relevant provider configured.
+
+---
+
+## Download (debug APK)
+
+A pre-built debug APK for the source in this repository lives at:
+
+```
+work-assets/releases/kryzz-ai-5.1.15-debug.apk
+```
+
+About 74 MB, debug-signed with the Android Studio default key, package `ai.daylight.assistant.debug`.
+
+**To install on Android 9+:**
+
+1. Transfer the APK to the device (USB, cloud, AirDrop-via-web, whatever).
+2. On the device: **Settings → Apps → Special access → Install unknown apps** → allow your file manager.
+3. Tap the APK and confirm.
+4. Launch Kryzz AI from the launcher; the icon is labelled with the version pill.
+
+> This is a debug build meant for evaluation and sideloading. For long-term installs on a daily-driver device, build your own signed release APK from this source.
 
 ---
 
@@ -100,8 +137,6 @@ $env:KRYZZ_KEY_PASSWORD='<key password>'
 
 Without those variables Gradle produces an unsigned release build. The signing certificate must match any version already installed on a user's device for in-place upgrades to work.
 
-> Heads up: a debug-built APK (`v5.1.15 kryzz ai (debug).apk`) ships alongside this repository and is published as a GitHub Release asset. It is debug-signed for sideloading and evaluation. A production-signed release is a separate artifact generated against your own key, not this one.
-
 ---
 
 ## First run
@@ -128,6 +163,22 @@ Without those variables Gradle produces an unsigned release build. The signing c
 | `ui`         | Compose navigation, screens, drawer, design system, ViewModels         |
 
 **Stack:** Kotlin · Jetpack Compose (Material 3) · Coroutines / Flow · Room · DataStore · OkHttp · MVVM.
+
+---
+
+## Repository layout
+
+```
+app/                     ← Kotlin source, Android resources, tests, Room schemas
+build.gradle.kts
+settings.gradle.kts
+gradle/  gradlew*        ← Gradle wrapper
+work-assets/
+  ├── screenshots/       ← screenshots embedded in this README
+  ├── releases/          ← compiled APKs (debug-signed, eval-only)
+  ├── kryzz-mark-chroma.png
+  └── qa-4.0.1/          ← older QA assets (historical reference)
+```
 
 ---
 

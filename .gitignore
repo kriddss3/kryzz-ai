@@ -5,6 +5,11 @@ build/
 captures/
 .cxx/
 
+# APK files are committed ONLY under work-assets/releases/.
+# Any .apk elsewhere (e.g. /release/, /dist/, root) is ignored by default.
+*.apk
+!work-assets/releases/*.apk
+
 # Local SDK config (contains per-machine Android SDK paths)
 local.properties
 
