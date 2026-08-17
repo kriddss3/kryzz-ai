@@ -41,7 +41,11 @@ Multimodal attachments and generated media require a model that supports them. S
 
 ## Download (debug APK)
 
-A pre-built debug APK for the source in this repository lives at:
+A pre-built debug APK for the source in this repository is published as a **GitHub Release**:
+
+👉 **[`kryzz-AI-v1-(debug)` release page &rarr;](./releases/tag/kryzz-AI-v1-(debug))** — click to download `kryzz-ai-5.1.15-debug.apk` (~74 MB, debug-signed).
+
+A copy of the same APK is also committed in this repo at:
 
 ```
 work-assets/releases/kryzz-ai-5.1.15-debug.apk
@@ -51,10 +55,11 @@ About 74 MB, debug-signed with the Android Studio default key, package `ai.dayli
 
 **To install on Android 9+:**
 
-1. Transfer the APK to the device (USB, cloud, AirDrop-via-web, whatever).
-2. On the device: **Settings → Apps → Special access → Install unknown apps** → allow your file manager.
-3. Tap the APK and confirm.
-4. Launch Kryzz AI from the launcher; the icon is labelled with the version pill.
+1. Download the APK (release page, or grab from the repo path above).
+2. Transfer to the device (USB, cloud, AirDrop-via-web, whatever).
+3. On the device: **Settings → Apps → Special access → Install unknown apps** → allow your file manager.
+4. Tap the APK and confirm.
+5. Launch Kryzz AI from the launcher; the icon is labelled with the version pill.
 
 > This is a debug build meant for evaluation and sideloading. For long-term installs on a daily-driver device, build your own signed release APK from this source.
 
