@@ -42,8 +42,8 @@ object VoiceConfig {
     /** NVIDIA Nemotron 3.5 ASR Streaming Multilingual through OpenRouter's /audio/transcriptions endpoint. */
     const val NEMOTRON_STT_MODEL = "nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b"
 
-    /** DeepSeek V4 Flash is the fastest everyday OpenRouter chat model. */
-    const val DEFAULT_LLM_MODEL = "deepseek/deepseek-v4-flash"
+    /** Gemini 2.5 Flash Lite is the default voice-chat reply brain (lightweight, low-latency). */
+    const val DEFAULT_LLM_MODEL = "google/gemini-2.5-flash-lite"
 
     /** Fish Audio S2.1 Pro (paid tier, best quality on the current S2.1 generation). */
     const val FISH_MODEL = "s2.1-pro"
@@ -175,10 +175,12 @@ data class VoiceReplyModel(val id: String, val name: String, val detail: String)
  * lowest latency for whichever of these is selected.
  */
 object VoiceReplyModels {
+    // DeepSeek V4 Flash was removed as a voice reply option per the 5.6.3 cut. The default
+    // brain is now Gemini 2.5 Flash Lite; existing installs that had DeepSeek selected are
+    // migrated to the new default by coerceVoiceReplyModel (the id is no longer in `fast`).
     val fast = listOf(
-        VoiceReplyModel(VoiceConfig.DEFAULT_LLM_MODEL, "DeepSeek V4 Flash", "Fastest everyday replies"),
-        VoiceReplyModel("sao10k/l3-lunaris-8b", "Llama 3 8B Lunaris", "Expressive generalist tuned for natural conversation"),
-        VoiceReplyModel("google/gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", "Fast, lightweight Gemini")
+        VoiceReplyModel(VoiceConfig.DEFAULT_LLM_MODEL, "Gemini 2.5 Flash Lite", "Fast, lightweight Gemini (default)"),
+        VoiceReplyModel("sao10k/l3-lunaris-8b", "Llama 3 8B Lunaris", "Expressive generalist tuned for natural conversation")
     )
 
     fun nameFor(id: String): String? = fast.firstOrNull { it.id == id }?.name

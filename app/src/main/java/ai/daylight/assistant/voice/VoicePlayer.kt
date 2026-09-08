@@ -3,9 +3,11 @@ package ai.daylight.assistant.voice
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaPlayer
 import android.media.audiofx.Visualizer
+import android.media.ToneGenerator
 import android.os.SystemClock
 import java.io.File
 import kotlin.math.sqrt
@@ -43,6 +45,15 @@ class VoicePlayer(private val context: Context) {
         try {
             instance.apply {
                 setDataSource(file.absolutePath)
+                // Play through the normal media volume stream (the phone's main volume rocker),
+                // exactly like music/media playback. Spoken replies keep the SPEECH content type
+                // so the framework does not apply telephony-style narrowband down-sampling.
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
                 setOnCompletionListener { finish(null) }
                 setOnErrorListener { _, what, extra ->
                     finish(IllegalStateException("Audio playback failed ($what/$extra)."))
@@ -201,6 +212,26 @@ class VoicePlayer(private val context: Context) {
         runCatching { track?.stop() }
         runCatching { track?.release() }
         track = null
+    }
+
+    /**
+     * Plays a short two-note ascending cue to signal that a web search is in progress.
+     * Uses [ToneGenerator] on the music stream so it is audible but not loud, and never
+     * interferes with the voice-chat audio session. Best-effort: any failure (e.g. tone
+     * generator busy) is swallowed. The two notes (A5 → E6) give a noticeable "looking
+     * something up" feel without being a harsh beep.
+     */
+    fun playSearchTone() {
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                runCatching { tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 130) }
+            }, 110)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                runCatching { tone.release() }
+            }, 360)
+        }
     }
 
     private fun finish(error: Throwable?) {

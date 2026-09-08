@@ -14,13 +14,11 @@ android {
         applicationId = "ai.daylight.assistant"
         minSdk = 28
         targetSdk = 35
-// Kryzz AI 5.1.15 — replace all branded artwork (launcher icon, in-app mark,
-// wordmark, splash icon) with the new monochrome K monogram; light-mode variants
-// invert colours (black on paper) so the icon reads well against a light surface.
-// Preserve the v5.1.14 symmetric side-panel swipe distance and accumulated-drag
-// settlement fix.
-        versionCode = 59
-        versionName = "5.1.15"
+// Kryzz AI 5.7.2 - Interactive question cards: chat-mode kryzz-question fenced blocks render
+//      as tappable option cards with a free-text box; agent mode gains the ask_user tool
+//      whose call suspends until the user answers (or dismisses) from the floating card
+        versionCode = 80
+        versionName = "5.7.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

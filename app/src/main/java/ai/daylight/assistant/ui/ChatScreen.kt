@@ -96,6 +96,7 @@ import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Photo
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -195,6 +196,9 @@ import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.ConversationUsage
 import ai.daylight.assistant.domain.GeneratedOutput
 import ai.daylight.assistant.domain.GradientPalette
+import ai.daylight.assistant.domain.InlineQuestion
+import ai.daylight.assistant.domain.InlineQuestionProtocol
+import ai.daylight.assistant.domain.MessageSegment
 import ai.daylight.assistant.domain.MessageStatus
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.OutputKind
@@ -204,6 +208,12 @@ import ai.daylight.assistant.domain.SwarmPhase
 import ai.daylight.assistant.domain.SwarmStatus
 import ai.daylight.assistant.ui.theme.LocalGlassOpacity
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import ai.daylight.assistant.ui.agent.BotMood
+import ai.daylight.assistant.ui.agent.BotSize
+import ai.daylight.assistant.ui.agent.KryzzBot
+import ai.daylight.assistant.ui.agent.KryzzMascot
+import ai.daylight.assistant.ui.agent.MascotGif
+import ai.daylight.assistant.ui.agent.MascotState
 import ai.daylight.assistant.voice.VoicePhase
 import java.io.File
 import java.text.DateFormat
@@ -219,6 +229,38 @@ internal fun agentPrimaryColor(darkBackground: Boolean): Color =
 
 internal fun agentOnPrimaryColor(darkBackground: Boolean): Color =
     if (darkBackground) Color(0xFF050506) else Color.White
+
+internal fun agentBotMood(
+    mode: AssistantMode,
+    generating: Boolean,
+    error: String?,
+    activities: List<String>,
+    swarmStatus: SwarmStatus?,
+    streamingHasText: Boolean = false
+): BotMood {
+    if (mode != AssistantMode.AGENT) return BotMood.IDLE
+    if (error != null || swarmStatus?.phase == SwarmPhase.FAILED) return BotMood.ERROR
+    if (!generating && swarmStatus?.phase == SwarmPhase.DONE) return BotMood.SUCCESS
+    val swarmActive = swarmStatus?.phase in setOf(SwarmPhase.PLANNING, SwarmPhase.RUNNING, SwarmPhase.SYNTHESIZING)
+    if (generating && (activities.isNotEmpty() || swarmActive)) return BotMood.TOOLING
+    // Once the model is actively streaming words into the bubble it is "speaking";
+    // before any text lands (or while waiting on the first token) it is "thinking".
+    if (generating && streamingHasText) return BotMood.SPEAKING
+    return if (generating) BotMood.THINKING else BotMood.IDLE
+}
+
+/**
+ * Picks the mascot GIF state for a single agent-mode assistant bubble, based on the row's
+ * lifecycle: thinking before any text lands (or while tools run), speaking while the answer
+ * streams out, and standby once the row is finished.
+ */
+internal fun agentMessageMascotState(message: MessageEntity): MascotState = when {
+    message.role != "ASSISTANT" -> MascotState.STANDBY
+    message.status == MessageStatus.STREAMING.name && message.content.isBlank() -> MascotState.THINKING
+    message.status == MessageStatus.STREAMING.name -> MascotState.SPEAKING
+    message.status == MessageStatus.ERROR.name -> MascotState.THINKING
+    else -> MascotState.STANDBY
+}
 
 internal fun nextTypeOnLength(current: Int, target: Int): Int =
     minOf(target, current + 8)
@@ -264,6 +306,7 @@ fun ChatScreen(
     val mediaModelsError by vm.mediaModelsError.collectAsStateWithLifecycle()
     val activities by vm.activities.collectAsStateWithLifecycle()
     val swarmStatus by vm.swarmStatus.collectAsStateWithLifecycle()
+    val pendingQuestion by vm.pendingQuestion.collectAsStateWithLifecycle()
     val pager = rememberPagerState(initialPage = initialMode.ordinal, pageCount = { AssistantMode.entries.size })
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -307,10 +350,37 @@ fun requestVoice() {
         }
     }
     // The "Voice" entry in the chat menu opens a fresh conversation ready to
-    // speak: the mic session starts once, on the first composition.
+    // speak: the mic session starts once, on the first composition. This is also
+    // the path used when the side panel's "Voice" button creates a brand-new
+    // conversation and navigates here with voice=true. Starting the mic from a
+    // raw first-composition LaunchedEffect is racy there: the navigation
+    // transition is still settling, the side-panel close animation is still
+    // running, and (when the mic permission has not been granted yet) the
+    // permission launcher is asked to pop before the new back-stack entry is
+    // fully RESUMED — so the system can drop the request and the session never
+    // starts. Tapping the mic inside an existing chat never hit this because a
+    // real user tap already implies the activity is resumed. We therefore wait
+    // until this screen's lifecycle is at least RESUMED before kicking off the
+    // voice session, and re-evaluate whenever the lifecycle or the consumed
+    // flag flips so a brief pause/transition does not swallow the start.
     var initialVoiceConsumed by rememberSaveable(vm.conversationId) { mutableStateOf(false) }
-    LaunchedEffect(vm.conversationId, initialVoice, initialVoiceConsumed) {
-        if (initialVoice && !initialVoiceConsumed) {
+    val voiceStartLifecycleOwner = LocalLifecycleOwner.current
+    var voiceStartResumed by remember(voiceStartLifecycleOwner) {
+        mutableStateOf(voiceStartLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(voiceStartLifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> voiceStartResumed = true
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> voiceStartResumed = false
+                else -> {}
+            }
+        }
+        voiceStartLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { voiceStartLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(vm.conversationId, initialVoice, initialVoiceConsumed, voiceStartResumed) {
+        if (initialVoice && !initialVoiceConsumed && voiceStartResumed) {
             initialVoiceConsumed = true
             requestVoice()
         }
@@ -461,7 +531,8 @@ onRemoveAttachment = vm::removeAttachment,
                             synthesizingMessageId = synthesizingMessageId,
                             onShowUsage = { usageMessage = it },
                             skillCreatedFor = skillCreatedFor,
-                            onCreateSkill = vm::createSkillFromConversation
+                            onCreateSkill = vm::createSkillFromConversation,
+                            onQuestionAnswer = vm::sendQuestionAnswer
                         )
                     }
                 }
@@ -513,11 +584,30 @@ onRemoveAttachment = vm::removeAttachment,
                         phase = voicePhase,
                         level = voiceLevel,
                         transcript = voiceTranscript,
+                        searching = vm.voiceSearching.collectAsStateWithLifecycle().value,
                         muted = vm.voiceMicMuted.collectAsStateWithLifecycle().value,
                         onTap = vm::tapVoiceBubble,
                         onMuteToggle = { vm.setVoiceMuted(!vm.voiceMicMuted.value) },
                         onClose = vm::cancelVoice
                     )
+                }
+                // The agent's ask_user tool suspends until this card is answered or
+                // dismissed (X → "skipped" goes back to the model as the tool result).
+                pendingQuestion?.takeIf { it.conversationId == vm.conversationId }?.let { pending ->
+                    Box(
+                        Modifier.fillMaxSize().imePadding().navigationBarsPadding(),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        QuestionCard(
+                            question = pending.question,
+                            onAnswer = { vm.answerPendingQuestion(it) },
+                            onDismiss = { vm.answerPendingQuestion(null) },
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                                .widthIn(max = 560.dp)
+                                .fillMaxWidth()
+                        )
+                    }
                 }
         }
     }
@@ -727,14 +817,15 @@ private fun ChatPane(
     skillCreatedFor: Set<String>,
     onCreateSkill: (MessageEntity) -> Unit,
     activities: List<String> = emptyList(),
-    swarmStatus: SwarmStatus? = null
+    swarmStatus: SwarmStatus? = null,
+    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> }
 ) {
     MessageList(
         mode, messages, error, generating, capability, density, citations, outputs, attachments,
         onRegenerate, onEdit, onSaveOutput, onOpenOutput, onSpeak,
         speakingMessageId, synthesizingMessageId,
         onShowUsage,
-        skillCreatedFor, onCreateSkill, activities, swarmStatus, Modifier.fillMaxSize()
+        skillCreatedFor, onCreateSkill, activities, swarmStatus, Modifier.fillMaxSize(), onQuestionAnswer
     )
 }
 
@@ -761,7 +852,8 @@ private fun MessageList(
     onCreateSkill: (MessageEntity) -> Unit,
     activities: List<String> = emptyList(),
     swarmStatus: SwarmStatus? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> }
 ) {
     val motionEnabled = LocalKryzzMotionEnabled.current
     val listState = rememberLazyListState()
@@ -787,7 +879,7 @@ private fun MessageList(
         }
     }
     if (messages.isEmpty()) {
-        EmptyWorkspace(mode, capability, modifier)
+        EmptyWorkspace(mode, activities, swarmStatus, modifier)
     } else {
         LazyColumn(
             state = listState,
@@ -827,6 +919,7 @@ private fun MessageList(
                             synthesizing = message.id == synthesizingMessageId,
                             onShowUsage = { onShowUsage(message) },
                             onCreateSkill = { onCreateSkill(message) },
+                            onQuestionAnswer = onQuestionAnswer,
                             modifier = Modifier.widthIn(max = 860.dp).fillMaxWidth()
                         )
                     }
@@ -834,6 +927,17 @@ private fun MessageList(
             }
             activities.forEach { tool ->
                 item(key = "tool-activity-$tool") {
+                    val label = when (tool) {
+                        "parallel_search" -> "Searching the web…"
+                        "search_past_chats" -> "Looking through earlier chats…"
+                        "create_artifact" -> "Putting the deliverable together…"
+                        "create_skill" -> "Creating a reusable skill…"
+                        "create_code_project" -> "Building the code project…"
+                        "generate_image" -> "Generating the image…"
+                        "generate_video" -> "Generating the video…"
+                        "generate_audio" -> "Generating the audio…"
+                        else -> "$tool…"
+                    }
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
@@ -845,7 +949,7 @@ private fun MessageList(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
-                            Text("$tool…", style = MaterialTheme.typography.labelMedium)
+                            Text(label, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -974,7 +1078,8 @@ private fun SwarmStatusCard(
 @Composable
 private fun EmptyWorkspace(
     mode: AssistantMode,
-    capability: AgentCapability,
+    activities: List<String> = emptyList(),
+    swarmStatus: SwarmStatus? = null,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -982,22 +1087,24 @@ private fun EmptyWorkspace(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            if (mode == AssistantMode.CHAT) "How can I help?" else capability.title,
-            style = MaterialTheme.typography.headlineSmall
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            if (mode == AssistantMode.CHAT) {
-                "Ask anything. Your conversations stay on this device."
-            } else {
-                "${capability.shortLabel} workflow selected. Tap the workflow badge below to change it."
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(max = 340.dp)
-        )
+        if (mode == AssistantMode.AGENT) {
+            KryzzMascot(
+                mood = agentBotMood(mode, generating = false, error = null, activities = activities, swarmStatus = swarmStatus),
+                size = BotSize.HERO
+            )
+            Spacer(Modifier.height(14.dp))
+            Text("KryzzBot is online", style = MaterialTheme.typography.headlineSmall)
+        } else {
+            Text("How can I help?", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Ask anything. Your conversations stay on this device.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(max = 340.dp)
+            )
+        }
     }
 }
 
@@ -1190,6 +1297,140 @@ onRemoveAttachment: (String) -> Unit,
     }
 }
 
+/**
+ * Interactive question card ("ask the user"), matching the chat-mode inline protocol and
+ * the agent ask_user floating card: question title with a dismiss (X) button, lettered
+ * tappable options (A, B, C …), and a free-text box for a custom answer.
+ */
+@Composable
+private fun QuestionCard(
+    question: InlineQuestion,
+    onAnswer: (String) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    answeredWith: String? = null
+) {
+    var freeText by rememberSaveable { mutableStateOf("") }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f)),
+        shadowElevation = 6.dp,
+        tonalElevation = 2.dp
+    ) {
+        Column(
+            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    question.question,
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Outlined.Close, "Dismiss question", Modifier.size(16.dp))
+                }
+            }
+            if (question.options.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
+                ) {
+                    Column {
+                        question.options.forEachIndexed { index, option ->
+                            val selected = answeredWith == option
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = enabled) { onAnswer(option) }
+                                    .padding(horizontal = 12.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(22.dp),
+                                    shape = RoundedCornerShape(7.dp),
+                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                ) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Text(
+                                            ('A' + index).toString(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                Text(
+                                    option,
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (selected) {
+                                    Icon(
+                                        Icons.Outlined.CheckCircle, "Chosen",
+                                        Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (index < question.options.lastIndex) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                            }
+                        }
+                    }
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                TextField(
+                    value = freeText,
+                    onValueChange = { freeText = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(
+                            if (answeredWith != null) "Answered: $answeredWith" else "Type your own answer",
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    singleLine = true,
+                    enabled = enabled,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = { if (freeText.isNotBlank()) onAnswer(freeText.trim()) }
+                    )
+                )
+                if (freeText.isNotBlank() && enabled) {
+                    FilledIconButton(
+                        onClick = { onAnswer(freeText.trim()) },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.Send, "Send answer", Modifier.size(17.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun MessageItem(
     message: MessageEntity,
@@ -1208,6 +1449,7 @@ private fun MessageItem(
     synthesizing: Boolean,
     onShowUsage: () -> Unit,
     onCreateSkill: () -> Unit,
+    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val isUser = message.role == "USER"
@@ -1236,19 +1478,52 @@ private fun MessageItem(
     } else {
         message.content
     }
+    // Assistant replies may carry interactive question cards as fenced kryzz-question
+    // blocks (chat-mode protocol). Parsed blocks render as tappable cards; anything
+    // malformed stays inline as ordinary markdown, so partial streams never break.
+    val segments = remember(visibleContent, isUser) {
+        if (isUser || visibleContent.isBlank()) listOf(MessageSegment.Markdown(visibleContent))
+        else InlineQuestionProtocol.parse(visibleContent)
+    }
     val messageContent: @Composable () -> Unit = {
         if (visibleContent.isBlank() && message.status == MessageStatus.STREAMING.name) {
             ThinkingIndicator()
-        } else SelectionContainer {
-            MarkdownText(
-                markdown = visibleContent,
-                contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                segments.forEach { segment ->
+                    when (segment) {
+                        is MessageSegment.Markdown -> SelectionContainer {
+                            MarkdownText(
+                                markdown = segment.text,
+                                contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        is MessageSegment.Question -> {
+                            var answered by remember(segment.question.question) { mutableStateOf<String?>(null) }
+                            var hidden by remember(segment.question.question) { mutableStateOf(false) }
+                            if (!hidden) {
+                                QuestionCard(
+                                    question = segment.question,
+                                    answeredWith = answered,
+                                    enabled = message.status == MessageStatus.COMPLETE.name && answered == null,
+                                    onAnswer = { choice ->
+                                        answered = choice
+                                        onQuestionAnswer(segment.question.question, choice)
+                                    },
+                                    onDismiss = { hidden = true },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
+    val isAgentAssistant = !isUser && message.mode == AssistantMode.AGENT.name
     Column(modifier.fillMaxWidth(), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
-        if (!isUser) {
+        if (!isUser && !isAgentAssistant) {
             Row(Modifier.padding(start = 2.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     modifier = Modifier.size(24.dp),
@@ -1257,15 +1532,29 @@ private fun MessageItem(
                     contentColor = MaterialTheme.colorScheme.primary
                 ) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (message.mode == AssistantMode.AGENT.name) Icons.Outlined.AutoAwesome else Icons.Outlined.SmartToy,
-                            null,
-                            Modifier.size(13.dp)
-                        )
+                        Icon(Icons.Outlined.SmartToy, null, Modifier.size(13.dp))
                     }
                 }
                 Text(
-                    if (message.mode == AssistantMode.AGENT.name) "  Kryzz · Agent" else "  Kryzz",
+                    "  Kryzz",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else if (!isUser && isAgentAssistant) {
+            // The mascot GIF sits above the bubble, to the left of the "Kryzz · Agent"
+            // label — like a chat profile picture with plenty of room to be big.
+            Row(
+                Modifier.padding(start = 2.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                MascotGif(
+                    state = agentMessageMascotState(message),
+                    size = 46.dp
+                )
+                Text(
+                    "Kryzz · Agent",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1458,6 +1747,7 @@ private fun GeneratedOutputCard(output: GeneratedOutput, onSave: (GeneratedOutpu
         OutputKind.IMAGE -> Icons.Outlined.Photo
         OutputKind.VIDEO -> Icons.Outlined.Movie
         OutputKind.AUDIO -> Icons.Outlined.GraphicEq
+        OutputKind.PDF -> Icons.Outlined.PictureAsPdf
     }
     Card(
         Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -1484,7 +1774,7 @@ private fun GeneratedOutputCard(output: GeneratedOutput, onSave: (GeneratedOutpu
             IconButton(onClick = { onSave(output) }) { Icon(Icons.Outlined.Download, "Save output") }
         }
         output.content?.lineSequence()?.take(3)?.joinToString("\n")?.takeIf(String::isNotBlank)?.let {
-            Text(it, Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = if (output.kind == OutputKind.DOCUMENT) FontFamily.SansSerif else FontFamily.Monospace)
+            Text(it, Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = if (output.kind == OutputKind.DOCUMENT || output.kind == OutputKind.PDF) FontFamily.SansSerif else FontFamily.Monospace)
         }
     }
 }
@@ -1714,6 +2004,7 @@ private fun VoiceChatOverlay(
     phase: VoicePhase,
     level: Float,
     transcript: String,
+    searching: Boolean,
     muted: Boolean,
     onTap: () -> Unit,
     onMuteToggle: () -> Unit,
@@ -1881,8 +2172,9 @@ private fun VoiceChatOverlay(
                                 tint = onBubble
                             )
                             VoicePhase.PROCESSING -> {
+                                val processIcon = if (searching) Icons.Outlined.Public else Icons.Outlined.AutoAwesome
                                 Icon(
-                                    Icons.Outlined.AutoAwesome,
+                                    processIcon,
                                     null,
                                     Modifier
                                         .size(animatedCore * 0.36f)
@@ -1922,13 +2214,14 @@ private fun VoiceChatOverlay(
                 Spacer(Modifier.height(10.dp))
             }
             Text(
-                text = voicePhaseTitle(phase),
+                text = if (searching) "Checking online" else voicePhaseTitle(phase),
                 style = MaterialTheme.typography.headlineSmall,
                 color = baseColors.onSurface,
                 textAlign = TextAlign.Center
             )
             Text(
-                text = voicePhaseHint(phase, muted),
+                text = if (searching) "Searching the web for fresh facts"
+                    else voicePhaseHint(phase, muted),
                 modifier = Modifier.padding(top = 7.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = baseColors.onSurfaceVariant,
@@ -2005,7 +2298,7 @@ internal fun voicePhaseTitle(phase: VoicePhase): String = when (phase) {
 
 internal fun voicePhaseHint(phase: VoicePhase, muted: Boolean = false): String = when (phase) {
     VoicePhase.LISTENING -> if (muted) "Microphone muted · tap the mic to unmute" else "Speak naturally · sends when you finish · tap to send now"
-    VoicePhase.PROCESSING -> "Transcribing and preparing your spoken reply"
+    VoicePhase.PROCESSING -> "Thinking · searching if needed"
     VoicePhase.SPEAKING -> if (muted) "Microphone muted · tap the mic to unmute" else "Start speaking to interrupt · or tap the orb"
     VoicePhase.IDLE -> ""
 }

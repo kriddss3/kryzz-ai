@@ -174,6 +174,13 @@ fun AppNavigation(
         LaunchedEffect(sidePanelSwipeEnabled) {
             if (!sidePanelSwipeEnabled && panelOpen) panelOpen = false
         }
+        // When the route leaves the chat surface (Settings home, a settings subpage,
+        // models, skills, memory, cron, etc.), force the side panel closed so it can
+        // never be left dangling over a non-chat surface — regardless of how the route
+        // was entered (panel footer, chat header, skills screen, back stack, etc.).
+        LaunchedEffect(currentRoute) {
+            if (panelOpen && topLevelTabForRoute(currentRoute) != MainTab.CHAT) panelOpen = false
+        }
         fun openLibrary() {
             // Hard gate: never open the panel from a depth destination
             // (settings subpage, models, skills, etc.). The user has to

@@ -19,11 +19,15 @@ import ai.daylight.assistant.data.MemoryRepository
 import ai.daylight.assistant.data.remote.OpenRouterClient
 import ai.daylight.assistant.data.remote.ParallelClient
 import ai.daylight.assistant.data.remote.SpeechGenerationRequest
+import ai.daylight.assistant.data.remote.TextProviderClient
 import ai.daylight.assistant.data.remote.defaultHttpClient
 import ai.daylight.assistant.data.remote.FishAudioClient
+import ai.daylight.assistant.data.remote.MiniMaxClient
 import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.ErrorKind
+import ai.daylight.assistant.data.remote.PublicWebClient
 import ai.daylight.assistant.domain.AgentExecutor
+import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.SwarmOrchestrator
 import ai.daylight.assistant.security.SecureCredentialStore
 import ai.daylight.assistant.voice.TtsProvider
@@ -82,6 +86,7 @@ class AppContainer(private val application: Application) {
     val credentials = SecureCredentialStore(application)
     private val http = defaultHttpClient()
     val openRouter = OpenRouterClient(http, json)
+    val minimax = MiniMaxClient(http, json)
     val parallel = ParallelClient(http, json)
     val fish = FishAudioClient(http, json)
     val voiceRecorder = VoiceRecorder(application)
@@ -95,20 +100,39 @@ class AppContainer(private val application: Application) {
     val location = LocationProvider(application, preferences)
     val outputs = GeneratedOutputStore(application)
     val attachments = AttachmentStore(application)
+    fun textProvider(provider: ChatProvider): TextProviderClient =
+        if (provider == ChatProvider.MINIMAX) minimax else openRouter
+
+    fun textProviderKey(provider: ChatProvider): String? = when (provider) {
+        ChatProvider.OPENROUTER -> credentials.openRouterKey()
+        ChatProvider.MINIMAX -> credentials.minimaxKey()
+    }
+
+    fun mediaProvider(modelId: String): MediaProvider = when {
+        modelId.startsWith("image-", ignoreCase = true) -> MediaProvider.MINIMAX
+        modelId.startsWith("MiniMax-H", ignoreCase = true) || modelId.startsWith("Hailuo", ignoreCase = true) -> MediaProvider.MINIMAX
+        modelId.startsWith("music-", ignoreCase = true) || modelId.startsWith("speech-", ignoreCase = true) -> MediaProvider.MINIMAX
+        else -> MediaProvider.OPENROUTER
+    }
+
+    enum class MediaProvider { OPENROUTER, MINIMAX }
+
     val agent = AgentExecutor(
-        database.dao(), preferences, credentials, openRouter, parallel, outputs, attachments, memories, json,
+        database.dao(), preferences, credentials, openRouter, minimax, parallel, outputs, attachments, memories, json,
         locationProvider = location,
+        publicWeb = PublicWebClient(),
+        cronScheduler = cron,
+        conversations = conversations,
         onFirstUserMessage = conversationTitles::request
     )
     val swarm = SwarmOrchestrator(
-        database.dao(), preferences, credentials, openRouter, memories, json,
+        database.dao(), preferences, credentials, openRouter, minimax, memories, json,
         onFirstUserMessage = conversationTitles::request
     )
 
     init {
-        // Keep the coarse location fix fresh for regional answers; no-op unless the
-        // user enabled it and granted the permission.
         applicationScope.launch {
+            runCatching { skills.seedStarterSkills() }
             if (preferences.state.first().locationEnabled) runCatching { location.refresh() }
         }
     }

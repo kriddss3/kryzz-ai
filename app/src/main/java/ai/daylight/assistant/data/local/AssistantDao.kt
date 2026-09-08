@@ -173,6 +173,9 @@ interface AssistantDao {
     @Query("SELECT * FROM skills WHERE enabled = 1 ORDER BY updatedAt DESC")
     suspend fun enabledSkills(): List<SkillEntity>
 
+    @Query("SELECT * FROM skills")
+    suspend fun allSkills(): List<SkillEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSkill(skill: SkillEntity)
 

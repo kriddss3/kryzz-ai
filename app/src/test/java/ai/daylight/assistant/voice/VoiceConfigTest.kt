@@ -9,7 +9,9 @@ class VoiceConfigTest {
         // /audio/transcriptions endpoint); users on the previous default keep their saved choice.
         assertThat(VoiceConfig.DEFAULT_STT_MODEL).isEqualTo("x-ai/grok-stt-1.0")
         assertThat(VoiceConfig.DEFAULT_STT_LANGUAGE).isEqualTo("en")
-        assertThat(VoiceConfig.DEFAULT_LLM_MODEL).isEqualTo("deepseek/deepseek-v4-flash")
+        // 5.6.3: DeepSeek V4 Flash was dropped from the voice reply list; the default brain is
+        // now Gemini 2.5 Flash Lite.
+        assertThat(VoiceConfig.DEFAULT_LLM_MODEL).isEqualTo("google/gemini-2.5-flash-lite")
         assertThat(VoiceConfig.FISH_MODEL).isEqualTo("s2.1-pro")
         assertThat(VoiceConfig.FISH_LATENCY).isEqualTo("balanced")
         assertThat(VoiceConfig.FISH_PCM_SAMPLE_RATE).isEqualTo(44_100)

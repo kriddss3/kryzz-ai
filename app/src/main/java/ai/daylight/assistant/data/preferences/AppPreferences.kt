@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import ai.daylight.assistant.domain.ThemeMode
@@ -14,6 +15,7 @@ import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.FontStyle
 import ai.daylight.assistant.domain.GradientPalette
+import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
 import ai.daylight.assistant.domain.TextPalette
@@ -42,12 +44,13 @@ data class SettingsState(
     val videoModel: String = "",
     val audioModel: String = "openai/gpt-4o-mini-tts-2025-12-15",
     val favoriteModels: Set<String> = setOf("openai/gpt-4o-mini"),
+    val chatProvider: ChatProvider = ChatProvider.OPENROUTER,
     val modelReasoning: Map<String, ReasoningEffort> = emptyMap(),
     val presetId: String = "balanced",
     val customPrompt: String = "",
     val searchEnabled: Boolean = true,
     val maxSearchChars: Int = 12_000,
-    val maxToolRounds: Int = 3,
+    val maxToolRounds: Int = 6,
     val themeMode: ThemeMode = ThemeMode.DARK,
     val backgroundStyle: BackgroundStyle = BackgroundStyle.CONSTELLATION,
     val colouredGradient: GradientPalette = GradientPalette.MONOCHROME,
@@ -89,6 +92,7 @@ class AppPreferences(private val context: Context) {
         val videoModel = stringPreferencesKey("video_model")
         val audioModel = stringPreferencesKey("audio_model")
         val favorites = stringPreferencesKey("favorite_models")
+        val chatProvider = stringPreferencesKey("chat_provider")
         val reasoning = stringPreferencesKey("model_reasoning")
         val preset = stringPreferencesKey("preset_id")
         val customPrompt = stringPreferencesKey("custom_prompt")
@@ -141,12 +145,13 @@ class AppPreferences(private val context: Context) {
                 audioModel = p[Keys.audioModel] ?: "openai/gpt-4o-mini-tts-2025-12-15",
                 favoriteModels = p[Keys.favorites]?.split('|')?.filter(String::isNotBlank)?.toSet()
                     ?: setOf("openai/gpt-4o-mini"),
+                chatProvider = runCatching { ChatProvider.valueOf(p[Keys.chatProvider] ?: "OPENROUTER") }.getOrDefault(ChatProvider.OPENROUTER),
                 modelReasoning = decodeReasoning(p[Keys.reasoning]),
                 presetId = p[Keys.preset] ?: "balanced",
                 customPrompt = p[Keys.customPrompt] ?: "",
                 searchEnabled = p[Keys.search] ?: true,
                 maxSearchChars = (p[Keys.searchChars] ?: 12_000).coerceIn(2_000, 50_000),
-                maxToolRounds = (p[Keys.toolRounds] ?: 3).coerceIn(1, 3),
+                maxToolRounds = (p[Keys.toolRounds] ?: 6).coerceIn(1, 8),
                 themeMode = runCatching { ThemeMode.valueOf(p[Keys.theme] ?: "DARK") }.getOrDefault(ThemeMode.DARK),
                 // 4.0.1 has one supported visual identity. Keep the legacy key and
                 // enum values so old DataStore files remain readable, but never let
@@ -205,6 +210,80 @@ class AppPreferences(private val context: Context) {
         if (!values.add(value)) values.remove(value)
         it[Keys.favorites] = values.sorted().joinToString("|")
     }
+    suspend fun setChatProvider(value: ChatProvider) = context.dataStore.edit {
+        val provider = ChatProvider.from(value.name)
+        it[Keys.chatProvider] = provider.name
+        val defaults = modelDefaults(provider)
+        it[Keys.model] = defaults.default
+        it[Keys.agentModel] = defaults.agent
+        it[Keys.researchModel] = defaults.research
+        it[Keys.imageModel] = defaults.image
+        it[Keys.videoModel] = defaults.video
+        it[Keys.audioModel] = defaults.audio
+        it[Keys.favorites] = defaults.default
+    }
+
+    /**
+     * Drops model IDs that the active provider did not return and chooses a valid
+     * provider default when one is available. Empty catalogs are not authoritative:
+     * a transient network failure must not erase a working preference.
+     */
+    suspend fun reconcileAvailableModels(
+        provider: ChatProvider,
+        text: Set<String> = emptySet(),
+        image: Set<String> = emptySet(),
+        video: Set<String> = emptySet(),
+        audio: Set<String> = emptySet()
+    ) = context.dataStore.edit {
+        if (ChatProvider.from(it[Keys.chatProvider].orEmpty()) != provider) return@edit
+        val defaults = modelDefaults(provider)
+        fun reconcile(key: Preferences.Key<String>, available: Set<String>, preferred: String) {
+            if (available.isEmpty()) return
+            chooseAvailableModel(it[key], available, preferred)?.let { selected -> it[key] = selected }
+        }
+        reconcile(Keys.model, text, defaults.default)
+        reconcile(Keys.agentModel, text, defaults.agent)
+        reconcile(Keys.researchModel, text, defaults.research)
+        reconcile(Keys.imageModel, image, defaults.image)
+        reconcile(Keys.videoModel, video, defaults.video)
+        reconcile(Keys.audioModel, audio, defaults.audio)
+        if (text.isNotEmpty()) {
+            val favorites = it[Keys.favorites].orEmpty()
+                .split('|')
+                .filter { favorite -> favorite in text }
+                .toMutableSet()
+            chooseAvailableModel(null, text, defaults.default)?.let(favorites::add)
+            it[Keys.favorites] = favorites.sorted().joinToString("|")
+        }
+    }
+
+    private data class ModelDefaults(
+        val default: String,
+        val agent: String,
+        val research: String,
+        val image: String,
+        val video: String,
+        val audio: String
+    )
+
+    private fun modelDefaults(provider: ChatProvider): ModelDefaults = when (provider) {
+        ChatProvider.OPENROUTER -> ModelDefaults(
+            default = "openai/gpt-4o-mini",
+            agent = "openai/gpt-4o-mini",
+            research = "openai/gpt-4o-mini",
+            image = "",
+            video = "",
+            audio = "openai/gpt-4o-mini-tts-2025-12-15"
+        )
+        ChatProvider.MINIMAX -> ModelDefaults(
+            default = "MiniMax-M3",
+            agent = "MiniMax-M3",
+            research = "MiniMax-M3",
+            image = "image-01",
+            video = "MiniMax-H3",
+            audio = "music-01-free"
+        )
+    }
     suspend fun setReasoning(modelId: String, effort: ReasoningEffort) = context.dataStore.edit { preferences ->
         val values = decodeReasoning(preferences[Keys.reasoning]).toMutableMap()
         if (effort == ReasoningEffort.AUTO) values.remove(modelId) else values[modelId] = effort
@@ -217,7 +296,7 @@ class AppPreferences(private val context: Context) {
     }
     suspend fun setSearchEnabled(value: Boolean) = context.dataStore.edit { it[Keys.search] = value }
     suspend fun setMaxSearchChars(value: Int) = context.dataStore.edit { it[Keys.searchChars] = value.coerceIn(2_000, 50_000) }
-    suspend fun setMaxToolRounds(value: Int) = context.dataStore.edit { it[Keys.toolRounds] = value.coerceIn(1, 3) }
+    suspend fun setMaxToolRounds(value: Int) = context.dataStore.edit { it[Keys.toolRounds] = value.coerceIn(1, 8) }
     suspend fun setTheme(value: ThemeMode) = context.dataStore.edit { it[Keys.theme] = value.name }
     suspend fun setBackgroundStyle(value: BackgroundStyle) = context.dataStore.edit { it[Keys.backgroundStyle] = value.name }
     suspend fun setColouredGradient(value: GradientPalette) = context.dataStore.edit { it[Keys.colouredGradient] = value.name }
@@ -288,6 +367,13 @@ class AppPreferences(private val context: Context) {
                 .orEmpty()
                 .filter { it.name.isNotBlank() && it.referenceId.isNotBlank() }
     }
+}
+
+internal fun chooseAvailableModel(current: String?, available: Set<String>, preferred: String): String? {
+    if (available.isEmpty()) return null
+    return current?.takeIf { it in available }
+        ?: preferred.takeIf { it in available }
+        ?: available.minOrNull()
 }
 
 internal fun coerceSupportedBackgroundStyle(@Suppress("UNUSED_PARAMETER") storedValue: String?): BackgroundStyle =

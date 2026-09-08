@@ -131,12 +131,15 @@ internal fun KryzzChatAiControlsSheet(
             ModelPurpose.AUDIO -> audioModels.map { KryzzChatModelOption(it.id, it.name, it.description) }
             else -> textModels.map { KryzzChatModelOption(it.id, it.name, it.description, it) }
         }
-        if (selectedModelId.isNotBlank() && available.none { it.id == selectedModelId }) {
-            listOf(KryzzChatModelOption(selectedModelId, selectedModelId.kryzzCompactModel(), "Current model")) + available
-        } else available
+        available
     }
     var query by remember(purpose) { mutableStateOf("") }
-    var activeModelId by remember(purpose, selectedModelId) { mutableStateOf(selectedModelId) }
+    var activeModelId by remember(purpose, selectedModelId, options) {
+        mutableStateOf(
+            selectedModelId.takeIf { id -> options.any { it.id == id } }
+                ?: options.firstOrNull()?.id.orEmpty()
+        )
+    }
     var activeReasoning by remember(purpose, activeModelId, selectedReasoning) {
         mutableStateOf(if (activeModelId == selectedModelId) selectedReasoning else ReasoningEffort.AUTO)
     }
@@ -332,7 +335,7 @@ internal fun KryzzChatAiControlsSheet(
                     Column(Modifier.weight(1f)) {
                         Text("Provider", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "OpenRouter · ${activeModelId.kryzzProviderLabel()}",
+                            "${settings.chatProvider.label} · ${activeModelId.kryzzProviderLabel()}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

@@ -194,6 +194,7 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
         kind == ai.daylight.assistant.domain.OutputKind.DOCUMENT -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".md", mimeType = "text/markdown")
         kind == ai.daylight.assistant.domain.OutputKind.SPREADSHEET -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".csv", mimeType = "text/csv")
         kind == ai.daylight.assistant.domain.OutputKind.DATABASE -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".sql", mimeType = "application/sql")
+        kind == ai.daylight.assistant.domain.OutputKind.PDF -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".txt", mimeType = "text/plain")
         else -> copy(localPath = null)
     }
 }

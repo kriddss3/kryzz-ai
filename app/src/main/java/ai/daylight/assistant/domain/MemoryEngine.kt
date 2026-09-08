@@ -17,7 +17,16 @@ object MemoryEngine {
 
     // First-person durable-statement signals. Each pattern must match a full
     // sentence fragment; the whole (normalized) sentence becomes the memory so
-    // the fact is stored in the user's own words.
+    // the fact is stored in the user's own words. `capturesRest` controls how
+    // the part *after* the signal is validated:
+    //  - true  : the fact lives in the words that follow the signal ("my name is
+    //            Alex"), so a blank/empty-pronoun rest means there is nothing to
+    //            remember and the sentence is dropped.
+    //  - false : the signal itself already carries the whole fact ("I'm 16 years
+    //            old", "I'm a man", "I'm Italian"), so a blank rest (no trailing
+    //            punctuation, very common in transcribed voice and casual chat)
+    //            must NOT drop it — only an explicit empty-pronoun tail rejects
+    //            it.
     private val PATTERNS = listOf(
         Pattern(Regex("""\bmy name is\b""", RegexOption.IGNORE_CASE), Category.USER, true),
         Pattern(Regex("""\b(call me|you can call me)\b""", RegexOption.IGNORE_CASE), Category.USER, true),
@@ -28,13 +37,17 @@ object MemoryEngine {
         Pattern(Regex("""\bmy hometown (is|was)\b""", RegexOption.IGNORE_CASE), Category.USER, true),
         Pattern(Regex("""\bi speak\b""", RegexOption.IGNORE_CASE), Category.USER, true),
         Pattern(Regex("""\bmy (phone number|email|birthday|address|age) is\b""", RegexOption.IGNORE_CASE), Category.USER, true),
-        Pattern(Regex("""\bi('m| am) \d+ years old\b""", RegexOption.IGNORE_CASE), Category.USER, true),
+        // Self-contained: the age is fully inside the signal, so a missing trailing
+        // period ("I'm 16 years old") still records the fact.
+        Pattern(Regex("""\bi('m| am) \d+ years old\b""", RegexOption.IGNORE_CASE), Category.USER, false),
         Pattern(Regex("""\bi('m| am) (a |an )?\d+[ -]year[ -]old\b""", RegexOption.IGNORE_CASE), Category.USER, true),
-        Pattern(Regex("""\bi('m| am) (a )?(man|woman|male|female|non-binary|nonbinary|transgender|trans)\b""", RegexOption.IGNORE_CASE), Category.USER, true),
+        // Self-contained: the gender is fully inside the signal ("I'm a man").
+        Pattern(Regex("""\bi('m| am) (a )?(man|woman|male|female|non-binary|nonbinary|transgender|trans)\b""", RegexOption.IGNORE_CASE), Category.USER, false),
         Pattern(Regex("""\bmy gender is\b""", RegexOption.IGNORE_CASE), Category.USER, true),
         Pattern(Regex("""\bi identify as\b""", RegexOption.IGNORE_CASE), Category.USER, true),
         Pattern(Regex("""\bmy (ethnicity|nationality|race) is\b""", RegexOption.IGNORE_CASE), Category.USER, true),
-        Pattern(Regex("""\bi('m| am) (a|an) [a-z]+(ian|ean|ish|ese)\b""", RegexOption.IGNORE_CASE), Category.USER, true),
+        // Self-contained: the demonym is fully inside the signal ("I'm Italian").
+        Pattern(Regex("""\bi('m| am) (a|an) [a-z]+(ian|ean|ish|ese)\b""", RegexOption.IGNORE_CASE), Category.USER, false),
         Pattern(Regex("""\bmy (job|occupation|profession) (is|was)\b""", RegexOption.IGNORE_CASE), Category.USER, true),
         Pattern(Regex("""\bi do .* for a living\b""", RegexOption.IGNORE_CASE), Category.USER, true),
         Pattern(Regex("""\bi (really |very )?(like|love|enjoy)\b""", RegexOption.IGNORE_CASE), Category.PREFERENCE, true),
@@ -76,10 +89,26 @@ object MemoryEngine {
     const val MAX_MEMORY_CHARS = 200
     const val MIN_MEMORY_CHARS = 6
 
-    /** Splits text into sentences and keeps only durable first-person facts. */
+    /**
+     * Splits a sentence into independent first-person clauses. Casual chat (and
+     * transcribed voice) packs several facts into one run-on sentence joined by
+     * "and" / "but" / "so" / "because" — "hey, my name is Alex and I live in
+     * Gilly and I like JDM cars". If the whole sentence is fed to the signal
+     * matcher only the FIRST signal is detected, so the later facts are swallowed
+     * and never reach the Memory tab. Splitting on a conjunction that introduces a
+     * new first-person clause ("... and I ...", "... but my ...") lets each clause
+     * be matched on its own, so each fact becomes its own memory. The lookahead
+     * requires the next clause to start with I/my so "I like cats and dogs" stays
+     * one sentence ("dogs" is not a new first-person clause).
+     */
+    private val CLAUSE_SPLIT = Regex("""\s+(?:and|but|so|because|while|though|although|whereas)\s+(?=(?:i|my)\b)""", RegexOption.IGNORE_CASE)
+
+    /** Splits text into sentences (and first-person clauses) and keeps only durable facts. */
     fun extract(text: String): List<ExtractedMemory> = text
         .split(Regex("""(?<=[.!?])\s+|\n+"""))
+        .flatMap { it.split(CLAUSE_SPLIT) }
         .map(String::trim)
+        .map { it.trimEnd(',', ';', ':') }
         .filter { it.isNotBlank() }
         .mapNotNull { sentence -> extractSentence(sentence) }
         .distinctBy { normalize(it.content) }
@@ -89,7 +118,18 @@ object MemoryEngine {
         val lower = sentence.lowercase()
         val pattern = PATTERNS.firstOrNull { it.regex.containsMatchIn(lower) } ?: return null
         val rest = lower.substring(pattern.regex.find(lower)?.range?.last?.plus(1) ?: 0)
-        if (rest.containsAnyTransient() || rest.isBlank() || normalize(rest) in EMPTY_REFERENTS) return null
+        if (rest.containsAnyTransient()) return null
+        // Self-contained signals (age, gender, demonym) carry the whole fact in the
+        // signal itself, so a blank rest is fine — the user just did not put a period
+        // at the end, which is the norm for transcribed voice and casual chat. The
+        // rest is still checked for empty-pronoun tails ("I'm a man that" is not a
+        // clean standalone fact) and the full sentence still has to meet the length
+        // gate below. Signal-following patterns keep requiring substantive rest.
+        if (pattern.capturesRest) {
+            if (rest.isBlank() || normalize(rest) in EMPTY_REFERENTS) return null
+        } else {
+            if (normalize(rest) in EMPTY_REFERENTS) return null
+        }
         val content = compactSentence(sentence)
         if (content.length < MIN_MEMORY_CHARS || content.length > MAX_MEMORY_CHARS) return null
         return ExtractedMemory(content, pattern.category)
@@ -99,10 +139,10 @@ object MemoryEngine {
         Regex("""\b$token\b""", RegexOption.IGNORE_CASE).containsMatchIn(this)
     }
 
-    /** Collapses whitespace, strips a trailing period, and capitalizes the first letter. */
+    /** Collapses whitespace, strips a trailing period/comma, and capitalizes the first letter. */
     fun compactSentence(sentence: String): String {
         val cleaned = sentence.replace(Regex("""\s+"""), " ").trim()
-            .removeSuffix(".")
+            .trimEnd('.', ',', ';', ':')
             .trim()
         return cleaned.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }

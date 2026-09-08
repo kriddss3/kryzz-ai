@@ -23,13 +23,16 @@ class SecureCredentialStore(context: Context) {
     fun hasOpenRouterKey(): Boolean = preferences.contains(OPENROUTER)
     fun hasParallelKey(): Boolean = preferences.contains(PARALLEL)
     fun hasFishKey(): Boolean = preferences.contains(FISH)
+    fun hasMinimaxKey(): Boolean = preferences.contains(MINIMAX)
     fun openRouterKey(): String? = decrypt(preferences.getString(OPENROUTER, null))
     fun parallelKey(): String? = decrypt(preferences.getString(PARALLEL, null))
     fun fishKey(): String? = decrypt(preferences.getString(FISH, null))
+    fun minimaxKey(): String? = decrypt(preferences.getString(MINIMAX, null))
 
     fun setOpenRouterKey(value: String) = put(OPENROUTER, value)
     fun setParallelKey(value: String) = put(PARALLEL, value)
     fun setFishKey(value: String) = put(FISH, value)
+    fun setMinimaxKey(value: String) = put(MINIMAX, value)
 
     fun clear() {
         preferences.edit().clear().apply()
@@ -84,5 +87,6 @@ class SecureCredentialStore(context: Context) {
         const val OPENROUTER = "openrouter"
         const val PARALLEL = "parallel"
         const val FISH = "fish_audio"
+        const val MINIMAX = "minimax"
     }
 }

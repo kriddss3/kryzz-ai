@@ -31,9 +31,11 @@ import ai.daylight.assistant.domain.AppPalette
 import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.ChatAttachment
 import ai.daylight.assistant.domain.ChatDensity
+import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.ConversationUsage
 import ai.daylight.assistant.domain.FontStyle
 import ai.daylight.assistant.domain.GradientPalette
+import ai.daylight.assistant.domain.InlineQuestionProtocol
 import ai.daylight.assistant.domain.TextPalette
 import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.AdaptiveEndOfSpeechDetector
@@ -65,9 +67,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 sealed interface CheckState {
@@ -124,6 +129,14 @@ private fun toolDisplayLabel(tool: String): String = when (tool) {
     "create_artifact" -> "Creating your file"
     "create_skill" -> "Building your skill"
     "create_code_project" -> "Writing your project"
+    "get_current_time" -> "Checking the time"
+    "calculate" -> "Calculating"
+    "get_weather" -> "Checking the weather"
+    "fetch_url" -> "Reading the page"
+    "remember_fact" -> "Saving a memory"
+    "recall_memories" -> "Looking up memories"
+    "schedule_task" -> "Scheduling a reminder"
+    "ask_user" -> "Waiting for your answer"
     AgentExecutor.TOOL_MEMORY_SAVE -> "Remembering that"
     AgentExecutor.TOOL_SEARCH_PAST_CHATS -> "Searching past chats"
     AgentExecutor.TOOL_AGENT_RUNNING -> "Agent at work"
@@ -281,6 +294,8 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     val activities = MutableStateFlow<List<String>>(emptyList())
     val swarmStatus: StateFlow<SwarmStatus?> = container.swarm.status
     private var generation: Job? = null
+    private var modelRefreshJob: Job? = null
+    private var modelRefreshGeneration = 0
 
     init {
         viewModelScope.launch {
@@ -318,25 +333,91 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
                 }
             }
         }
-        refreshModels()
+        viewModelScope.launch {
+            container.preferences.state
+                .map { it.chatProvider }
+                .distinctUntilChanged()
+                .collect { refreshModels() }
+        }
     }
 
-    fun refreshModels() = viewModelScope.launch {
-        modelsLoading.value = true
-        modelsError.value = null
-        mediaModelsError.value = null
-        val key = container.credentials.openRouterKey()
-        supervisorScope {
-            val text = async { runCatching { container.openRouter.models(key) } }
-            val image = async { runCatching { container.openRouter.imageModels(key) } }
-            val video = async { runCatching { container.openRouter.videoModels(key) } }
-            val audio = async { runCatching { container.openRouter.audioModels(key) } }
-            text.await().onSuccess { models.value = it }.onFailure { modelsError.value = it.message ?: "Could not load models." }
-            image.await().onSuccess { imageModels.value = it }.onFailure { mediaModelsError.value = it.message ?: "Could not load media models." }
-            video.await().onSuccess { videoModels.value = it }.onFailure { mediaModelsError.value = it.message ?: "Could not load media models." }
-            audio.await().onSuccess { audioModels.value = it }.onFailure { mediaModelsError.value = it.message ?: "Could not load media models." }
+    fun refreshModels() {
+        val refreshGeneration = ++modelRefreshGeneration
+        modelRefreshJob?.cancel()
+        modelRefreshJob = viewModelScope.launch {
+            modelsLoading.value = true
+            modelsError.value = null
+            mediaModelsError.value = null
+            models.value = emptyList()
+            imageModels.value = emptyList()
+            videoModels.value = emptyList()
+            audioModels.value = emptyList()
+            val provider = container.preferences.state.first().chatProvider
+            try {
+                supervisorScope {
+                    val text = async { runCatching { container.textProvider(provider).models(container.textProviderKey(provider)) } }
+                    val image = async { runCatching {
+                        if (provider == ChatProvider.MINIMAX) container.minimax.imageModels() else container.openRouter.imageModels(container.credentials.openRouterKey())
+                    } }
+                    val video = async { runCatching {
+                        if (provider == ChatProvider.MINIMAX) container.minimax.videoModels() else container.openRouter.videoModels(container.credentials.openRouterKey())
+                    } }
+                    val audio = async { runCatching {
+                        if (provider == ChatProvider.MINIMAX) container.minimax.audioModels() else container.openRouter.audioModels(container.credentials.openRouterKey())
+                    } }
+
+                    val textResult = text.await()
+                    currentCoroutineContext().ensureActive()
+                    textResult.getOrNull()?.let { available ->
+                        models.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            text = available.map { it.id }.toSet()
+                        )
+                    } ?: textResult.exceptionOrNull()?.let { failure ->
+                        modelsError.value = failure.message ?: "Could not load models."
+                    }
+
+                    val imageResult = image.await()
+                    currentCoroutineContext().ensureActive()
+                    imageResult.getOrNull()?.let { available ->
+                        imageModels.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            image = available.map { it.id }.toSet()
+                        )
+                    } ?: imageResult.exceptionOrNull()?.let { failure ->
+                        mediaModelsError.value = failure.message ?: "Could not load image models."
+                    }
+
+                    val videoResult = video.await()
+                    currentCoroutineContext().ensureActive()
+                    videoResult.getOrNull()?.let { available ->
+                        videoModels.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            video = available.map { it.id }.toSet()
+                        )
+                    } ?: videoResult.exceptionOrNull()?.let { failure ->
+                        mediaModelsError.value = failure.message ?: "Could not load video models."
+                    }
+
+                    val audioResult = audio.await()
+                    currentCoroutineContext().ensureActive()
+                    audioResult.getOrNull()?.let { available ->
+                        audioModels.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            audio = available.map { it.id }.toSet()
+                        )
+                    } ?: audioResult.exceptionOrNull()?.let { failure ->
+                        mediaModelsError.value = failure.message ?: "Could not load audio models."
+                    }
+                }
+            } finally {
+                if (refreshGeneration == modelRefreshGeneration) modelsLoading.value = false
+            }
         }
-        modelsLoading.value = false
     }
 
     fun selectModel(id: String, purpose: ModelPurpose) = viewModelScope.launch { container.preferences.setModel(id, purpose) }
@@ -438,6 +519,33 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         }
     }
 
+    // ── Interactive question cards (v5.7.2) ──────────────────────────────────
+    /**
+     * The agent's pending `ask_user` card, if any. The chat screen renders it as a
+     * floating card; [answerPendingQuestion] delivers the result back to the suspended
+     * tool call. Filtered to this conversation.
+     */
+    val pendingQuestion = container.agent.pendingQuestion
+
+    /** Answer (or dismiss, with null) the agent's pending question card. */
+    fun answerPendingQuestion(answer: String?) {
+        container.agent.answerPendingQuestion(conversationId, answer)
+    }
+
+    /**
+     * Sends the user's choice from an inline chat-mode question card as the next user
+     * message and starts the reply — same path as [send], but the text is composed
+     * from the card instead of the composer.
+     */
+    fun sendQuestionAnswer(question: String, answer: String) {
+        if (generating.value) return
+        val text = InlineQuestionProtocol.formatAnswerEcho(question, answer)
+        startGeneration {
+            container.agent.send(conversationId, text, mode.value, capability.value, emptyList())
+            title.value = container.conversations.conversation(conversationId)?.title ?: title.value
+        }
+    }
+
     fun startEditing(message: MessageEntity) {
         composer.value = message.content
         pendingAttachments.value = container.conversations.attachments(message)
@@ -457,6 +565,12 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     val voicePhase = MutableStateFlow(VoicePhase.IDLE)
     val voiceLevel = MutableStateFlow(0f)
     val voiceTranscript = MutableStateFlow("")
+    /**
+     * True while a web search is running during a voice turn. The overlay switches to a
+     * "Checking online" state with an internet icon and the search cue plays, so the user
+     * is never sitting in silence wondering whether anything is happening.
+     */
+    val voiceSearching = MutableStateFlow(false)
     /**
      * True while the user has muted themselves in the voice overlay. While muted the
      * AudioRecord capture loop writes zeros instead of the captured samples, so Kryzz
@@ -489,9 +603,12 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     val synthesizingMessageId = MutableStateFlow<String?>(null)
     private var speakMessageJob: Job? = null
 
-    /** Opens the microphone. The session auto-closes after speech + silence or the record cap. */
-    fun beginVoice() {
+    /** Opens the microphone. The session auto-closes after speech + silence or the record cap.
+     *  When [preserveMute] is true (re-arm after a reply), an existing mic mute is kept so the
+     *  user's mute choice survives across reply cycles; a fresh start always begins unmuted. */
+    fun beginVoice(preserveMute: Boolean = false) {
         if (voicePhase.value != VoicePhase.IDLE || generating.value) return
+        if (!preserveMute) voiceMicMuted.value = false
         voiceTranscript.value = ""
         voiceLevel.value = 0f
         voiceStartedAt = SystemClock.elapsedRealtime()
@@ -502,7 +619,7 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
             return
         }
         voicePhase.value = VoicePhase.LISTENING
-        voiceMicMuted.value = false
+        if (!preserveMute) voiceMicMuted.value = false
         voiceJob = viewModelScope.launch {
             while (voicePhase.value == VoicePhase.LISTENING) {
                 val level = if (voiceMicMuted.value) 0 else container.voiceRecorder.level()
@@ -556,7 +673,7 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
      * because the WAV length keeps growing the whole time.
      */
     fun setVoiceMuted(muted: Boolean) {
-        if (voicePhase.value != VoicePhase.LISTENING && voicePhase.value != VoicePhase.SPEAKING) return
+        if (voicePhase.value == VoicePhase.IDLE) return
         voiceMicMuted.value = muted
         container.voiceRecorder.muted = muted
         if (muted) voiceLevel.value = 0f
@@ -717,6 +834,7 @@ voiceLevel.value = 0f
         }
         voicePhase.value = VoicePhase.IDLE
         voiceLevel.value = 0f
+        voiceSearching.value = false
     }
 
     /**
@@ -738,8 +856,11 @@ voiceLevel.value = 0f
         // close that session before re-arming a fresh one.
         container.voiceRecorder.stop()?.delete()
         voiceLevel.value = 0f
+        voiceSearching.value = false
         voicePhase.value = VoicePhase.IDLE
-        beginVoice()
+        // Preserve voiceMicMuted: if the user muted during the reply, the next listening
+        // turn stays muted until they explicitly unmute or end the session.
+        beginVoice(preserveMute = true)
     }
 
     private fun processVoiceClip(file: File) {
@@ -782,9 +903,10 @@ voiceLevel.value = 0f
                         voiceMode = true
                     )
                 } finally {
-                    fillerJob?.cancel()
-                    runCatching { container.voicePlayer.stop() }
+                    voiceSearching.value = false
+                    fillerJob.cancel()
                 } ?: run {
+                    runCatching { container.voicePlayer.stop() }
                     voicePhase.value = VoicePhase.IDLE
                     error.value = "The model returned no usable reply. Try again."
                     return@launch
@@ -796,9 +918,11 @@ voiceLevel.value = 0f
                 )
             } catch (cancelled: CancellationException) {
                 file.delete()
+                runCatching { container.voicePlayer.stop() }
                 voicePhase.value = VoicePhase.IDLE
             } catch (t: Throwable) {
                 file.delete()
+                runCatching { container.voicePlayer.stop() }
                 voicePhase.value = VoicePhase.IDLE
                 error.value = t.message ?: "Voice chat failed."
             } finally {
@@ -809,21 +933,31 @@ voiceLevel.value = 0f
 
     /**
      * Subscribes to [container.agent]'s filler request flow and synthesises a short spoken
-     * phrase ("Checking online, give me a sec") whenever a long-running tool starts during
-     * voice chat. Returns the collector job so the caller can cancel it once the real reply
-     * is ready.
+     * phrase ("Let me search that up", "Checking", etc.) whenever a long-running tool starts
+     * during voice chat. A short tone also plays so the user is audibly assured the search
+     * is in progress. Returns the collector job so the caller can cancel it once the real
+     * reply is ready.
      */
     private fun startVoiceFillerListener(
-        settings: SettingsState,
-        provider: TtsProvider
-    ): Job? {
-        if (!settings.voiceFishStreaming && provider != TtsProvider.FISH) return null
-        // OpenRouter TTS is a quick MP3 too; both providers support this.
+        @Suppress("UNUSED_PARAMETER") settings: SettingsState,
+        @Suppress("UNUSED_PARAMETER") provider: TtsProvider
+    ): Job {
+        // Always start the filler listener regardless of TTS provider or Fish streaming
+        // toggle. speakFiller uses synthesizeVoice which works for both Fish and OpenRouter
+        // TTS, so OpenRouter TTS users also hear the "checking online" cue.
         return viewModelScope.launch {
             try {
                 container.agent.voiceFillerRequest.collect { label ->
+                    voiceSearching.value = true
+                    // Play a short two-note ascending cue to signal the search is in progress.
+                    runCatching { container.voicePlayer.playSearchTone() }
                     val phrase = when (label) {
-                        "checking online" -> "Checking online, give me a sec."
+                        "checking online" -> listOf(
+                            "Let me search that up.",
+                            "Checking.",
+                            "Let me look that up.",
+                            "Give me a second."
+                        ).random()
                         else -> "One moment."
                     }
                     speakFiller(phrase, settings, provider)
@@ -1341,21 +1475,95 @@ class ModelsViewModel(private val container: AppContainer) : ViewModel() {
     val error = MutableStateFlow<String?>(null)
     val mediaError = MutableStateFlow<String?>(null)
 
-    init { refresh() }
-    fun refresh() = viewModelScope.launch {
-        loading.value = true; error.value = null; mediaError.value = null
-        val key = container.credentials.openRouterKey()
-        supervisorScope {
-            val chat = async { runCatching { container.openRouter.models(key) } }
-            val image = async { runCatching { container.openRouter.imageModels(key) } }
-            val video = async { runCatching { container.openRouter.videoModels(key) } }
-            val audio = async { runCatching { container.openRouter.audioModels(key) } }
-            chat.await().onSuccess { models.value = it }.onFailure { error.value = it.message ?: "Could not load chat models." }
-            image.await().onSuccess { imageModels.value = it }.onFailure { mediaError.value = it.message ?: "Could not load media models." }
-            video.await().onSuccess { videoModels.value = it }.onFailure { mediaError.value = it.message ?: "Could not load media models." }
-            audio.await().onSuccess { audioModels.value = it }.onFailure { mediaError.value = it.message ?: "Could not load media models." }
+    private var refreshJob: Job? = null
+    private var refreshGeneration = 0
+
+    init {
+        viewModelScope.launch {
+            container.preferences.state
+                .map { it.chatProvider }
+                .distinctUntilChanged()
+                .collect { refresh() }
         }
-        loading.value = false
+    }
+
+    fun refresh() {
+        val currentGeneration = ++refreshGeneration
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            loading.value = true
+            error.value = null
+            mediaError.value = null
+            models.value = emptyList()
+            imageModels.value = emptyList()
+            videoModels.value = emptyList()
+            audioModels.value = emptyList()
+            val provider = container.preferences.state.first().chatProvider
+            try {
+                supervisorScope {
+                    val chat = async { runCatching { container.textProvider(provider).models(container.textProviderKey(provider)) } }
+                    val image = async { runCatching {
+                        if (provider == ChatProvider.MINIMAX) container.minimax.imageModels() else container.openRouter.imageModels(container.credentials.openRouterKey())
+                    } }
+                    val video = async { runCatching {
+                        if (provider == ChatProvider.MINIMAX) container.minimax.videoModels() else container.openRouter.videoModels(container.credentials.openRouterKey())
+                    } }
+                    val audio = async { runCatching {
+                        if (provider == ChatProvider.MINIMAX) container.minimax.audioModels() else container.openRouter.audioModels(container.credentials.openRouterKey())
+                    } }
+
+                    val chatResult = chat.await()
+                    currentCoroutineContext().ensureActive()
+                    chatResult.getOrNull()?.let { available ->
+                        models.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            text = available.map { it.id }.toSet()
+                        )
+                    } ?: chatResult.exceptionOrNull()?.let { failure ->
+                        error.value = failure.message ?: "Could not load chat models."
+                    }
+
+                    val imageResult = image.await()
+                    currentCoroutineContext().ensureActive()
+                    imageResult.getOrNull()?.let { available ->
+                        imageModels.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            image = available.map { it.id }.toSet()
+                        )
+                    } ?: imageResult.exceptionOrNull()?.let { failure ->
+                        mediaError.value = failure.message ?: "Could not load image models."
+                    }
+
+                    val videoResult = video.await()
+                    currentCoroutineContext().ensureActive()
+                    videoResult.getOrNull()?.let { available ->
+                        videoModels.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            video = available.map { it.id }.toSet()
+                        )
+                    } ?: videoResult.exceptionOrNull()?.let { failure ->
+                        mediaError.value = failure.message ?: "Could not load video models."
+                    }
+
+                    val audioResult = audio.await()
+                    currentCoroutineContext().ensureActive()
+                    audioResult.getOrNull()?.let { available ->
+                        audioModels.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            audio = available.map { it.id }.toSet()
+                        )
+                    } ?: audioResult.exceptionOrNull()?.let { failure ->
+                        mediaError.value = failure.message ?: "Could not load audio models."
+                    }
+                }
+            } finally {
+                if (currentGeneration == refreshGeneration) loading.value = false
+            }
+        }
     }
     fun select(id: String) = viewModelScope.launch { container.preferences.setModel(id, purpose.value) }
     fun favorite(id: String) = viewModelScope.launch { container.preferences.toggleFavorite(id) }
@@ -1363,6 +1571,7 @@ class ModelsViewModel(private val container: AppContainer) : ViewModel() {
 }
 
 class LlmCatalogViewModel(private val container: AppContainer) : ViewModel() {
+    val settings = container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsState())
     val models = MutableStateFlow<List<OpenRouterModel>>(emptyList())
     val benchmarks = MutableStateFlow<Map<String, ModelBenchmark>>(emptyMap())
     val benchmarkMeta = MutableStateFlow<BenchmarkMeta?>(null)
@@ -1371,27 +1580,60 @@ class LlmCatalogViewModel(private val container: AppContainer) : ViewModel() {
     val error = MutableStateFlow<String?>(null)
     val benchmarkNotice = MutableStateFlow<String?>(null)
 
-    init { refresh() }
+    private var refreshJob: Job? = null
+    private var refreshGeneration = 0
 
-    fun refresh() = viewModelScope.launch {
-        loading.value = true
-        error.value = null
-        benchmarkNotice.value = null
-        val key = container.credentials.openRouterKey()
-        supervisorScope {
-            val catalog = async { runCatching { container.openRouter.models(key) } }
-            val scores = async { runCatching { container.openRouter.benchmarks(key) } }
-            catalog.await()
-                .onSuccess { models.value = it }
-                .onFailure { error.value = it.message ?: "Could not load the OpenRouter model catalog." }
-            scores.await()
-                .onSuccess { envelope ->
-                    benchmarks.value = envelope.data.associateBy { it.modelPermaslug }
-                    benchmarkMeta.value = envelope.meta
-                }
-                .onFailure { benchmarkNotice.value = "Intelligence scores are temporarily unavailable; the rest of the catalog is still current." }
+    init {
+        viewModelScope.launch {
+            container.preferences.state
+                .map { it.chatProvider }
+                .distinctUntilChanged()
+                .collect { refresh() }
         }
-        loading.value = false
+    }
+
+    fun refresh() {
+        val currentGeneration = ++refreshGeneration
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            loading.value = true
+            error.value = null
+            benchmarkNotice.value = null
+            models.value = emptyList()
+            benchmarks.value = emptyMap()
+            benchmarkMeta.value = null
+            val provider = container.preferences.state.first().chatProvider
+            val key = container.textProviderKey(provider)
+            try {
+                supervisorScope {
+                    val catalog = async { runCatching { container.textProvider(provider).models(key) } }
+                    val catalogResult = catalog.await()
+                    currentCoroutineContext().ensureActive()
+                    catalogResult.getOrNull()?.let { available ->
+                        models.value = available
+                        container.preferences.reconcileAvailableModels(
+                            provider = provider,
+                            text = available.map { it.id }.toSet()
+                        )
+                    } ?: catalogResult.exceptionOrNull()?.let { failure ->
+                        error.value = failure.message ?: "Could not load the ${provider.label} model catalog."
+                    }
+                    if (provider == ChatProvider.OPENROUTER) {
+                        val scores = async { runCatching { container.openRouter.benchmarks(key) } }
+                        val scoreResult = scores.await()
+                        currentCoroutineContext().ensureActive()
+                        scoreResult.getOrNull()?.let { envelope ->
+                            benchmarks.value = envelope.data.associateBy { it.modelPermaslug }
+                            benchmarkMeta.value = envelope.meta
+                        } ?: scoreResult.exceptionOrNull()?.let {
+                            benchmarkNotice.value = "Intelligence scores are temporarily unavailable; the rest of the catalog is still current."
+                        }
+                    }
+                }
+            } finally {
+                if (currentGeneration == refreshGeneration) loading.value = false
+            }
+        }
     }
 }
 
@@ -1409,8 +1651,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     val settings = container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsState())
     val openRouterKey = MutableStateFlow("")
     val parallelKey = MutableStateFlow("")
+    val minimaxKey = MutableStateFlow("")
     val openRouterCheck = MutableStateFlow<CheckState>(CheckState.Idle)
     val parallelCheck = MutableStateFlow<CheckState>(CheckState.Idle)
+    val minimaxCheck = MutableStateFlow<CheckState>(CheckState.Idle)
     val notice = MutableStateFlow<String?>(null)
 
     // Voice chat
@@ -1518,8 +1762,85 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setOpenRouterTtsModel(value: String) = viewModelScope.launch { container.preferences.setOpenRouterTtsModel(value) }
     fun setOpenRouterTtsVoice(value: String) = viewModelScope.launch { container.preferences.setOpenRouterTtsVoice(value) }
 
+    /**
+     * Synthesises and plays one short expression ("Mmm", "Oh", …) with the currently
+     * selected voice so the user can audition how it sounds beyond a plain hello. The
+     * [voiceTest] state is reused for the inline status chip. Errors are surfaced
+     * rather than swallowed so a missing key / voice is obvious.
+     */
+    fun playExpression(line: String) = viewModelScope.launch {
+        val current = settings.value
+        val provider = TtsProvider.from(current.ttsProvider)
+        when (provider) {
+            TtsProvider.FISH -> {
+                val key = container.credentials.fishKey()
+                val voiceId = current.fishVoiceId.ifBlank { null }
+                if (key.isNullOrBlank()) { voiceTest.value = CheckState.Error("Save a Fish Audio key first."); return@launch }
+                if (voiceId.isNullOrBlank()) { voiceTest.value = CheckState.Error("Pick a voice first."); return@launch }
+                voiceTest.value = CheckState.Checking
+                val clip = container.newVoiceFile()
+                runCatching {
+                    container.synthesizeVoice(
+                        text = line,
+                        destination = clip,
+                        speed = current.fishSpeed.toDouble(),
+                        provider = provider,
+                        fishModel = current.fishModel,
+                        fishVoiceId = voiceId,
+                        openRouterModel = current.openRouterTtsModel,
+                        openRouterVoice = current.openRouterTtsVoice,
+                        emotions = current.voiceEmotions
+                    )
+                }.onSuccess {
+                    container.voicePlayer.play(
+                        clip,
+                        onStarted = { voiceTest.value = CheckState.Success("Playing \"$line\"…") }
+                    ) { failure ->
+                        clip.delete()
+                        if (failure != null) voiceTest.value = CheckState.Error(failure.message ?: "Preview failed.")
+                    }
+                }.onFailure {
+                    clip.delete()
+                    voiceTest.value = CheckState.Error(it.message ?: "Preview failed.")
+                }
+            }
+            TtsProvider.OPENROUTER -> {
+                val key = container.credentials.openRouterKey()
+                if (key.isNullOrBlank()) { voiceTest.value = CheckState.Error("Save an OpenRouter API key first."); return@launch }
+                voiceTest.value = CheckState.Checking
+                val clip = container.newVoiceFile()
+                runCatching {
+                    container.synthesizeVoice(
+                        text = line,
+                        destination = clip,
+                        speed = current.fishSpeed.toDouble(),
+                        provider = provider,
+                        fishModel = current.fishModel,
+                        fishVoiceId = current.fishVoiceId.ifBlank { null },
+                        openRouterModel = current.openRouterTtsModel,
+                        openRouterVoice = current.openRouterTtsVoice,
+                        emotions = current.voiceEmotions
+                    )
+                }.onSuccess {
+                    container.voicePlayer.play(
+                        clip,
+                        onStarted = { voiceTest.value = CheckState.Success("Playing \"$line\"…") }
+                    ) { failure ->
+                        clip.delete()
+                        if (failure != null) voiceTest.value = CheckState.Error(failure.message ?: "Preview failed.")
+                    }
+                }.onFailure {
+                    clip.delete()
+                    voiceTest.value = CheckState.Error(it.message ?: "Preview failed.")
+                }
+            }
+        }
+    }
+
     fun hasOpenRouter() = container.credentials.hasOpenRouterKey()
     fun hasParallel() = container.credentials.hasParallelKey()
+    fun hasMinimax() = container.credentials.hasMinimaxKey()
+    fun setChatProvider(value: ChatProvider) = viewModelScope.launch { container.preferences.setChatProvider(value) }
     fun saveAndTestOpenRouter() = viewModelScope.launch {
         val key = openRouterKey.value.trim()
         if (key.isEmpty()) { openRouterCheck.value = CheckState.Error("Enter a key first."); return@launch }
@@ -1536,6 +1857,15 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         container.parallel.testKey(key).fold(
             { container.credentials.setParallelKey(key); parallelKey.value = ""; parallelCheck.value = CheckState.Success("Verified and saved.") },
             { parallelCheck.value = CheckState.Error(it.message ?: "Key test failed.") }
+        )
+    }
+    fun saveAndTestMiniMax() = viewModelScope.launch {
+        val key = minimaxKey.value.trim()
+        if (key.isEmpty()) { minimaxCheck.value = CheckState.Error("Enter a key first."); return@launch }
+        minimaxCheck.value = CheckState.Checking
+        container.minimax.testKey(key).fold(
+            { container.credentials.setMinimaxKey(key); minimaxKey.value = ""; minimaxCheck.value = CheckState.Success("Verified and saved.") },
+            { minimaxCheck.value = CheckState.Error(it.message ?: "Key test failed.") }
         )
     }
     fun setPersona(id: String, custom: String) = viewModelScope.launch { container.preferences.setPersona(id, custom) }

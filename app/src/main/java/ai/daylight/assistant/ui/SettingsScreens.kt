@@ -67,6 +67,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,6 +84,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.daylight.assistant.BuildConfig
 import ai.daylight.assistant.domain.AssistantPreset
 import ai.daylight.assistant.domain.ChatDensity
+import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.ThemeMode
 import ai.daylight.assistant.ui.theme.LocalGlassOpacity
 import ai.daylight.assistant.voice.FishEngines
@@ -247,7 +249,7 @@ fun SettingsHomeScreen(
                         SettingsLink(
                             icon = Icons.Outlined.Key,
                             title = "API setup",
-                            subtitle = "OpenRouter and Parallel credentials"
+                            subtitle = "Provider API keys"
                         ) { onOpen(Routes.API) }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Column(Modifier.padding(12.dp)) {
@@ -375,10 +377,13 @@ fun AppearanceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ApiSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
+    val settings by vm.settings.collectAsStateWithLifecycle()
     val open by vm.openRouterKey.collectAsStateWithLifecycle()
     val parallel by vm.parallelKey.collectAsStateWithLifecycle()
+    val minimax by vm.minimaxKey.collectAsStateWithLifecycle()
     val openState by vm.openRouterCheck.collectAsStateWithLifecycle()
     val parallelState by vm.parallelCheck.collectAsStateWithLifecycle()
+    val minimaxState by vm.minimaxCheck.collectAsStateWithLifecycle()
     val fish by vm.fishKey.collectAsStateWithLifecycle()
     val fishState by vm.fishCheck.collectAsStateWithLifecycle()
 
@@ -395,33 +400,142 @@ fun ApiSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             ProviderNotice()
-            KeyEditor(
-                title = "OpenRouter",
-                state = if (vm.hasOpenRouter()) "A key is stored securely" else "No key stored",
-                value = open,
-                onValue = { vm.openRouterKey.value = it },
-                check = openState,
-                onTest = vm::saveAndTestOpenRouter
-            )
-            KeyEditor(
-                title = "Parallel Search",
-                state = if (vm.hasParallel()) "A key is stored securely" else "No key stored",
-                value = parallel,
-                onValue = { vm.parallelKey.value = it },
-                check = parallelState,
-                onTest = vm::saveAndTestParallel
-            )
-            KeyEditor(
-                title = "Fish Audio",
-                state = if (vm.hasFish()) "A key is stored securely" else "No key stored",
-                value = fish,
-                onValue = { vm.fishKey.value = it },
-                check = fishState,
-                onTest = vm::saveAndTestFish
-            )
+
+            SettingsGroup(
+                title = "Chat provider",
+                description = "Controls which provider supplies chat, agent, research, and media model choices."
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ChatProvider.entries.forEach { provider ->
+                            FilterChip(
+                                selected = settings.chatProvider == provider,
+                                onClick = { vm.setChatProvider(provider) },
+                                label = { Text(provider.label) },
+                                modifier = Modifier.heightIn(min = 48.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        "Changing provider refreshes the catalog and resets unavailable model selections to valid choices.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            val apiProviders = remember {
+                listOf(
+                    ApiProviderEntry("openrouter", "OpenRouter", "LLM, image, video, audio, and TTS routing"),
+                    ApiProviderEntry("minimax", "MiniMax", "Image, video, and audio generation"),
+                    ApiProviderEntry("parallel", "Parallel Search", "Web search for research agent"),
+                    ApiProviderEntry("fish", "Fish Audio", "Voice synthesis for spoken replies")
+                )
+            }
+            var selectedProvider by rememberSaveable { mutableStateOf("openrouter") }
+            var providerMenuExpanded by remember { mutableStateOf(false) }
+            val selected = apiProviders.first { it.id == selectedProvider }
+            LaunchedEffect(settings.chatProvider) {
+                if (selectedProvider == "openrouter" || selectedProvider == "minimax") {
+                    selectedProvider = settings.chatProvider.name.lowercase()
+                }
+            }
+
+            SettingsGroup(title = "Provider") {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    ExposedDropdownMenuBox(
+                        expanded = providerMenuExpanded,
+                        onExpandedChange = { providerMenuExpanded = it },
+                        modifier = Modifier.fillMaxWidth().testTag("api_provider_picker")
+                    ) {
+                        OutlinedTextField(
+                            value = selected.label,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Select provider") },
+                            supportingText = { Text(selected.detail) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerMenuExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = providerMenuExpanded,
+                            onDismissRequest = { providerMenuExpanded = false }
+                        ) {
+                            apiProviders.forEach { provider ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column(Modifier.padding(end = 8.dp)) {
+                                            Text(provider.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(
+                                                provider.detail,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = if (provider.id == selectedProvider) {
+                                        { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
+                                    } else null,
+                                    onClick = {
+                                        selectedProvider = provider.id
+                                        providerMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            when (selectedProvider) {
+                "openrouter" -> KeyEditor(
+                    title = "OpenRouter",
+                    state = if (vm.hasOpenRouter()) "A key is stored securely" else "No key stored",
+                    value = open,
+                    onValue = { vm.openRouterKey.value = it },
+                    check = openState,
+                    onTest = vm::saveAndTestOpenRouter
+                )
+                "minimax" -> KeyEditor(
+                    title = "MiniMax",
+                    state = if (vm.hasMinimax()) "A key is stored securely" else "No key stored",
+                    value = minimax,
+                    onValue = { vm.minimaxKey.value = it },
+                    check = minimaxState,
+                    onTest = vm::saveAndTestMiniMax
+                )
+                "parallel" -> KeyEditor(
+                    title = "Parallel Search",
+                    state = if (vm.hasParallel()) "A key is stored securely" else "No key stored",
+                    value = parallel,
+                    onValue = { vm.parallelKey.value = it },
+                    check = parallelState,
+                    onTest = vm::saveAndTestParallel
+                )
+                "fish" -> KeyEditor(
+                    title = "Fish Audio",
+                    state = if (vm.hasFish()) "A key is stored securely" else "No key stored",
+                    value = fish,
+                    onValue = { vm.fishKey.value = it },
+                    check = fishState,
+                    onTest = vm::saveAndTestFish
+                )
+            }
             SettingsGroup(title = "Credential privacy") {
                 Text(
-                    text = "Testing Parallel performs one small turbo search. Neither credential is added to logs, exports, crash reports, or requests to the other provider.",
+                    text = "Testing a provider performs one small API call. Credentials are encrypted on-device, excluded from backup, and never sent to the other provider.",
                     modifier = Modifier.padding(14.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -430,6 +544,11 @@ fun ApiSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         }
     }
 }
+
+private data class ApiProviderEntry(val id: String, val label: String, val detail: String)
+
+/** Short spoken expressions used to audition a voice beyond a plain "hello" preview. */
+private val voiceExpressions = listOf("Mmm", "Oh", "Hmm", "Ah", "Wow", "Hmm, okay")
 
 @Composable
 private fun KeyEditor(
@@ -491,7 +610,7 @@ private fun CheckLabel(check: CheckState) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -658,6 +777,29 @@ fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                         }
                     }
                     CheckLabel(voiceTest)
+                    // Quick expression previews: audition how the selected voice sounds
+                    // saying the small interjections that make a voice chat feel human, so
+                    // the user doesn't have to wait for a full reply to judge the voice.
+                    Text(
+                        text = "Try expressions",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        voiceExpressions.forEach { line ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { vm.playExpression(line) },
+                                label = { Text(line) },
+                                modifier = Modifier.heightIn(min = 48.dp).testTag("voice_expression_${line}")
+                            )
+                        }
+                    }
                 }
             }
 
@@ -744,8 +886,8 @@ fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                 )
             }
             SettingsGroup(
-                title = "Transcriber",
-                description = "Which speech-to-text engine hears you in voice chat and dictation."
+                title = "Music production",
+                description = "OpenRouter audio generation model used when the Music agent capability is selected."
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -920,11 +1062,11 @@ fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
             SettingsGroup(title = "Agent limits") {
                 SliderSetting(
                     title = "Maximum tool rounds · ${settings.maxToolRounds}",
-                    subtitle = "The agent always stops at this bound. Deep search uses two related passes when allowed; three is the hard maximum.",
+                    subtitle = "The agent always stops at this bound. Deep search uses two related passes when allowed; eight is the hard maximum.",
                     value = settings.maxToolRounds.toFloat(),
                     onValueChange = { vm.setToolRounds(it.roundToInt()) },
-                    valueRange = 1f..3f,
-                    steps = 1,
+                    valueRange = 1f..8f,
+                    steps = 6,
                     enabled = settings.searchEnabled
                 )
             }

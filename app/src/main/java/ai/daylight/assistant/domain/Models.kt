@@ -23,6 +23,15 @@ enum class TextPalette { ADAPTIVE, HIGH_CONTRAST, MINT, LAVENDER, AMBER, ROSE }
 enum class AssistantMode { CHAT, AGENT }
 enum class ModelPurpose { CHAT, AGENT, RESEARCH, IMAGE, VIDEO, AUDIO }
 
+enum class ChatProvider(val label: String) {
+    OPENROUTER("OpenRouter"),
+    MINIMAX("MiniMax");
+
+    companion object {
+        fun from(value: String): ChatProvider = entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: OPENROUTER
+    }
+}
+
 @Serializable
 data class ChatAttachment(
     val id: String,
@@ -48,7 +57,7 @@ enum class ReasoningEffort(val apiValue: String?, val label: String) {
 }
 
 enum class AgentCapability(val title: String, val shortLabel: String, val instruction: String) {
-    AUTO("Agent workspace", "Auto", "Choose the best available tools and produce a practical, finished result."),
+    AUTO("Agent workspace", "Auto", "Choose the best available tools and produce a practical, finished result. Work in multiple steps when needed: call a tool, read the result, then call the next tool until the job is done. Call parallel_search whenever the answer depends on fresh, niche, uncertain, or source-backed facts — never answer such questions from memory alone. Call get_current_time before answering anything that depends on today or now. Call calculate for arithmetic instead of guessing. Call get_weather for forecasts, fetch_url when the user pasted a link, remember_fact / recall_memories for durable personal facts, and schedule_task for recurring reminders. When the user asks for a picture, video, or piece of music, call the matching generate_image / generate_video / generate_audio tool instead of describing how to make it. When they want a document, spreadsheet, database, skill, or code zip, call create_artifact / create_skill / create_code_project. When a choice genuinely matters and you can offer concrete options, call ask_user to ask the user with tappable options instead of guessing."),
     DOCUMENT("Document maker", "Document", "Create a polished Markdown document and return it through the create_artifact tool."),
     DEEP_RESEARCH("Deep search", "Deep search", "Run at least two focused, related web-search passes when the configured tool bound permits it. Cover different query angles, reconcile disagreements, distinguish sourced facts from inference, and cite claims."),
     DATABASE("Database maker", "Database", "Design a production-minded SQLite database schema with constraints, indexes, comments, safe seed rows, and useful starter queries, then return it through the create_artifact tool."),
@@ -56,13 +65,13 @@ enum class AgentCapability(val title: String, val shortLabel: String, val instru
     WIDE_SEARCH("Wide search", "Wide search", "Search broadly with several concise query angles, synthesize coverage, and cite every time-sensitive claim."),
     SKILL_MAKER("Skill maker", "Skill maker", "Turn the user's requested workflow into a reusable local assistant skill. You must call create_skill exactly once with concise instructions and useful example prompts."),
     CODE("Full-stack code", "Code", "Create a complete multi-file full-stack application that can be saved and developed on this phone. Include a README, setup/build commands, frontend and backend files where the request calls for both, safe configuration examples without secrets, and call create_code_project exactly once."),
-    IMAGE("Image generation", "Image", "Generate an image from the user's request with the configured OpenRouter image model."),
-    VIDEO("Video generation", "Video", "Generate a video from the user's request with the configured OpenRouter video model."),
-    AUDIO("Audio creation", "Audio", "Turn the user's requested words, script, or narration into an MP3 with the configured OpenRouter speech model.")
+    IMAGE("Image generation", "Image", "Generate an image from the user's request with the configured provider image model."),
+    VIDEO("Video generation", "Video", "Generate a video from the user's request with the configured provider video model."),
+    AUDIO("Music production", "Music", "Produce original music tracks using the configured provider audio models. Specify genre, mood, and instrumentation, then return the generated audio through the create_artifact tool.");
 }
 
 @Serializable
-enum class OutputKind { DOCUMENT, SPREADSHEET, DATABASE, CODE, IMAGE, VIDEO, AUDIO }
+enum class OutputKind { DOCUMENT, SPREADSHEET, DATABASE, CODE, IMAGE, VIDEO, AUDIO, PDF }
 
 @Serializable
 data class GeneratedOutput(

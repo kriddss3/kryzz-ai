@@ -82,7 +82,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -206,6 +208,16 @@ internal fun panelProgressAfterDrag(
     panelWidthPx: Float
 ): Float = (progress + deltaX / panelWidthPx).coerceIn(0f, 1f)
 
+/**
+ * Host-provided close that the panel content (chat rows, Settings/New-chat footer, X
+ * button) invokes in addition to the caller's [KryzzSidePanelHost.onClose]. It clears a
+ * lingering drag settlement target and drives the slide animation to closed directly,
+ * so the panel always visually closes when an item is selected — even when the panel
+ * was opened by a left-to-right swipe whose `open` state never caught up to `true`
+ * (the case where flipping `panelOpen` to `false` is a no-op and could otherwise leave
+ * the drawer wedged open over the new screen).
+ */
+internal val LocalSidePanelClose = staticCompositionLocalOf<() -> Unit> { {} }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -228,10 +240,25 @@ fun KryzzSidePanelHost(
     val progress = remember { Animatable(if (open) 1f else 0f) }
     var dragging by remember { mutableStateOf(false) }
     var settleTarget by remember { mutableStateOf<Float?>(null) }
+    // Tracks the previous value of `open` so the settle effect can tell a fresh
+    // swipe-to-open (open still false for one frame) apart from a stale opening
+    // target left behind after the caller closed the drawer mid-animation.
+    var prevOpen by remember { mutableStateOf(open) }
     val currentOnOpen by rememberUpdatedState(onOpen)
     val currentOnClose by rememberUpdatedState(onClose)
     val dragScope = rememberCoroutineScope()
-    BackHandler(enabled = open || progress.value > 0.02f) { currentOnClose() }
+    // Force-close: drop any stale drag settlement and animate the panel closed. Used by
+    // the panel content via [LocalSidePanelClose] so a selection always closes the drawer.
+    val forceClose: () -> Unit = {
+        settleTarget = null
+        dragScope.launch {
+            progress.animateTo(
+                0f,
+                animationSpec = tween(PANEL_CLOSE_MS, easing = PanelEmphasizedEasing)
+            )
+        }
+    }
+    BackHandler(enabled = open || progress.value > 0.02f) { forceClose(); currentOnClose() }
     // Opening the panel from any path dismisses the composer keyboard.
     LaunchedEffect(open) {
         if (open) {
@@ -241,7 +268,17 @@ fun KryzzSidePanelHost(
     }
     LaunchedEffect(open, dragging, motionEnabled, settleTarget) {
         if (dragging) return@LaunchedEffect
-        val target = settleTarget ?: if (open) 1f else 0f
+        // Drop a stale opening target the instant the caller closes the panel
+        // (open true → false). This is what stops a swipe-opened drawer from
+        // resurrecting after a scrim/back/conversation tap that follows it.
+        // The one-frame window where a fresh swipe-to-open still has
+        // `open == false` is safe: `prevOpen` is false there too, so the target
+        // survives until `open` catches up to true.
+        if (shouldClearStaleOpenTarget(open, prevOpen, settleTarget)) {
+            settleTarget = null
+        }
+        prevOpen = open
+        val target = panelAnimationTarget(open, settleTarget)
         if (motionEnabled) {
             progress.animateTo(
                 target,
@@ -256,7 +293,7 @@ fun KryzzSidePanelHost(
         // Keep a drag settlement target authoritative until the caller's open state
         // catches up. This prevents the old `open = false` effect run from snapping
         // a visibly opening panel closed on the release frame.
-        if (settleTarget == target && ((target == 1f && open) || (target == 0f && !open))) {
+        if (settleTarget != null && settleTarget == target && ((target == 1f && open) || (target == 0f && !open))) {
             settleTarget = null
         }
     }
@@ -321,6 +358,7 @@ fun KryzzSidePanelHost(
                         }
                         var engaged = false
                         var totalDx = 0f
+                        var totalDy = 0f
                         var dragProgress = progress.value
                         val dragStartProgress = dragProgress
                         try {
@@ -329,8 +367,16 @@ fun KryzzSidePanelHost(
                                 val ch = ev.changes.firstOrNull { it.id == downId } ?: break
                                 if (!ch.pressed) break
                                 val dx = ch.position.x - ch.previousPosition.x
+                                val dy = ch.position.y - ch.previousPosition.y
                                 totalDx += dx
-                                if (panelDragIsMeaningful(dx, dragProgress, downX, panelWidthPx)) {
+                                totalDy += dy
+                                // Only treat the gesture as a horizontal panel swipe when
+                                // horizontal movement is dominant over vertical. This locks
+                                // the scroll inside the panel to the vertical axis so a
+                                // vertical list scroll can't accidentally close the panel
+                                // through a small horizontal jitter.
+                                val horizontalDominant = kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy)
+                                if (horizontalDominant && panelDragIsMeaningful(dx, dragProgress, downX, panelWidthPx)) {
                                     dragProgress = panelProgressAfterDrag(dragProgress, dx, panelWidthPx)
                                     if (!engaged && kotlin.math.abs(totalDx) > panelEngagePx) {
                                         engaged = true
@@ -368,7 +414,7 @@ fun KryzzSidePanelHost(
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = currentOnClose
+                        onClick = { forceClose(); currentOnClose() }
                     )
                     .testTag("side_panel_scrim")
             )
@@ -380,12 +426,32 @@ fun KryzzSidePanelHost(
                     .width(panelWidth)
                     .offset { IntOffset(((progress.value - 1f) * panelWidthPx).roundToInt(), 0) }
             ) {
-                panel()
+                CompositionLocalProvider(LocalSidePanelClose provides forceClose) {
+                    panel()
+                }
             }
 
         }
     }
 }
+
+internal fun panelAnimationTarget(open: Boolean, settleTarget: Float?): Float =
+    settleTarget ?: if (open) 1f else 0f
+
+/**
+ * When the caller flips `open` from true to false (scrim tap, back button, or a
+ * conversation/settings selection) while a drag's opening settlement is still
+ * pending, that stale `1f` target must be dropped so the drawer cannot
+ * resurrect after the caller already closed it. The fresh swipe-to-open case
+ * is preserved because there `prevOpen` is still `false` (the panel was closed
+ * before the drag), so the target is honoured for the frame until `open`
+ * catches up.
+ */
+internal fun shouldClearStaleOpenTarget(
+    open: Boolean,
+    prevOpen: Boolean,
+    settleTarget: Float?
+): Boolean = !open && prevOpen && settleTarget == 1f
 
 private val PanelEmphasizedEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
 private const val PANEL_OPEN_MS = 360
@@ -479,6 +545,12 @@ fun KryzzLibraryPanel(
         visibleConversations.groupBy { conversationDateSection(it.updatedAt) }
     }
     val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
+    val hostClose = LocalSidePanelClose.current
+    fun closePanelThen(action: () -> Unit) {
+        hostClose()
+        onClose?.invoke()
+        action()
+    }
 
     Surface(
         modifier = modifier.fillMaxHeight().testTag("library_panel"),
@@ -540,7 +612,7 @@ fun KryzzLibraryPanel(
                     }
                 }
                 if (onClose != null) {
-                    IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
+                    IconButton(onClick = { hostClose(); onClose?.invoke() }, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Outlined.Close, "Close menu", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -552,19 +624,23 @@ fun KryzzLibraryPanel(
             ) {
                 Box(Modifier.weight(1f)) {
                     PanelModeButton("Chat", Icons.Outlined.ChatBubbleOutline, Modifier.testTag("library_new_chat")) {
-                        onNewChat(AssistantMode.CHAT)
+                        closePanelThen { onNewChat(AssistantMode.CHAT) }
                     }
                 }
                 Box(Modifier.weight(1f)) {
                     PanelModeButton("Agent", Icons.Outlined.AutoAwesome, Modifier.testTag("library_new_agent")) {
-                        onNewChat(AssistantMode.AGENT)
+                        closePanelThen { onNewChat(AssistantMode.AGENT) }
                     }
                 }
                 Box(Modifier.weight(1f)) {
-                    PanelModeButton("Voice", Icons.Outlined.Mic, Modifier.testTag("library_new_voice"), onNewVoice)
+                    PanelModeButton("Voice", Icons.Outlined.Mic, Modifier.testTag("library_new_voice")) {
+                        closePanelThen(onNewVoice)
+                    }
                 }
                 Box(Modifier.weight(1f)) {
-                    PanelModeButton("Cron", Icons.Outlined.Schedule, Modifier.testTag("library_cron"), onCron)
+                    PanelModeButton("Cron", Icons.Outlined.Schedule, Modifier.testTag("library_cron")) {
+                        closePanelThen(onCron)
+                    }
                 }
             }
 
@@ -684,7 +760,7 @@ fun KryzzLibraryPanel(
                                 ConversationRow(
                                     item = item,
                                     section = section,
-                                    onOpen = { onOpen(item.id) },
+                                    onOpen = { closePanelThen { onOpen(item.id) } },
                                     onPin = { vm.pin(item.id, !item.pinned) },
                                     onRename = { renameConversation = item },
                                     onMove = { assignConversation = item },
@@ -698,7 +774,12 @@ fun KryzzLibraryPanel(
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
-            PanelFooterButton(Icons.Outlined.Settings, "Settings", onSettings, Modifier.testTag("library_settings"))
+            PanelFooterButton(
+                Icons.Outlined.Settings,
+                "Settings",
+                { closePanelThen(onSettings) },
+                Modifier.testTag("library_settings")
+            )
         }
             SnackbarHost(
                 hostState = snackbar,

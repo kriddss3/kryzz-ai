@@ -9,9 +9,11 @@ import ai.daylight.assistant.data.remote.ApiMessage
 import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.ChatRequest
 import ai.daylight.assistant.data.remote.ErrorKind
+import ai.daylight.assistant.data.remote.MiniMaxClient
 import ai.daylight.assistant.data.remote.OpenRouterClient
 import ai.daylight.assistant.data.remote.ReasoningConfig
 import ai.daylight.assistant.data.remote.StreamEvent
+import ai.daylight.assistant.data.remote.TextProviderClient
 import ai.daylight.assistant.data.remote.Usage
 import ai.daylight.assistant.security.SecureCredentialStore
 import java.util.UUID
@@ -76,12 +78,16 @@ class SwarmOrchestrator(
     private val preferences: AppPreferences,
     private val credentials: SecureCredentialStore,
     private val openRouter: OpenRouterClient,
+    private val minimax: MiniMaxClient,
     private val memoryRepository: MemoryRepository,
     private val json: Json,
     /** Live swarm progress so the UI can render the planner/subagent/synthesis phases. */
     val status: MutableStateFlow<SwarmStatus?> = MutableStateFlow(null),
     private val onFirstUserMessage: (conversationId: String, message: String) -> Unit = { _, _ -> }
 ) {
+    private lateinit var activeKey: String
+    private lateinit var activeClient: TextProviderClient
+
     suspend fun run(
         conversationId: String,
         task: String,
@@ -89,9 +95,18 @@ class SwarmOrchestrator(
     ) {
         val clean = task.trim()
         require(clean.isNotEmpty())
-        val key = credentials.openRouterKey()
-            ?: throw AssistantApiException(ErrorKind.INVALID_KEY, "Add an OpenRouter API key in Settings before sending a message.")
         val settings = preferences.state.first()
+        val provider = settings.chatProvider
+        val key = when (provider) {
+            ChatProvider.OPENROUTER -> credentials.openRouterKey()
+            ChatProvider.MINIMAX -> credentials.minimaxKey()
+        } ?: throw AssistantApiException(
+            ErrorKind.INVALID_KEY,
+            if (provider == ChatProvider.MINIMAX) "Add a MiniMax API key in Settings before sending a message."
+            else "Add an OpenRouter API key in Settings before sending a message."
+        )
+        activeClient = if (provider == ChatProvider.MINIMAX) minimax else openRouter
+        activeKey = key
         val now = System.currentTimeMillis()
         if (dao.conversation(conversationId) == null) {
             dao.upsertConversation(ConversationEntity(conversationId, "New conversation", now, now))
@@ -120,7 +135,6 @@ class SwarmOrchestrator(
             // ── Plan ────────────────────────────────────────────────────────
             status.value = SwarmStatus(SwarmPhase.PLANNING)
             val planText = collectText(
-                key,
                 ChatRequest(
                     model = model,
                     messages = listOf(
@@ -150,7 +164,7 @@ class SwarmOrchestrator(
                 subtasks.mapIndexed { index, subtask ->
                     async {
                         semaphore.withPermit {
-                            runSubagent(key, model, reasoning, conversationId, index, subtasks.size, clean, subtask, capability, basePrompt)
+                            runSubagent(model, reasoning, conversationId, index, subtasks.size, clean, subtask, capability, basePrompt)
                         }
                     }
                 }.awaitAll()
@@ -162,7 +176,7 @@ class SwarmOrchestrator(
 
             // ── Synthesis ───────────────────────────────────────────────────
             status.update { it?.copy(phase = SwarmPhase.SYNTHESIZING) }
-            synthesize(key, model, reasoning, conversationId, clean, capability, basePrompt, subtasks, results)
+            synthesize(model, reasoning, conversationId, clean, capability, basePrompt, subtasks, results)
             status.update { it?.copy(phase = SwarmPhase.DONE) }
         } catch (cancelled: CancellationException) {
             status.update { it?.copy(phase = SwarmPhase.FAILED) }
@@ -183,7 +197,6 @@ class SwarmOrchestrator(
     }
 
     private suspend fun runSubagent(
-        key: String,
         model: String,
         reasoning: ReasoningConfig?,
         conversationId: String,
@@ -221,11 +234,12 @@ class SwarmOrchestrator(
                 reasoning = reasoning
             )
             var failure: AssistantApiException? = null
-            openRouter.stream(key, request).collect { event ->
+            activeClient.stream(activeKey, request).collect { event ->
                 when (event) {
                     is StreamEvent.Delta -> {
                         text += event.text
-                        if (event.text.isNotEmpty()) dao.updateMessageContent(messageId, "$header\n\n$text", MessageStatus.STREAMING.name)
+                        val visible = text.scrubThinkTags()
+                        if (event.text.isNotEmpty()) dao.updateMessageContent(messageId, "$header\n\n$visible", MessageStatus.STREAMING.name)
                     }
                     is StreamEvent.UsageUpdate -> Unit
                     is StreamEvent.Failure -> failure = event.error
@@ -236,7 +250,7 @@ class SwarmOrchestrator(
             if (text.isBlank()) {
                 throw AssistantApiException(ErrorKind.MODEL_UNAVAILABLE, "Subagent ${index + 1} returned no text.")
             }
-            dao.updateMessageContent(messageId, "$header\n\n$text", MessageStatus.COMPLETE.name)
+            dao.updateMessageContent(messageId, "$header\n\n${text.scrubThinkTags()}", MessageStatus.COMPLETE.name)
             setSubagentState(index, SubagentState.DONE)
             return text
         } catch (cancelled: CancellationException) {
@@ -245,7 +259,7 @@ class SwarmOrchestrator(
             throw cancelled
         } catch (error: Throwable) {
             val friendly = (error as? AssistantApiException)?.message ?: "This subagent failed."
-            val content = if (text.isBlank()) "$header\n\n$friendly" else "$header\n\n$text\n\n$friendly"
+            val content = if (text.isBlank()) "$header\n\n$friendly" else "$header\n\n${text.scrubThinkTags()}\n\n$friendly"
             dao.updateMessageContent(messageId, content, MessageStatus.ERROR.name)
             setSubagentState(index, SubagentState.FAILED)
             return null
@@ -253,7 +267,6 @@ class SwarmOrchestrator(
     }
 
     private suspend fun synthesize(
-        key: String,
         model: String,
         reasoning: ReasoningConfig?,
         conversationId: String,
@@ -299,11 +312,12 @@ class SwarmOrchestrator(
         var usage: Usage? = null
         var failure: AssistantApiException? = null
         try {
-            openRouter.stream(key, request).collect { event ->
+            activeClient.stream(activeKey, request).collect { event ->
                 when (event) {
                     is StreamEvent.Delta -> {
                         text += event.text
-                        if (event.text.isNotEmpty()) dao.updateMessageContent(messageId, text, MessageStatus.STREAMING.name)
+                        val visible = text.scrubThinkTags()
+                        if (event.text.isNotEmpty()) dao.updateMessageContent(messageId, visible, MessageStatus.STREAMING.name)
                     }
                     is StreamEvent.UsageUpdate -> usage = event.usage
                     is StreamEvent.Failure -> failure = event.error
@@ -318,26 +332,26 @@ class SwarmOrchestrator(
                 )
             }
             dao.finishMessage(
-                messageId, text, MessageStatus.COMPLETE.name, "[]",
+                messageId, text.scrubThinkTags(), MessageStatus.COMPLETE.name, "[]",
                 usage?.promptTokens, usage?.completionTokens, usage?.totalTokens, usage?.cost
             )
             dao.touchConversation(conversationId, System.currentTimeMillis())
         } catch (cancelled: CancellationException) {
-            dao.updateMessageContent(messageId, text, MessageStatus.CANCELLED.name)
+            dao.updateMessageContent(messageId, text.scrubThinkTags(), MessageStatus.CANCELLED.name)
             throw cancelled
         } catch (error: Throwable) {
             val friendly = (error as? AssistantApiException)?.message ?: "Something went wrong. Check your connection and try again."
-            val content = if (text.isBlank()) friendly else "$text\n\n$friendly"
+            val content = if (text.isBlank()) friendly else "${text.scrubThinkTags()}\n\n$friendly"
             dao.finishMessage(messageId, content, MessageStatus.ERROR.name, "[]", null, null, null, null)
             throw error
         }
     }
 
     /** Streams one request to completion and returns only the accumulated text. */
-    private suspend fun collectText(key: String, request: ChatRequest): String {
+    private suspend fun collectText(request: ChatRequest): String {
         var text = ""
         var failure: AssistantApiException? = null
-        openRouter.stream(key, request).collect { event ->
+        activeClient.stream(activeKey, request).collect { event ->
             when (event) {
                 is StreamEvent.Delta -> text += event.text
                 is StreamEvent.UsageUpdate -> Unit

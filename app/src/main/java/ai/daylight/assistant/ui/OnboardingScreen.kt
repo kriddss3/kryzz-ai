@@ -528,7 +528,7 @@ fun ProviderNotice() {
             ) {
                 Text("Provider privacy", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "Privacy notice: chat requests go to OpenRouter and the selected model provider. Web-search requests go separately to Parallel. Review each provider's terms before continuing.",
+                    "Privacy notice: chat requests go to your selected provider (OpenRouter or MiniMax) and the selected model provider. Web-search requests go separately to Parallel. Voice chat always uses OpenRouter. Review each provider's terms before continuing.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = scheme.onSurfaceVariant
                 )

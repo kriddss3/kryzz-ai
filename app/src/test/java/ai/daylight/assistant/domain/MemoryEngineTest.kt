@@ -140,4 +140,50 @@ class MemoryEngineTest {
     fun compactNormalizesWhitespaceAndCase() {
         assertEquals("My name is alex", MemoryEngine.compactSentence("my   name   is alex."))
     }
+
+    @Test
+    fun extractsSelfContainedFactsWithoutTrailingPunctuation() {
+        // Casual chat and transcribed voice rarely end with a period. The age and
+        // gender signals carry the whole fact, so a blank rest must not drop them.
+        val age = MemoryEngine.extract("I'm 16 years old")
+        assertEquals(1, age.size)
+        assertEquals("I'm 16 years old", age[0].content)
+        assertEquals(MemoryEngine.Category.USER, age[0].category)
+
+        val gender = MemoryEngine.extract("i'm a man")
+        assertEquals(1, gender.size)
+        assertEquals("I'm a man", gender[0].content)
+        assertEquals(MemoryEngine.Category.USER, gender[0].category)
+
+        val demonym = MemoryEngine.extract("i'm an italian")
+        assertEquals(1, demonym.size)
+        assertEquals("I'm an italian", demonym[0].content)
+    }
+
+    @Test
+    fun stillDropsEmptyReferentsForSelfContainedSignals() {
+        // A self-contained signal followed by an empty referent is still not a fact.
+        assertTrue(MemoryEngine.extract("I'm a man that").isEmpty())
+    }
+
+    @Test
+    fun splitsCompoundClausesIntoSeparateFacts() {
+        // Casual chat packs several facts into one run-on sentence joined by "and".
+        // Each first-person clause must become its own memory instead of the first
+        // signal swallowing the rest.
+        val facts = MemoryEngine.extract("hey, my name is Alex and I live in Gilly and I like JDM cars")
+        assertEquals(3, facts.size)
+        assertEquals("Hey, my name is Alex", facts[0].content)
+        assertEquals("I live in Gilly", facts[1].content)
+        assertEquals("I like JDM cars", facts[2].content)
+    }
+
+    @Test
+    fun doesNotSplitNonFirstPersonConjunctions() {
+        // "I like cats and dogs" — "dogs" is not a new first-person clause, so the
+        // sentence stays intact and the whole preference is remembered.
+        val facts = MemoryEngine.extract("I like cats and dogs")
+        assertEquals(1, facts.size)
+        assertEquals("I like cats and dogs", facts[0].content)
+    }
 }

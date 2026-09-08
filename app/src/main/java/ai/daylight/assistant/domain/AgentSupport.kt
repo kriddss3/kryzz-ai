@@ -3,8 +3,9 @@ package ai.daylight.assistant.domain
 import ai.daylight.assistant.data.remote.ParallelResult
 
 object ToolRoundLimiter {
+    const val HARD_MAXIMUM = 8
     fun canRun(completedRounds: Int, configuredMaximum: Int): Boolean =
-        completedRounds < configuredMaximum.coerceIn(1, 3)
+        completedRounds < configuredMaximum.coerceIn(1, HARD_MAXIMUM)
 }
 
 object DeepSearchPolicy {

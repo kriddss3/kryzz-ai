@@ -82,6 +82,7 @@ fun LlmCatalogScreen(
     onSkills: () -> Unit,
     onSettings: () -> Unit
 ) {
+    val settings by vm.settings.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
     val benchmarks by vm.benchmarks.collectAsStateWithLifecycle()
     val meta by vm.benchmarkMeta.collectAsStateWithLifecycle()
@@ -115,7 +116,7 @@ fun LlmCatalogScreen(
                 title = {
                     Column {
                         Text("Model catalog")
-                        Text("${visible.size} of ${models.size} models via OpenRouter", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${visible.size} of ${models.size} models via ${settings.chatProvider.label}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 navigationIcon = { IconButton(onClick = onChats) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },

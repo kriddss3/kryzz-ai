@@ -7,6 +7,8 @@ import ai.daylight.assistant.domain.GeneratedOutput
 import ai.daylight.assistant.domain.OutputKind
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class GeneratedOutputStore(context: Context) {
     private val root = File(context.filesDir, "generated_outputs")
@@ -17,19 +19,52 @@ class GeneratedOutputStore(context: Context) {
         return file
     }
 
-    fun materialize(output: GeneratedOutput): GeneratedOutput {
-        val content = output.content ?: return output
-        return when (output.kind) {
-            OutputKind.DOCUMENT -> {
-                val file = saveBytes(OfficeFileGenerator.document(content), "docx")
-                output.copy(fileName = output.fileName.substringBeforeLast('.') + ".docx", mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document", localPath = file.absolutePath)
-            }
-            OutputKind.SPREADSHEET -> {
-                val file = saveBytes(OfficeFileGenerator.spreadsheet(content), "xlsx")
-                output.copy(fileName = output.fileName.substringBeforeLast('.') + ".xlsx", mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", localPath = file.absolutePath)
-            }
+    /**
+     * Converts the model's text deliverable into the real binary file (DOCX / XLSX /
+     * PDF / SQLite). v5.7.1: runs on the IO dispatcher (the agent loop calls this on
+     * the main thread otherwise) and never throws the deliverable away — if binary
+     * conversion fails, the raw content is saved with its plain-text extension so the
+     * user still gets a file instead of a dead turn.
+     */
+    suspend fun materialize(output: GeneratedOutput): GeneratedOutput = withContext(Dispatchers.IO) {
+        val content = output.content ?: return@withContext output
+        when (output.kind) {
+            OutputKind.DOCUMENT -> materializeOffice(
+                output, content, "docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "md", "text/markdown"
+            ) { OfficeFileGenerator.document(it) }
+            OutputKind.SPREADSHEET -> materializeOffice(
+                output, content, "xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "csv", "text/csv"
+            ) { OfficeFileGenerator.spreadsheet(it) }
+            OutputKind.PDF -> materializeOffice(
+                output, content, "pdf", "application/pdf",
+                "txt", "text/plain"
+            ) { OfficeFileGenerator.pdf(it) }
             OutputKind.DATABASE -> materializeDatabase(output, content)
             else -> output
+        }
+    }
+
+    private fun materializeOffice(
+        output: GeneratedOutput,
+        content: String,
+        extension: String,
+        mime: String,
+        fallbackExtension: String,
+        fallbackMime: String,
+        generate: (String) -> ByteArray
+    ): GeneratedOutput {
+        val stem = output.fileName.substringBeforeLast('.')
+        val bytes = runCatching { generate(content) }.getOrNull()
+        return if (bytes != null) {
+            val file = saveBytes(bytes, extension)
+            output.copy(fileName = "$stem.$extension", mimeType = mime, localPath = file.absolutePath)
+        } else {
+            val file = saveBytes(content.toByteArray(Charsets.UTF_8), fallbackExtension)
+            output.copy(fileName = "$stem.$fallbackExtension", mimeType = fallbackMime, localPath = file.absolutePath)
         }
     }
 

@@ -21,6 +21,28 @@ class OfficeFileGeneratorTest {
         assertThat(sheet).contains("<f>SUM(B2:B2)</f>")
     }
 
+    @Test fun createsValidPdfWithEscapedTextAndPages() {
+        val bytes = OfficeFileGenerator.pdf("# Project brief\nA practical plan & (timeline) \\ v1\n" + ("Detail line\n".repeat(50)))
+        val text = bytes.toString(Charsets.ISO_8859_1)
+        assertThat(text).startsWith("%PDF-1.4")
+        assertThat(text).contains("%%EOF")
+        assertThat(text).contains("/Type /Catalog")
+        assertThat(text).contains("/BaseFont /Helvetica")
+        assertThat(text).contains("Project brief")
+        // Parens and backslash in the source text must be escaped inside PDF strings.
+        assertThat(text).contains("\\(timeline\\)")
+        assertThat(text).contains("\\\\")
+        // 50 detail lines cannot fit on one Letter page: a second page object exists.
+        assertThat(text).contains("/Count 2")
+    }
+
+    @Test fun pdfHandlesBlankAndNonLatinInput() {
+        val bytes = OfficeFileGenerator.pdf("")
+        assertThat(bytes.toString(Charsets.ISO_8859_1)).startsWith("%PDF-1.4")
+        val cjk = OfficeFileGenerator.pdf("タイトル")
+        assertThat(cjk.toString(Charsets.ISO_8859_1)).contains("???")
+    }
+
     private fun entries(bytes: ByteArray): Map<String, String> = buildMap {
         ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
             while (true) {

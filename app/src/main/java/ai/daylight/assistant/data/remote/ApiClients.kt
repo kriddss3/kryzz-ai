@@ -36,8 +36,14 @@ import okhttp3.Response
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class OpenRouterClient(private val http: OkHttpClient, private val json: Json) {
-    suspend fun testKey(key: String): Result<Unit> = withContext(Dispatchers.IO) {
+interface TextProviderClient {
+    suspend fun testKey(key: String): Result<Unit>
+    suspend fun models(key: String?): List<OpenRouterModel>
+    fun stream(key: String, request: ChatRequest): Flow<StreamEvent>
+}
+
+class OpenRouterClient(private val http: OkHttpClient, private val json: Json) : TextProviderClient {
+    override suspend fun testKey(key: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder().url("https://openrouter.ai/api/v1/auth/key")
                 .header("Authorization", "Bearer ${key.trim()}").get().build()
@@ -47,7 +53,7 @@ class OpenRouterClient(private val http: OkHttpClient, private val json: Json) {
         }
     }
 
-    suspend fun models(key: String?): List<OpenRouterModel> = withContext(Dispatchers.IO) {
+    override suspend fun models(key: String?): List<OpenRouterModel> = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url("https://openrouter.ai/api/v1/models").get()
         if (!key.isNullOrBlank()) builder.header("Authorization", "Bearer ${key.trim()}")
         http.newCall(builder.build()).execute().use { response ->
@@ -265,7 +271,7 @@ class OpenRouterClient(private val http: OkHttpClient, private val json: Json) {
         })
     }
 
-    fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = callbackFlow {
+    override fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = callbackFlow {
         val body = json.encodeToString(request).toRequestBody(JSON_MEDIA)
         val call = http.newCall(
             Request.Builder().url("https://openrouter.ai/api/v1/chat/completions")
@@ -318,6 +324,7 @@ class OpenRouterClient(private val http: OkHttpClient, private val json: Json) {
                 runCatching { json.decodeFromString<ChatChunk>(payload) }
                     .onSuccess { chunk ->
                         chunk.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
+                        minimaxBaseRespFailure(chunk.baseResp)?.let { trySend(it) }
                         chunk.choices.firstOrNull()?.let { choice ->
                             choice.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
                             val text = extractResponseText(choice.delta.content ?: choice.message?.content ?: choice.text)
@@ -364,6 +371,20 @@ internal fun extractResponseText(content: JsonElement?): String = when (content)
             else -> extractResponseText(content["text"] ?: content["output_text"] ?: content["content"])
         }
     }
+}
+
+/**
+ * MiniMax (and a few other vendors) sometimes send the *accumulated* completion in each
+ * delta instead of the next fragment. Concatenating those chunks duplicates the reply and
+ * breaks tool-call recovery. If the new piece is a prefix/extension of what we already
+ * have, keep the longer copy; otherwise append.
+ */
+internal fun accumulateStreamText(previous: String, incoming: String): String {
+    if (incoming.isEmpty()) return previous
+    if (previous.isEmpty()) return incoming
+    if (incoming.startsWith(previous)) return incoming
+    if (previous.startsWith(incoming)) return previous
+    return previous + incoming
 }
 
 class ParallelClient(private val http: OkHttpClient, private val json: Json) {
@@ -561,6 +582,253 @@ class FishAudioClient(private val http: OkHttpClient, private val json: Json) {
             normalize = !hasEmotion,
             sampleRate = sampleRate
         )
+    }
+}
+
+/**
+ * MiniMax streams vendor-internal errors inline as a top-level `base_resp` object
+ * (e.g. status_code 2013 "invalid tool type") rather than an OpenAI-style `error`.
+ * Those codes are not HTTP statuses, so map a non-zero one to a validation fault
+ * (auth-style 1004 stays an auth fault) — this lets the agent's tool-payload
+ * retry recover by dropping tools when the provider rejects them mid-stream.
+ */
+internal fun minimaxBaseRespFailure(baseResp: MiniMaxBaseResp?): StreamEvent.Failure? {
+    val base = baseResp ?: return null
+    val code = base.statusCode ?: return null
+    if (code == 0) return null
+    val msg = base.statusMsg.orEmpty().ifBlank { "MiniMax error $code" }
+    val kind = if (code == 1004) ErrorKind.INVALID_KEY else ErrorKind.VALIDATION
+    return StreamEvent.Failure(AssistantApiException(kind, "$msg ($code)", code))
+}
+
+/** Global MiniMax API client (Token Plan / pay-as-you-go). */
+class MiniMaxClient(private val http: OkHttpClient, private val json: Json) : TextProviderClient {
+
+    override suspend fun testKey(key: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder().url("$BASE_URL/v1/models")
+                .header("Authorization", "Bearer ${key.trim()}").get().build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw minimaxErrorFor(response)
+            }
+        }
+    }
+
+    override suspend fun models(key: String?): List<OpenRouterModel> = withContext(Dispatchers.IO) {
+        val builder = Request.Builder().url("$BASE_URL/v1/models").get()
+        if (!key.isNullOrBlank()) builder.header("Authorization", "Bearer ${key.trim()}")
+        http.newCall(builder.build()).execute().use { response ->
+            if (!response.isSuccessful) throw minimaxErrorFor(response)
+            json.decodeFromString<ModelsEnvelope>(response.body?.string().orEmpty()).data
+                .sortedBy { it.name.lowercase() }
+        }
+    }
+
+    override fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = callbackFlow {
+        val body = json.encodeToString(request).toRequestBody(JSON_MEDIA)
+        val call = http.newCall(
+            Request.Builder().url("$BASE_URL/v1/chat/completions")
+                .header("Authorization", "Bearer ${key.trim()}")
+                .header("Content-Type", "application/json")
+                .post(body).build()
+        )
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(e)))
+                close()
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!it.isSuccessful) {
+                        trySend(StreamEvent.Failure(minimaxErrorFor(it)))
+                        close()
+                        return
+                    }
+                    if (!it.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)) {
+                        val payload = it.body?.string().orEmpty()
+                        if (payload.isNotBlank()) consumePayload(payload)
+                        trySend(StreamEvent.Done)
+                        close()
+                        return
+                    }
+                    val parser = SseParser()
+                    val source = it.body?.source()
+                    try {
+                        while (source != null && !source.exhausted() && !call.isCanceled()) {
+                            parser.accept(source.readUtf8Line()).forEach(::consumePayload)
+                        }
+                        parser.finish().forEach(::consumePayload)
+                    } catch (t: Throwable) {
+                        if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(t)))
+                    } finally {
+                        close()
+                    }
+                }
+            }
+
+            private fun consumePayload(payload: String) {
+                if (payload.isBlank()) return
+                if (payload == "[DONE]") {
+                    trySend(StreamEvent.Done)
+                    return
+                }
+                runCatching { json.decodeFromString<ChatChunk>(payload) }
+                    .onSuccess { chunk ->
+                        chunk.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
+                        minimaxBaseRespFailure(chunk.baseResp)?.let { trySend(it) }
+                        chunk.choices.firstOrNull()?.let { choice ->
+                            choice.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
+                            val text = extractResponseText(choice.delta.content ?: choice.message?.content ?: choice.text)
+                            val calls = choice.delta.toolCalls.orEmpty().ifEmpty {
+                                choice.message?.toolCalls.orEmpty().mapIndexed { index, call ->
+                                    ToolCallDelta(
+                                        index = index,
+                                        id = call.id,
+                                        function = FunctionCallDelta(call.function.name, call.function.arguments)
+                                    )
+                                }
+                            }
+                            if (text.isNotEmpty() || calls.isNotEmpty()) trySend(StreamEvent.Delta(text, calls))
+                        }
+                        chunk.usage?.let { trySend(StreamEvent.UsageUpdate(it)) }
+                    }
+                    .onFailure { /* keep-alive / unknown events are non-fatal */ }
+            }
+        })
+        awaitClose { call.cancel() }
+    }
+
+    fun imageModels(): List<MediaModel> = listOf(
+        MediaModel("image-01", "MiniMax Image 01", "Text-to-image generation", false, emptyList(), listOf("1:1", "16:9", "9:16", "4:3", "3:4")),
+        MediaModel("image-01-live", "MiniMax Image 01 Live", "Faster text-to-image generation", false, emptyList(), listOf("1:1", "16:9", "9:16", "4:3", "3:4"))
+    )
+
+    fun videoModels(): List<MediaModel> = listOf(
+        MediaModel("MiniMax-H3", "MiniMax H3", "Text/image/video/audio-to-video, 768P / 2K, 4–15s", false, emptyList(), listOf("16:9", "9:16", "1:1", "4:3", "adaptive"))
+    )
+
+    fun audioModels(): List<MediaModel> = listOf(
+        // MiniMax music generation is async (submit + poll). The documented music model
+        // ids are music-01 (standard) and music-02 (higher quality); the free tier is
+        // exposed as music-01-free. Listing the real ids means the request no longer 400s
+        // on an unknown model when the user picks Music.
+        MediaModel("music-01-free", "MiniMax Music 01 Free", "Text-to-music generation (free tier)", false, emptyList(), emptyList()),
+        MediaModel("music-01", "MiniMax Music 01", "Text-to-music generation", false, emptyList(), emptyList()),
+        MediaModel("music-02", "MiniMax Music 02", "Higher-quality text-to-music generation", false, emptyList(), emptyList()),
+        MediaModel("speech-2.6-turbo", "MiniMax Speech 2.6 Turbo", "Fast multilingual TTS", false, emptyList(), emptyList()),
+        MediaModel("speech-2.6-hd", "MiniMax Speech 2.6 HD", "High-quality TTS", false, emptyList(), emptyList())
+    )
+
+    suspend fun generateImage(key: String, request: MiniMaxImageRequest): MiniMaxImageResponse = withContext(Dispatchers.IO) {
+        val call = http.newCall(
+            Request.Builder().url("$BASE_URL/v1/image_generation")
+                .header("Authorization", "Bearer ${key.trim()}")
+                .header("Content-Type", "application/json")
+                .post(json.encodeToString(request).toRequestBody(JSON_MEDIA)).build()
+        )
+        call.awaitResponse().use { response ->
+            if (!response.isSuccessful) throw minimaxErrorFor(response)
+            val parsed = json.decodeFromString<MiniMaxImageResponse>(response.body?.string().orEmpty())
+            parsed.baseResp.throwIfFailed("The MiniMax image model rejected this request.")
+            parsed
+        }
+    }
+
+    suspend fun submitVideo(key: String, request: MiniMaxVideoRequest): MiniMaxVideoSubmitResponse = withContext(Dispatchers.IO) {
+        val call = http.newCall(
+            Request.Builder().url("$BASE_URL/v2/video_generation")
+                .header("Authorization", "Bearer ${key.trim()}")
+                .header("Content-Type", "application/json")
+                .post(json.encodeToString(request).toRequestBody(JSON_MEDIA)).build()
+        )
+        call.awaitResponse().use { response ->
+            if (!response.isSuccessful) throw minimaxErrorFor(response)
+            val parsed = json.decodeFromString<MiniMaxVideoSubmitResponse>(response.body?.string().orEmpty())
+            parsed.baseResp.throwIfFailed("MiniMax rejected the video request.")
+            parsed
+        }
+    }
+
+    suspend fun queryVideo(key: String, taskId: String): MiniMaxVideoStatusResponse = withContext(Dispatchers.IO) {
+        val call = http.newCall(
+            Request.Builder().url("$BASE_URL/v2/query/video_generation/$taskId")
+                .header("Authorization", "Bearer ${key.trim()}")
+                .get().build()
+        )
+        call.awaitResponse().use { response ->
+            if (!response.isSuccessful) throw minimaxErrorFor(response)
+            json.decodeFromString(response.body?.string().orEmpty())
+        }
+    }
+
+    suspend fun downloadVideo(url: String, destination: File): String = withContext(Dispatchers.IO) {
+        val call = http.newCall(Request.Builder().url(url).get().build())
+        call.awaitResponse().use { response ->
+            if (!response.isSuccessful) throw HttpErrorMapper.fromHttp(response.code, "Could not download the generated video.")
+            val mime = response.header("Content-Type")?.substringBefore(';') ?: "video/mp4"
+            response.body?.byteStream()?.use { input ->
+                destination.outputStream().buffered().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: throw AssistantApiException(ErrorKind.UNKNOWN, "The generated video was empty.")
+            mime
+        }
+    }
+
+    suspend fun generateMusic(key: String, request: MiniMaxMusicRequest): MiniMaxMusicResponse = withContext(Dispatchers.IO) {
+        val call = http.newCall(
+            Request.Builder().url("$BASE_URL/v1/music_generation")
+                .header("Authorization", "Bearer ${key.trim()}")
+                .header("Content-Type", "application/json")
+                .post(json.encodeToString(request).toRequestBody(JSON_MEDIA)).build()
+        )
+        call.awaitResponse().use { response ->
+            if (!response.isSuccessful) throw minimaxErrorFor(response)
+            json.decodeFromString(response.body?.string().orEmpty())
+        }
+    }
+
+    /**
+     * Polls the async music task. MiniMax's /v1/music_generation is asynchronous: the submit
+     * response carries a task id in `data.audio`, and the finished URL is fetched from
+     * /v1/query/music_generation?task_id=… until `data.audio_url` is populated. Returns the
+     * same shape as the submit call so the caller can read `data.audio_url` and `base_resp`.
+     */
+    suspend fun queryMusic(key: String, taskId: String): MiniMaxMusicResponse = withContext(Dispatchers.IO) {
+        val call = http.newCall(
+            Request.Builder().url("$BASE_URL/v1/query/music_generation?task_id=${taskId.trim()}")
+                .header("Authorization", "Bearer ${key.trim()}")
+                .get().build()
+        )
+        call.awaitResponse().use { response ->
+            if (!response.isSuccessful) throw minimaxErrorFor(response)
+            json.decodeFromString(response.body?.string().orEmpty())
+        }
+    }
+
+    suspend fun generateSpeech(key: String, request: MiniMaxTtsRequest): MiniMaxTtsResponse = withContext(Dispatchers.IO) {
+        val call = http.newCall(
+            Request.Builder().url("$BASE_URL/v1/t2a_v2")
+                .header("Authorization", "Bearer ${key.trim()}")
+                .header("Content-Type", "application/json")
+                .post(json.encodeToString(request).toRequestBody(JSON_MEDIA)).build()
+        )
+        call.awaitResponse().use { response ->
+            if (!response.isSuccessful) throw minimaxErrorFor(response)
+            json.decodeFromString(response.body?.string().orEmpty())
+        }
+    }
+
+    private fun minimaxErrorFor(response: Response): AssistantApiException {
+        val text = response.body?.string().orEmpty()
+        val message = parseMiniMaxError(json, text) ?: text.take(500)
+        return HttpErrorMapper.fromHttp(response.code, message, response.header("Retry-After"))
+    }
+
+    private companion object {
+        const val BASE_URL = "https://api.minimax.io"
+        val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     }
 }
 

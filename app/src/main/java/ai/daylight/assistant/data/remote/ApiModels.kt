@@ -1,10 +1,14 @@
 package ai.daylight.assistant.data.remote
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
@@ -12,7 +16,10 @@ import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 
 @Serializable
 data class ApiMessage(
@@ -31,13 +38,16 @@ data class ApiMessage(
     ) : this(role, text?.let(::JsonPrimitive), toolCallId, name, toolCalls)
 }
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ChatRequest(
     val model: String,
     val messages: List<ApiMessage>,
-    val stream: Boolean = true,
+    // MiniMax defaults stream=false when the key is omitted. encodeDefaults=false
+    // would drop this and the UI would only paint after the full completion.
+    @EncodeDefault val stream: Boolean = true,
     val tools: List<ToolDefinition>? = null,
-    @SerialName("tool_choice") val toolChoice: String? = null,
+    @SerialName("tool_choice") val toolChoice: JsonElement? = null,
     val reasoning: ReasoningConfig? = null,
     val provider: ProviderPreferences? = null,
     @SerialName("max_tokens") val maxTokens: Int? = null
@@ -54,6 +64,16 @@ data class ProviderPreferences(
     @SerialName("allow_fallbacks") val allowFallbacks: Boolean = true
 )
 
+/** OpenAI-style tool_choice values, including MiniMax's named-function object. */
+object ToolChoice {
+    val AUTO: JsonElement = JsonPrimitive("auto")
+    val REQUIRED: JsonElement = JsonPrimitive("required")
+    fun named(name: String): JsonElement = buildJsonObject {
+        put("type", "function")
+        putJsonObject("function") { put("name", name) }
+    }
+}
+
 @Serializable
 data class ReasoningConfig(
     val effort: String? = null,
@@ -61,8 +81,13 @@ data class ReasoningConfig(
     val exclude: Boolean? = null
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class ToolDefinition(val type: String = "function", val function: FunctionDefinition)
+data class ToolDefinition(
+    // MiniMax 2013 "invalid tool type" when this key is omitted (encodeDefaults=false).
+    @EncodeDefault val type: String = "function",
+    val function: FunctionDefinition
+)
 
 @Serializable
 data class FunctionDefinition(
@@ -71,15 +96,19 @@ data class FunctionDefinition(
     val parameters: JsonElement
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ToolCall(
     val id: String,
-    val type: String = "function",
+    @EncodeDefault val type: String = "function",
     val function: FunctionCall
 )
 
 @Serializable
-data class FunctionCall(val name: String, val arguments: String)
+data class FunctionCall(
+    val name: String,
+    @Serializable(with = JsonStringOrObjectSerializer::class) val arguments: String
+)
 
 @Serializable
 data class ToolCallDelta(
@@ -89,13 +118,53 @@ data class ToolCallDelta(
 )
 
 @Serializable
-data class FunctionCallDelta(val name: String? = null, val arguments: String? = null)
+data class FunctionCallDelta(
+    val name: String? = null,
+    @Serializable(with = NullableJsonStringOrObjectSerializer::class) val arguments: String? = null
+)
+
+/** MiniMax sometimes streams `arguments` as an object instead of a JSON string. */
+internal object JsonStringOrObjectSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("JsonStringOrObject", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: String) = encoder.encodeString(value)
+
+    override fun deserialize(decoder: Decoder): String {
+        val jsonDecoder = decoder as? JsonDecoder ?: return decoder.decodeString()
+        return when (val element = jsonDecoder.decodeJsonElement()) {
+            is JsonPrimitive -> element.content
+            JsonNull -> ""
+            else -> element.toString()
+        }
+    }
+}
+
+internal object NullableJsonStringOrObjectSerializer : KSerializer<String?> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("NullableJsonStringOrObject", PrimitiveKind.STRING)
+
+    @OptIn(ExperimentalSerializationApi::class)
+    override fun serialize(encoder: Encoder, value: String?) {
+        if (value == null) encoder.encodeNull() else encoder.encodeString(value)
+    }
+
+    override fun deserialize(decoder: Decoder): String? {
+        val jsonDecoder = decoder as? JsonDecoder ?: return decoder.decodeString()
+        return when (val element = jsonDecoder.decodeJsonElement()) {
+            JsonNull -> null
+            is JsonPrimitive -> element.content
+            else -> element.toString()
+        }
+    }
+}
 
 @Serializable
 data class ChatChunk(
     val choices: List<ChunkChoice> = emptyList(),
     val usage: Usage? = null,
     val error: ApiError? = null,
+    @SerialName("base_resp") val baseResp: MiniMaxBaseResp? = null,
     val model: String? = null
 )
 
@@ -395,6 +464,159 @@ data class CreateCodeProjectArgs(
 
 @Serializable
 data class SearchPastChatsArgs(val query: String)
+
+@Serializable
+data class CalculateArgs(val expression: String)
+
+@Serializable
+data class WeatherArgs(val place: String? = null)
+
+@Serializable
+data class FetchUrlArgs(val url: String)
+
+@Serializable
+data class RememberFactArgs(val fact: String, val category: String? = null)
+
+@Serializable
+data class RecallMemoriesArgs(val query: String)
+
+@Serializable
+data class ScheduleTaskArgs(
+    val title: String,
+    val prompt: String,
+    val hour: Int,
+    val minute: Int = 0,
+    val recurrence: String = "daily",
+    @SerialName("days_of_week") val daysOfWeek: List<Int> = emptyList()
+)
+
+// ── MiniMax request/response shapes ─────────────────────────────────────────
+
+@Serializable
+data class MiniMaxImageRequest(
+    val model: String,
+    val prompt: String,
+    // No Kotlin defaults: the app Json uses encodeDefaults=false, so a defaulted
+    // response_format="base64" was omitted, MiniMax returned URLs, and the client
+    // only read image_base64 — generation looked like it failed with a garbled model tag.
+    @SerialName("aspect_ratio") val aspectRatio: String,
+    @SerialName("response_format") val responseFormat: String,
+    val n: Int
+)
+
+@Serializable
+data class MiniMaxImageResponse(
+    val data: MiniMaxImageData? = null,
+    @SerialName("base_resp") val baseResp: MiniMaxBaseResp? = null
+)
+
+@Serializable
+data class MiniMaxImageData(
+    @SerialName("image_base64") val imageBase64: List<String> = emptyList(),
+    @SerialName("image_urls") val imageUrls: List<String> = emptyList()
+)
+
+@Serializable
+data class MiniMaxVideoRequest(
+    val model: String,
+    val content: List<MiniMaxVideoContentItem>,
+    // Required by /v2/video_generation. Must not be defaulted — encodeDefaults=false
+    // would drop duration/resolution/ratio when they equal the Kotlin defaults.
+    val duration: Int,
+    val resolution: String,
+    val ratio: String
+)
+
+@Serializable
+data class MiniMaxVideoContentItem(
+    val type: String,
+    val text: String? = null,
+    @SerialName("image_url") val imageUrl: MiniMaxImageUrl? = null,
+    val role: String? = null
+)
+
+@Serializable
+data class MiniMaxImageUrl(val url: String)
+
+@Serializable
+data class MiniMaxVideoSubmitResponse(
+    @SerialName("task_id") val taskId: String? = null,
+    @SerialName("base_resp") val baseResp: MiniMaxBaseResp? = null
+)
+
+@Serializable
+data class MiniMaxVideoStatusResponse(
+    val task: MiniMaxVideoTask? = null,
+    @SerialName("base_resp") val baseResp: MiniMaxBaseResp? = null
+)
+
+@Serializable
+data class MiniMaxVideoTask(
+    @SerialName("task_id") val taskId: String? = null,
+    val status: String = "pending",
+    val content: MiniMaxVideoContent? = null,
+    val error: String? = null
+)
+
+@Serializable
+data class MiniMaxVideoContent(val url: String = "")
+
+@Serializable
+data class MiniMaxMusicRequest(
+    val model: String,
+    val prompt: String,
+    val lyrics: String = "",
+    @SerialName("output_format") val outputFormat: String = "url",
+    @SerialName("is_instrumental") val isInstrumental: Boolean = true,
+    @SerialName("audio_setting") val audioSetting: MiniMaxAudioSetting? = null
+)
+
+@Serializable
+data class MiniMaxAudioSetting(
+    @SerialName("sample_rate") val sampleRate: Int = 44100,
+    val bitrate: Int = 256000,
+    val format: String = "mp3"
+)
+
+@Serializable
+data class MiniMaxMusicResponse(
+    val data: MiniMaxMusicData? = null,
+    @SerialName("base_resp") val baseResp: MiniMaxBaseResp? = null
+)
+
+@Serializable
+data class MiniMaxMusicData(
+    val audio: String = "",
+    val status: Int? = null,
+    @SerialName("audio_url") val audioUrl: String? = null
+)
+
+@Serializable
+data class MiniMaxTtsRequest(
+    val model: String,
+    val text: String,
+    @SerialName("voice_id") val voiceId: String = "Wise_Woman",
+    @SerialName("response_format") val responseFormat: String = "mp3",
+    val speed: Double = 1.0
+)
+
+@Serializable
+data class MiniMaxTtsResponse(
+    val data: MiniMaxTtsData? = null,
+    @SerialName("base_resp") val baseResp: MiniMaxBaseResp? = null
+)
+
+@Serializable
+data class MiniMaxTtsData(
+    @SerialName("audio_url") val audioUrl: String? = null,
+    @SerialName("audio_base64") val audioBase64: String? = null
+)
+
+@Serializable
+data class MiniMaxBaseResp(
+    @SerialName("status_code") val statusCode: Int? = null,
+    @SerialName("status_msg") val statusMsg: String? = null
+)
 
 sealed interface StreamEvent {
     data class Delta(val text: String, val toolCalls: List<ToolCallDelta> = emptyList()) : StreamEvent

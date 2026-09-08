@@ -1,5 +1,6 @@
 package ai.daylight.assistant
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -51,6 +52,10 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Request the highest available display refresh rate (120Hz / 90Hz)
+        // so animations and the voice bubble stay smooth on high-refresh panels.
+        // Android defaults to 60Hz unless the app opts in.
+        enableHighRefreshRate()
         val container = (application as DaylightApplication).container
         setContent {
             val root: RootViewModel = viewModel(factory = ai.daylight.assistant.ui.DaylightViewModelFactory(container))
@@ -81,6 +86,32 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         if (!isChangingConfigurations) unlocked = false
+    }
+
+    /**
+     * Switches the window to the highest supported refresh rate (120Hz, 90Hz, etc.).
+     * Android keeps the default (60Hz) unless an app explicitly raises it via
+     * [android.view.Window.setFrameRate] or the legacy
+     * [android.view.Surface.setFrameRate] / layout-params path. Here we iterate the
+     * display's supported modes and pick the one with the highest refresh rate at
+     * the current resolution, then apply it through the window's attributes.
+     */
+    @android.annotation.SuppressLint("ObsoleteSdkInt")
+    private fun enableHighRefreshRate() {
+        runCatching {
+            val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            }
+            val mode = display.supportedModes.maxByOrNull { it.refreshRate }
+            if (mode != null && mode.refreshRate > 60f) {
+                window.attributes = window.attributes.apply {
+                    preferredDisplayModeId = mode.modeId
+                }
+            }
+        }
     }
 
     private fun authenticate() {

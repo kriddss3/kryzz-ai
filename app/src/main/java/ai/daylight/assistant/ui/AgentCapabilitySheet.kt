@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.RadioButtonChecked
 import androidx.compose.material.icons.outlined.Search
@@ -47,6 +48,9 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.domain.AgentCapability
+import ai.daylight.assistant.ui.agent.BotMood
+import ai.daylight.assistant.ui.agent.BotSize
+import ai.daylight.assistant.ui.agent.KryzzMascot
 
 private enum class WorkflowGroup(val label: String) {
     THINK("Think & research"),
@@ -72,7 +76,7 @@ private val workflowSpecs = listOf(
     WorkflowSpec(AgentCapability.SKILL_MAKER, WorkflowGroup.CREATE, "Turn a repeatable workflow into a local Kryzz skill.", Icons.Outlined.Extension),
     WorkflowSpec(AgentCapability.IMAGE, WorkflowGroup.MEDIA, "Generate an image with the configured image model.", Icons.Outlined.Image),
     WorkflowSpec(AgentCapability.VIDEO, WorkflowGroup.MEDIA, "Generate a video with the configured video model.", Icons.Outlined.Movie),
-    WorkflowSpec(AgentCapability.AUDIO, WorkflowGroup.MEDIA, "Create narration or speech as an MP3.", Icons.Outlined.VolumeUp)
+    WorkflowSpec(AgentCapability.AUDIO, WorkflowGroup.MEDIA, "Produce original music tracks with OpenRouter's audio models.", Icons.Outlined.MusicNote)
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -112,7 +116,11 @@ fun AgentCapabilitySheet(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
                 ) {
-                    KryzzMark(Modifier.padding(10.dp), contentDescription = null)
+                    KryzzMascot(
+                        mood = BotMood.IDLE,
+                        size = BotSize.SMALL,
+                        modifier = Modifier.padding(7.dp)
+                    )
                 }
             }
 
