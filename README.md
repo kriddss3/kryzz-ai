@@ -27,6 +27,10 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for the public summary, plus [`RELEASE_NOTE
 
 ## Screenshots
 
+| KryzzBot online | Agent at work |
+| :-------------: | :-----------: |
+| ![Agent home — KryzzBot mascot, Workflow Auto, Give Kryzz a task](work-assets/screenshots/07-kryzzbot-online.jpg) | ![Agent running a task — Thinking indicator and Agent at work status](work-assets/screenshots/08-agent-at-work.jpg) |
+
 | New chat | Agent workflows |
 | :------: | :-------------: |
 | ![New chat home with Chat/Agent tabs and message composer](work-assets/screenshots/01-chat-home.jpg) | ![Agent workflow picker — Think & Research, Create & Build](work-assets/screenshots/02-agent-workflows.jpg) |
