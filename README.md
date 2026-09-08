@@ -21,7 +21,7 @@ Since the first public drop (v5.1.15):
 - **Starter skills** (research brief, study notes, essay outline, and more) seed on first launch and can be toggled off.
 - **KryzzBot** mascot in Agent mode, 120 Hz on supported displays, and a much more reliable side panel.
 
-See [`CHANGELOG.md`](./CHANGELOG.md) for the public summary, or the `RELEASE_NOTES_*.md` files for the internal patch history.
+See [`CHANGELOG.md`](./CHANGELOG.md) for the public summary, plus [`RELEASE_NOTES_5.1.15.md`](./RELEASE_NOTES_5.1.15.md) (v1.0) and [`RELEASE_NOTES_5.7.2.md`](./RELEASE_NOTES_5.7.2.md) (v1.1).
 
 ---
 
@@ -203,7 +203,8 @@ build.gradle.kts
 settings.gradle.kts
 gradle/  gradlew*        ← Gradle wrapper
 CHANGELOG.md             ← public v1.0 → v1.1 summary
-RELEASE_NOTES_*.md       ← internal patch notes (5.1.15 through 5.7.2)
+RELEASE_NOTES_5.1.15.md  ← v1.0 internal notes
+RELEASE_NOTES_5.7.2.md   ← v1.1 internal notes
 work-assets/
   ├── screenshots/       ← screenshots embedded in this README
   ├── releases/          ← compiled APKs (debug-signed, eval-only)

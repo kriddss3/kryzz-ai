@@ -47,7 +47,7 @@ Source, debug APK, and notes for everything shipped after public v1.0 (internal 
 - Release package: `ai.daylight.assistant`
 - Unit tests: 276, 0 failures on the 5.7.2 drop.
 
-Internal patch files: `RELEASE_NOTES_5.2.2.md` through `RELEASE_NOTES_5.7.2.md`.
+Internal notes for this drop: `RELEASE_NOTES_5.7.2.md`.
 
 ## v1.0 — 2026-08-17 (internal 5.1.15, versionCode 59)
 
