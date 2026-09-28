@@ -39,6 +39,11 @@ import ai.daylight.assistant.domain.FontStyle
 import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.domain.InlineQuestionProtocol
 import ai.daylight.assistant.domain.TextPalette
+import ai.daylight.assistant.domain.ActivityChipCounter
+import ai.daylight.assistant.domain.ToolActivityDetail
+import ai.daylight.assistant.domain.WorkLog
+import ai.daylight.assistant.domain.WorkLogBuilder
+import ai.daylight.assistant.domain.WorkLogRow
 import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.AdaptiveEndOfSpeechDetector
 import ai.daylight.assistant.voice.VoiceConfig
@@ -60,6 +65,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -296,6 +302,19 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     val researchWidth = MutableStateFlow(3)
     /** Live activity chips: labels of concurrent work the agent is doing (tools, memory, media). */
     val activities = MutableStateFlow<List<String>>(emptyList())
+    /**
+     * v5.11: per-answer work logs keyed by assistant message id, built from the stored tool
+     * rows. Tool rows never change after they are written, so they are parsed again only
+     * when the set of rows changes, not on every streamed token.
+     */
+    val workLogs: StateFlow<Map<String, WorkLog>> = combine(
+        messages,
+        container.conversations.toolMessages(conversationId)
+            .distinctUntilChanged { old, new -> old.map { it.id } == new.map { it.id } }
+            .map { rows -> rows.map { WorkLogRow(it.createdAt, WorkLogBuilder.steps(it.toolName, it.content)) } }
+    ) { visible, rows -> WorkLogBuilder.build(visible, rows) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
     val swarmStatus: StateFlow<SwarmStatus?> = container.swarm.status
     private var generation: Job? = null
     private var modelRefreshJob: Job? = null
@@ -319,12 +338,14 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
             }
         }
         viewModelScope.launch {
-            // Calls of the same tool can now run together (two searches in one round) and
-            // share one chip, so it is removed only when the last of them finishes.
-            val running = mutableMapOf<String, Int>()
+            // Calls of the same tool can run together (two searches in one round). v5.11: a
+            // call with a detail gets its own chip ("Searching: pixel 10 battery test");
+            // calls with the same label share one, removed when the last of them finishes.
+            val chips = ActivityChipCounter()
             container.agent.toolActivity.collect { activity ->
                 if (activity.conversationId != conversationId) return@collect
-                val label = toolDisplayLabel(activity.toolName)
+                val label = ToolActivityDetail.chipLabel(activity.toolName, activity.detail)
+                    ?: toolDisplayLabel(activity.toolName)
                 if (activity.toolName == AgentExecutor.TOOL_MEMORY_SAVE) {
                     // A saved memory is a short confirmation, not a persistent task chip.
                     if (!activity.started) return@collect
@@ -335,14 +356,7 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
                     }
                     return@collect
                 }
-                val count = (running[label] ?: 0) + if (activity.started) 1 else -1
-                if (count > 0) running[label] = count else running.remove(label)
-                val current = activities.value
-                activities.value = when {
-                    count <= 0 -> current - label
-                    label in current -> current
-                    else -> current + label
-                }
+                activities.value = chips.update(activities.value, label, activity.started)
             }
         }
         viewModelScope.launch {
@@ -533,8 +547,12 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     fun regenerate() {
         if (generating.value) return
         val last = messages.value.lastOrNull { it.role == "ASSISTANT" } ?: return
+        // v5.11: the replaced answer's tool rows go too, so the new answer's work log shows
+        // only the new attempt.
+        val turnStart = messages.value.lastOrNull { it.role == "USER" && it.createdAt <= last.createdAt }?.createdAt
         startGeneration {
             container.conversations.deleteMessage(last.id)
+            turnStart?.let { container.conversations.deleteToolRowsFrom(conversationId, it) }
             container.agent.generateReply(conversationId)
         }
     }

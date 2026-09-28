@@ -399,7 +399,8 @@ class AgentExecutor(
                 addUsage(review.usage)
                 // A corrected file replaces the earlier one; a failed replacement keeps it.
                 review.toolCalls.lastOrNull { it.function.name == AgentTurnPolicy.CREATE_ARTIFACT }?.let { call ->
-                    toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
+                    val detail = ToolActivityDetail.of(call.function.name, call.function.arguments)
+                    toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true, detail))
                     try {
                         createArtifact(conversationId, call, capability, outputs)
                     } catch (cancelled: CancellationException) {
@@ -407,7 +408,7 @@ class AgentExecutor(
                     } catch (_: Throwable) {
                         Unit
                     } finally {
-                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = false))
+                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = false, detail))
                     }
                 }
                 val revision = review.text.trim()
@@ -712,9 +713,12 @@ class AgentExecutor(
                 // v5.10: tools stay offered for the whole turn, so calls past a per-turn limit
                 // (search cap, a second image of one kind, a second skill) are refused here.
                 val refusals = calls.map { AgentTurnPolicy.refusal(it.function.name, turn, toolContext) }
+                // v5.11: chip detail per call (first query, host and path, place), sent with
+                // both the start and the stop event so concurrent calls keep separate chips.
+                val details = calls.map { ToolActivityDetail.of(it.function.name, it.function.arguments) }
                 val lookups: List<Deferred<Result<Lookup>>?> = calls.mapIndexed { index, call ->
                     if (call.function.name !in LOOKUP_TOOLS || refusals[index] != null) return@mapIndexed null
-                    toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
+                    toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true, details[index]))
                     // The voice UI plays a filler phrase so the user hears that a search is running.
                     if (voiceMode && call.function.name == AgentTurnPolicy.PARALLEL_SEARCH) {
                         voiceFillerRequest.tryEmit("checking online")
@@ -730,7 +734,7 @@ class AgentExecutor(
                 for ((index, call) in calls.withIndex()) {
                     val pendingLookup = lookups[index]
                     if (pendingLookup == null) {
-                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
+                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true, details[index]))
                     }
                     try {
                         refusals[index]?.let { reason -> throw AssistantApiException(ErrorKind.VALIDATION, reason) }
@@ -756,7 +760,8 @@ class AgentExecutor(
                         }
 
                         "parallel_search" -> {
-                            val result = (pendingLookup.awaitLookup() as Lookup.Search).response
+                            val search = pendingLookup.awaitLookup() as Lookup.Search
+                            val result = search.response
                             didSearch = true
                             completedSearchRounds++
                             sessionId = result.sessionId
@@ -766,6 +771,10 @@ class AgentExecutor(
                             val structured = buildJsonObject {
                                 put("search_id", result.searchId)
                                 put("session_id", result.sessionId)
+                                // v5.11: the queries (and objective) are kept for the work log;
+                                // the model sees them too, which is harmless.
+                                putJsonArray("queries") { search.queries.forEach { add(JsonPrimitive(it)) } }
+                                search.objective?.let { put("objective", it.take(300)) }
                                 putJsonArray("sources") {
                                     result.results.forEach { source ->
                                         val citationNumber = citations.indexOfFirst { it.url == source.url }.takeIf { it >= 0 }?.plus(1)
@@ -1114,12 +1123,14 @@ class AgentExecutor(
                         val errorResult = buildJsonObject {
                             put("status", "error")
                             put("error", friendly.take(500))
+                            // v5.11: what the call was about, for the answer's work log.
+                            details[index]?.let { put("detail", it) }
                         }.toString()
                         saveToolMessage(conversationId, call, errorResult)
                         working += ApiMessage("tool", errorResult, call.id, call.function.name)
                     } finally {
                         finished[index] = true
-                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = false))
+                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = false, details[index]))
                     }
                 }
                 } finally {
@@ -1127,7 +1138,7 @@ class AgentExecutor(
                     // close their chips so nothing keeps spinning.
                     lookups.forEachIndexed { index, deferred ->
                         if (deferred != null && !finished[index]) {
-                            toolActivity.tryEmit(ToolActivity(conversationId, calls[index].function.name, started = false))
+                            toolActivity.tryEmit(ToolActivity(conversationId, calls[index].function.name, started = false, details[index]))
                         }
                     }
                 }
@@ -1900,7 +1911,7 @@ class AgentExecutor(
     private fun artifactToolAuto() = ToolDefinition(
         function = FunctionDefinition(
             name = "create_artifact",
-            description = "Return a finished local file the user can save on this phone: a document (Markdown, saved as DOCX), spreadsheet (CSV, saved as XLSX), database (SQL, saved as SQLite), or pdf (plain text or Markdown, saved as PDF). Use it only when the user wants a file, download, or export, not for ordinary answers. Call it exactly once with the complete deliverable.",
+            description = "Return a finished local file the user can save on this phone: a document (Markdown, saved as DOCX), spreadsheet (CSV, saved as XLSX), database (SQL, saved as SQLite), or pdf (Markdown, saved as PDF). Use it only when the user wants a file, download, or export, not for ordinary answers. Call it exactly once with the complete deliverable. $ARTIFACT_FORMAT_GUIDE",
             parameters = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -1916,7 +1927,7 @@ class AgentExecutor(
                     putJsonObject("title") { put("type", "string") }
                     putJsonObject("content") {
                         put("type", "string")
-                        put("description", "The complete deliverable with no code fences: Markdown for document/pdf, CSV with a header row (never a Markdown table) for spreadsheet, or SQL for database.")
+                        put("description", "The complete deliverable with no code fences: Markdown for document/pdf, CSV with a header row (never a Markdown table) for spreadsheet, or SQL for database. For several spreadsheet sheets, start each sheet with a line `### Sheet: Name`.")
                     }
                 }
                 put("required", buildJsonArray {
@@ -2175,7 +2186,7 @@ class AgentExecutor(
 
     /** Result of a network lookup tool, produced off the main thread by [lookup]. */
     private sealed interface Lookup {
-        data class Search(val response: ParallelSearchResponse) : Lookup
+        data class Search(val response: ParallelSearchResponse, val queries: List<String>, val objective: String?) : Lookup
         data class Page(val page: FetchedPage) : Lookup
         data class Weather(val report: WeatherReport) : Lookup
     }
@@ -2209,7 +2220,7 @@ class AgentExecutor(
                     clientModel = model
                 )
             )
-            Lookup.Search(response)
+            Lookup.Search(response, args.searchQueries, args.objective)
         }
         AgentTurnPolicy.FETCH_URL -> {
             val client = publicWeb ?: throw AssistantApiException(ErrorKind.VALIDATION, "Page fetch is not available.")
@@ -2329,8 +2340,8 @@ class AgentExecutor(
     }
 
     private fun AgentCapability.artifactContentDescription(): String = when (this) {
-        AgentCapability.DOCUMENT -> "Complete Markdown document"
-        AgentCapability.SPREADSHEET -> "Valid UTF-8 CSV including a header row"
+        AgentCapability.DOCUMENT -> "Complete Markdown document. $DOCUMENT_FORMAT_GUIDE"
+        AgentCapability.SPREADSHEET -> "Valid UTF-8 CSV including a header row. $SPREADSHEET_FORMAT_GUIDE"
         AgentCapability.DATABASE -> "Complete portable SQL schema and starter queries"
         else -> "Complete artifact content"
     }
@@ -2359,6 +2370,18 @@ class AgentExecutor(
         const val TOOL_AUDIO_CREATION = "audio_creation"
         const val MINIMAX_MAX_COMPLETION_TOKENS = 8_192
 
+        /**
+         * v5.11: how create_artifact content is rendered, told to the model so it writes
+         * structure the generators turn into real styles, lists, tables and sheets.
+         */
+        private const val DOCUMENT_FORMAT_GUIDE = "Headings (#, ##, ###), **bold**, *italic*, `code`, [links](https://...), " +
+            "- bullets and 1. numbered lists (indent two spaces for one sub-level), | tables | with a header row, " +
+            "``` code blocks, > quotes and --- rules all become real formatting."
+        private const val SPREADSHEET_FORMAT_GUIDE = "Plain numbers (1234.5), percentages (12%), TRUE/FALSE and formulas (=SUM(B2:B9)) " +
+            "become typed cells; keep IDs with leading zeros as they are. For several sheets, start each sheet with a line " +
+            "`### Sheet: Name` followed by its own header row."
+        private const val ARTIFACT_FORMAT_GUIDE = "Documents and PDFs: $DOCUMENT_FORMAT_GUIDE Spreadsheets: $SPREADSHEET_FORMAT_GUIDE"
+
         /** Network-bound tools whose calls in one round run concurrently (see [lookup]). */
         private val LOOKUP_TOOLS = setOf(
             AgentTurnPolicy.PARALLEL_SEARCH,
@@ -2375,8 +2398,12 @@ internal fun shouldRetryEmptyResponse(
     allowEmpty: Boolean
 ): Boolean = attempt == 0 && !hasText && !hasToolCalls && !allowEmpty
 
-/** Fired when a tool call starts (started=true) and finishes (started=false). */
-data class ToolActivity(val conversationId: String, val toolName: String, val started: Boolean)
+/**
+ * Fired when a tool call starts (started=true) and finishes (started=false). v5.11: [detail]
+ * is the short argument text the chip shows (ToolActivityDetail); a stop event carries the
+ * same detail as its start so the chat removes the matching chip.
+ */
+data class ToolActivity(val conversationId: String, val toolName: String, val started: Boolean, val detail: String? = null)
 
 /**
  * An agent `ask_user` call waiting on the UI. The chat screen renders [question] as an
