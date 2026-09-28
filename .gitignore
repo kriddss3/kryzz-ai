@@ -39,3 +39,10 @@ keystore.properties
 # Python (only here in case)
 __pycache__/
 *.pyc
+
+# Claude Code skill outputs: /brag videos and Impeccable machine-local state
+brag-output*/
+.impeccable/config.local.json
+.impeccable/history/
+**/.impeccable/hook.cache.json
+**/.impeccable/hook.pending.json
