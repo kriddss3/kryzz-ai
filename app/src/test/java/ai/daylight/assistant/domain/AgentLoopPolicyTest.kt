@@ -37,11 +37,24 @@ class AgentLoopPolicyTest {
         assertThat(prompt).doesNotContain("Return ingredients then method")
     }
 
-    @Test fun unmatchedEnabledSkillsStillActivate() {
+    @Test fun unmatchedSkillsAreListedByNameOnly() {
+        // v5.8: with no match, every skill used to be injected in full as PRIMARY
+        // ("this is the workflow"), dragging unrelated workflows into every request.
         val skill = SkillSummary("IB notes", "Study summaries", "Always use heading then bullets.")
         val selected = AgentLoopPolicy.selectActiveSkills(listOf(skill), "write a haiku about snow")
-        assertThat(selected.primary).hasSize(1)
-        assertThat(selected.alsoActive).isEmpty()
+        assertThat(selected.primary).isEmpty()
+        assertThat(selected.alsoActive.map { it.name }).containsExactly("IB notes")
+        val prompt = AgentLoopPolicy.formatActiveSkillsPrompt(selected)
+        assertThat(prompt).contains("IB notes: Study summaries")
+        assertThat(prompt).doesNotContain("Always use heading then bullets")
+        assertThat(prompt).doesNotContain("PRIMARY")
+    }
+
+    @Test fun matchedSkillsBeyondTheCapAreStillListed() {
+        val skills = (1..8).map { SkillSummary("Recipe $it", "Cooking recipe card", "Steps for recipe $it.") }
+        val selected = AgentLoopPolicy.selectActiveSkills(skills, "give me a recipe card")
+        assertThat(selected.primary).hasSize(6)
+        assertThat(selected.alsoActive).hasSize(2)
     }
 
     @Test fun knownToolNamesCoverEveryPlannedTool() {
@@ -55,7 +68,8 @@ class AgentLoopPolicyTest {
             AgentTurnPolicy.GET_CURRENT_TIME, AgentTurnPolicy.CALCULATE,
             AgentTurnPolicy.GET_WEATHER, AgentTurnPolicy.FETCH_URL,
             AgentTurnPolicy.REMEMBER_FACT, AgentTurnPolicy.RECALL_MEMORIES,
-            AgentTurnPolicy.SCHEDULE_TASK
+            AgentTurnPolicy.SCHEDULE_TASK, AgentTurnPolicy.ASK_USER,
+            AgentTurnPolicy.UPDATE_PLAN
         )
         assertThat(AgentLoopPolicy.knownToolNames).containsAtLeastElementsIn(planned)
     }

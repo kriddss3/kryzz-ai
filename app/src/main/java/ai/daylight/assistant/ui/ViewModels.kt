@@ -137,6 +137,7 @@ private fun toolDisplayLabel(tool: String): String = when (tool) {
     "recall_memories" -> "Looking up memories"
     "schedule_task" -> "Scheduling a reminder"
     "ask_user" -> "Waiting for your answer"
+    "update_plan" -> "Updating the plan"
     AgentExecutor.TOOL_MEMORY_SAVE -> "Remembering that"
     AgentExecutor.TOOL_SEARCH_PAST_CHATS -> "Searching past chats"
     AgentExecutor.TOOL_AGENT_RUNNING -> "Agent at work"
@@ -315,21 +316,29 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
             }
         }
         viewModelScope.launch {
+            // Calls of the same tool can now run together (two searches in one round) and
+            // share one chip, so it is removed only when the last of them finishes.
+            val running = mutableMapOf<String, Int>()
             container.agent.toolActivity.collect { activity ->
                 if (activity.conversationId != conversationId) return@collect
                 val label = toolDisplayLabel(activity.toolName)
-                val current = activities.value
-                activities.value = if (activity.started) {
-                    if (label in current) current else current + label
-                } else {
-                    current - label
-                }
-                if (activity.started && activity.toolName == AgentExecutor.TOOL_MEMORY_SAVE) {
+                if (activity.toolName == AgentExecutor.TOOL_MEMORY_SAVE) {
                     // A saved memory is a short confirmation, not a persistent task chip.
+                    if (!activity.started) return@collect
+                    if (label !in activities.value) activities.value = activities.value + label
                     launch {
                         delay(MEMORY_CHIP_MS)
                         activities.value = activities.value - label
                     }
+                    return@collect
+                }
+                val count = (running[label] ?: 0) + if (activity.started) 1 else -1
+                if (count > 0) running[label] = count else running.remove(label)
+                val current = activities.value
+                activities.value = when {
+                    count <= 0 -> current - label
+                    label in current -> current
+                    else -> current + label
                 }
             }
         }
@@ -526,6 +535,9 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
      * tool call. Filtered to this conversation.
      */
     val pendingQuestion = container.agent.pendingQuestion
+
+    /** The agent's live `update_plan` checklist; the screen shows it for this conversation only. */
+    val agentPlan = container.agent.agentPlan
 
     /** Answer (or dismiss, with null) the agent's pending question card. */
     fun answerPendingQuestion(answer: String?) {

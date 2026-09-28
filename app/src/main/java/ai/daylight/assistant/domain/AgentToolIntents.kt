@@ -2,12 +2,12 @@ package ai.daylight.assistant.domain
 
 /**
  * Keyword gates for Auto-only tools. Same precision-over-recall rule as [MediaIntent]:
- * only offer a side-effect or network tool when the user actually asked for it.
+ * only offer a tool with side effects when the user actually asked for it.
+ *
+ * v5.8: the weather and broad artifact gates are gone. get_weather and create_artifact
+ * are cheap and side-effect free, so the planner offers them every agent round; the old
+ * gates hid them from requests like "put it in a table I can download".
  */
-private val weatherKeywords = listOf(
-    "weather", "forecast", "temperature", "humidity", "rain", "rainfall", "snow",
-    "umbrella", "celsius", "fahrenheit", "hot outside", "cold outside"
-)
 private val fetchKeywords = listOf(
     "fetch url", "open this link", "open the link", "read this page", "read the page",
     "read this article", "read the article", "summarise this url", "summarize this url",
@@ -17,18 +17,11 @@ private val scheduleKeywords = listOf(
     "schedule", "scheduled", "remind me", "reminder", "every morning", "every evening",
     "every day", "every weekday", "recurring task", "daily at", "weekly at"
 )
-private val artifactKeywords = listOf(
-    "write a document", "write a report", "write a brief", "markdown document",
-    "docx", "word document", "word doc", "spreadsheet", "xlsx", "csv file",
-    "excel sheet", "excel file", "excel", "workbook", "pdf", "pdf file",
-    "sqlite", "database schema", "sql schema"
-)
 
 /**
- * Higher-precision subset of the artifact gate: the user asked for a file to be
- * CREATED, not merely mentioned a format ("what is a pdf used for"). Only this set
- * arms the one-shot create_artifact nudge in AgentTurnPolicy — the broad list above
- * merely offers the tool.
+ * The user asked for a file to be CREATED, not merely mentioned a format ("what is a pdf
+ * used for"). This high-precision set arms the one-shot create_artifact nudge in
+ * AgentTurnPolicy; the tool itself is offered every agent round.
  */
 private val artifactCreateKeywords = listOf(
     "write a document", "write a report", "write a brief", "markdown document",
@@ -63,14 +56,10 @@ private fun matchesAnyWord(text: String, keywords: List<String>): Boolean {
     }
 }
 
-internal fun userWantsWeather(text: String): Boolean = matchesAnyWord(text, weatherKeywords)
-
 internal fun userWantsFetch(text: String): Boolean =
     httpUrl.containsMatchIn(text) || matchesAnyWord(text, fetchKeywords)
 
 internal fun userWantsSchedule(text: String): Boolean = matchesAnyWord(text, scheduleKeywords)
-
-internal fun userWantsArtifact(text: String): Boolean = matchesAnyWord(text, artifactKeywords)
 
 internal fun userWantsArtifactCreated(text: String): Boolean = matchesAnyWord(text, artifactCreateKeywords)
 

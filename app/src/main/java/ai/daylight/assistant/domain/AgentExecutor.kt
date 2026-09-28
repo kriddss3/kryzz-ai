@@ -14,6 +14,7 @@ import ai.daylight.assistant.data.local.ConversationEntity
 import ai.daylight.assistant.data.local.MessageEntity
 import ai.daylight.assistant.data.local.ScheduledTaskEntity
 import ai.daylight.assistant.data.preferences.AppPreferences
+import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.data.remote.ApiMessage
 import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.CalculateArgs
@@ -23,6 +24,7 @@ import ai.daylight.assistant.data.remote.CreateCodeProjectArgs
 import ai.daylight.assistant.data.remote.CreateSkillArgs
 import ai.daylight.assistant.data.remote.ErrorKind
 import ai.daylight.assistant.data.remote.FetchUrlArgs
+import ai.daylight.assistant.data.remote.FetchedPage
 import ai.daylight.assistant.data.remote.FunctionCall
 import ai.daylight.assistant.data.remote.FunctionDefinition
 import ai.daylight.assistant.data.remote.ImageGenerationRequest
@@ -42,6 +44,7 @@ import ai.daylight.assistant.data.remote.OpenRouterClient
 import ai.daylight.assistant.data.remote.ParallelClient
 import ai.daylight.assistant.data.remote.ParallelSearchArgs
 import ai.daylight.assistant.data.remote.ParallelSearchRequest
+import ai.daylight.assistant.data.remote.ParallelSearchResponse
 import ai.daylight.assistant.data.remote.PromptTokensDetails
 import ai.daylight.assistant.data.remote.ProviderPreferences
 import ai.daylight.assistant.data.remote.PublicWebClient
@@ -59,6 +62,7 @@ import ai.daylight.assistant.data.remote.ToolDefinition
 import ai.daylight.assistant.data.remote.Usage
 import ai.daylight.assistant.data.remote.VideoGenerationRequest
 import ai.daylight.assistant.data.remote.WeatherArgs
+import ai.daylight.assistant.data.remote.WeatherReport
 import ai.daylight.assistant.data.remote.accumulateStreamText
 import ai.daylight.assistant.security.SecureCredentialStore
 import ai.daylight.assistant.data.local.SkillEntity
@@ -66,10 +70,16 @@ import ai.daylight.assistant.voice.VoiceConfig
 import android.os.SystemClock
 import android.util.Base64
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -98,8 +108,12 @@ class AgentExecutor(
     private val publicWeb: PublicWebClient? = null,
     private val cronScheduler: CronScheduler? = null,
     private val conversations: ConversationRepository? = null,
-    /** Live tool activity so the UI can show what the agent is currently running. */
-    val toolActivity: MutableSharedFlow<ToolActivity> = MutableSharedFlow(extraBufferCapacity = 8),
+    /**
+     * Live tool activity so the UI can show what the agent is currently running. Sized for
+     * a round that starts several lookups at once: tryEmit drops events once the buffer is
+     * full, and a dropped "finished" event would leave a chip spinning.
+     */
+    val toolActivity: MutableSharedFlow<ToolActivity> = MutableSharedFlow(extraBufferCapacity = 64),
     /**
      * Emits a short label whenever the agent starts a long-running tool call during voice
      * chat — e.g. "checking online" when parallel_search fires. The voice UI plays a quick
@@ -115,6 +129,12 @@ class AgentExecutor(
      * concurrent ask_user call is rejected with a tool error instead of queueing.
      */
     val pendingQuestion: MutableStateFlow<PendingQuestion?> = MutableStateFlow(null)
+
+    /**
+     * The checklist the agent maintains through `update_plan` during the current turn, or
+     * null. Cleared when the turn ends; the chat renders it as a live card.
+     */
+    val agentPlan: MutableStateFlow<AgentPlan?> = MutableStateFlow(null)
 
     /**
      * Delivers the user's answer to the pending question card. [answer] null (or blank)
@@ -227,11 +247,22 @@ class AgentExecutor(
             (if (pastChatInstruction.isNotBlank()) "\n\n$pastChatInstruction" else "") +
             (if (locationContext.isNotBlank()) "\n\n$locationContext" else "")
         val working = mutableListOf(ApiMessage("system", prompt))
-        for (message in history) working += apiMessageFor(message)
+        // The latest replies carry their sources and files back into context, so "open
+        // source 3" or "add a column to that sheet" still has something to refer to.
+        val evidenceReplies = if (voiceMode) emptySet() else history
+            .filter { it.role == "ASSISTANT" && (it.citationsJson != "[]" || it.outputsJson != "[]") }
+            .takeLast(TurnEvidence.MAX_ANNOTATED_REPLIES)
+            .mapTo(mutableSetOf()) { it.id }
+        for (message in history) working += apiMessageFor(message, withEvidence = message.id in evidenceReplies)
+        // fetch_url may open what the user shared or what a search returned (see FetchAllowlist).
+        val userTexts = allMessages.filter { it.role == "USER" }.map { it.content }
+        val conversationUrls = userTexts.flatMap(FetchAllowlist::urlsIn) +
+            allMessages.filter { it.role == "ASSISTANT" }.flatMap { decodeCitations(it).map(Citation::url) }
         val citations = mutableListOf<Citation>()
         val outputs = mutableListOf<GeneratedOutput>()
         var sessionId = conversation.searchSessionId
         var completedToolRounds = 0
+        var freePlanRounds = 0
         var completedSearchRounds = 0
         var didSearch = false
         var skillCreated = false
@@ -279,9 +310,10 @@ class AgentExecutor(
                 )
 
                 val lastUserText = lastUser?.content.orEmpty()
+                // Rebuilt every round: URLs a search returned this turn become readable.
+                val fetchAllowlist = FetchAllowlist(conversationUrls + citations.map(Citation::url), userTexts)
                 // Turn-fixed context + per-round progress feed the pure planner in
-                // AgentTurnPolicy. The gates themselves (keyword detection, settings,
-                // capability) are unchanged from 5.6.12 — only the orchestration changed.
+                // AgentTurnPolicy, which decides what to offer and what to force.
                 val toolContext = AgentTurnPolicy.ToolContext(
                     agentMode = mode == AssistantMode.AGENT,
                     voiceMode = voiceMode,
@@ -320,12 +352,11 @@ class AgentExecutor(
                     offerMediaImage = settings.imageModel.isNotBlank() && userWantsImage(lastUserText),
                     offerMediaVideo = settings.videoModel.isNotBlank() && userWantsVideo(lastUserText),
                     offerMediaAudio = settings.audioModel.isNotBlank() && userWantsAudio(lastUserText),
-                    offerArtifactAuto = userWantsArtifact(lastUserText),
                     offerSkillAuto = userWantsSkill(lastUserText),
                     offerCodeAuto = userWantsCodeProject(lastUserText),
                     memoryEnabled = settings.memoryEnabled,
-                    offerWeather = userWantsWeather(lastUserText),
-                    offerFetch = userWantsFetch(lastUserText),
+                    publicWebAvailable = publicWeb != null,
+                    offerFetch = fetchAllowlist.hasKnownUrls || userWantsFetch(lastUserText),
                     offerSchedule = userWantsSchedule(lastUserText) && cronScheduler != null && conversations != null
                 )
                 val turn = AgentTurnPolicy.TurnProgress(
@@ -363,6 +394,7 @@ class AgentExecutor(
                         AgentTurnPolicy.FETCH_URL -> fetchUrlTool()
                         AgentTurnPolicy.SCHEDULE_TASK -> scheduleTaskTool()
                         AgentTurnPolicy.ASK_USER -> askUserTool()
+                        AgentTurnPolicy.UPDATE_PLAN -> updatePlanTool()
                         else -> null
                     }
                 }
@@ -372,10 +404,10 @@ class AgentExecutor(
                     tools = tools.ifEmpty { null },
                     toolChoice = when {
                         tools.isEmpty() -> null
-                        // MiniMax rejects the OpenAI string "required" (status 2013).
-                        // Pin the named function instead so Auto still actually calls it.
-                        plan.forcedTool != null && provider == ChatProvider.MINIMAX -> ToolChoice.named(plan.forcedTool)
-                        plan.forcedTool != null -> ToolChoice.REQUIRED
+                        // Pin the named function on every provider: MiniMax rejects the
+                        // string "required" (status 2013), and elsewhere "required" would let
+                        // the model satisfy a forced search with any other offered tool.
+                        plan.forcedTool != null -> ToolChoice.named(plan.forcedTool)
                         else -> ToolChoice.AUTO
                     },
                     reasoning = if (voiceMode || provider == ChatProvider.MINIMAX) null else settings.modelReasoning[model]?.apiValue?.let { effort ->
@@ -386,7 +418,8 @@ class AgentExecutor(
                     // MiniMax thinking + a tool call can exceed a tiny default completion budget.
                     maxTokens = if (provider == ChatProvider.MINIMAX) MINIMAX_MAX_COMPLETION_TOKENS else null
                 )
-                val allowEmptyRound = outputs.isNotEmpty() || skillCreated || completedToolRounds > 0 || plan.terminal
+                val allowEmptyRound = outputs.isNotEmpty() || skillCreated || completedToolRounds > 0 ||
+                    freePlanRounds > 0 || plan.terminal
                 val onStreamText: suspend (String) -> Unit = { value ->
                     if (firstTokenLatencyMs == null && value.isNotBlank()) {
                         firstTokenLatencyMs = (SystemClock.elapsedRealtime() - generationStartedAt).coerceAtLeast(0L)
@@ -518,11 +551,40 @@ class AgentExecutor(
                     working += ApiMessage("system", AgentTurnPolicy.TERMINAL_DIRECTIVE)
                     continue
                 }
-                completedToolRounds++
+                if (AgentTurnPolicy.roundCountsTowardBudget(calls.map { it.function.name }, freePlanRounds)) {
+                    completedToolRounds++
+                } else {
+                    freePlanRounds++
+                }
                 working += ApiMessage("assistant", historyText.ifBlank { null }, toolCalls = calls)
 
-                for (call in calls) {
+                coroutineScope {
+                // Network lookups (search, page reads, weather) start together on the IO
+                // dispatcher: a search plus two page reads cost one wait instead of three, and
+                // blocking HTTP never runs on the main thread. Their results are applied below
+                // strictly in call order, which keeps citation numbers, tool rows and the
+                // history deterministic.
+                val searchSession = sessionId
+                val lookups: List<Deferred<Result<Lookup>>?> = calls.map { call ->
+                    if (call.function.name !in LOOKUP_TOOLS) return@map null
                     toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
+                    // The voice UI plays a filler phrase so the user hears that a search is running.
+                    if (voiceMode && call.function.name == AgentTurnPolicy.PARALLEL_SEARCH) {
+                        voiceFillerRequest.tryEmit("checking online")
+                    }
+                    async(Dispatchers.IO) {
+                        runCatching {
+                            lookup(call, conversation.searchWidth.coerceIn(1, 5), searchSession, model, settings, fetchAllowlist)
+                        }
+                    }
+                }
+                val finished = BooleanArray(calls.size)
+                try {
+                for ((index, call) in calls.withIndex()) {
+                    val pendingLookup = lookups[index]
+                    if (pendingLookup == null) {
+                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
+                    }
                     try {
                         when (call.function.name) {
                         TOOL_SEARCH_PAST_CHATS -> {
@@ -546,24 +608,7 @@ class AgentExecutor(
                         }
 
                         "parallel_search" -> {
-                            // Tell the voice UI to play a varied filler phrase ("Let me search
-                            // that up", "Checking", etc.) and a short tone so the user is
-                            // audibly assured the search is in progress.
-                            if (voiceMode) voiceFillerRequest.tryEmit("checking online")
-                            val args = validateSearchArgs(call.function.arguments, conversation.searchWidth.coerceIn(1, 5))
-                            val parallelKey = credentials.parallelKey()
-                                ?: throw AssistantApiException(ErrorKind.INVALID_KEY, "Parallel Search is enabled but its API key is missing.")
-                            val result = parallel.search(
-                                parallelKey,
-                                ParallelSearchRequest(
-                                    objective = args.objective,
-                                    searchQueries = args.searchQueries,
-                                    mode = args.mode,
-                                    maxCharsTotal = settings.maxSearchChars,
-                                    sessionId = sessionId,
-                                    clientModel = model
-                                )
-                            )
+                            val result = (pendingLookup.awaitLookup() as Lookup.Search).response
                             didSearch = true
                             completedSearchRounds++
                             sessionId = result.sessionId
@@ -752,12 +797,7 @@ class AgentExecutor(
                         }
 
                         "get_weather" -> {
-                            val client = publicWeb
-                                ?: throw AssistantApiException(ErrorKind.VALIDATION, "Weather is not available.")
-                            val args = validateWeatherArgs(call.function.arguments)
-                            val lat = settings.locationLat.takeIf { settings.locationEnabled }
-                            val lon = settings.locationLon.takeIf { settings.locationEnabled }
-                            val report = client.weather(args.place, lat, lon)
+                            val report = (pendingLookup.awaitLookup() as Lookup.Weather).report
                             val structured = buildJsonObject {
                                 put("place", report.place)
                                 put("latitude", report.latitude)
@@ -771,10 +811,7 @@ class AgentExecutor(
                         }
 
                         "fetch_url" -> {
-                            val client = publicWeb
-                                ?: throw AssistantApiException(ErrorKind.VALIDATION, "Page fetch is not available.")
-                            val args = validateFetchArgs(call.function.arguments)
-                            val page = client.fetchPage(args.url)
+                            val page = (pendingLookup.awaitLookup() as Lookup.Page).page
                             val structured = buildJsonObject {
                                 put("url", page.url)
                                 put("title", page.title)
@@ -896,6 +933,23 @@ class AgentExecutor(
                             working += ApiMessage("tool", structured, call.id, call.function.name)
                         }
 
+                        AgentTurnPolicy.UPDATE_PLAN -> {
+                            val steps = AgentPlanParser.parse(call.function.arguments)
+                                ?: throw AssistantApiException(
+                                    ErrorKind.VALIDATION,
+                                    "update_plan needs a steps array of 1-${AgentPlanParser.MAX_STEPS} items, each with a short title and a status of pending, in_progress, or done."
+                                )
+                            val updated = AgentPlan(conversationId, steps)
+                            agentPlan.value = updated
+                            val structured = buildJsonObject {
+                                put("status", "plan_updated")
+                                put("done", updated.doneCount)
+                                put("remaining", steps.size - updated.doneCount)
+                            }.toString()
+                            saveToolMessage(conversationId, call, structured)
+                            working += ApiMessage("tool", structured, call.id, call.function.name)
+                        }
+
                         else -> {
                             val unsupported = "Unsupported tool: ${call.function.name}"
                             working += ApiMessage("tool", unsupported, call.id, call.function.name)
@@ -912,8 +966,11 @@ class AgentExecutor(
                         // this, any tool throw erased the just-streamed bubble and left the
                         // chat with only a transient error banner, which made Agent mode
                         // feel like it "can't call tools".
-                        val friendly = (toolError as? AssistantApiException)?.message
-                            ?: "Tool ${call.function.name} failed."
+                        val friendly = when (toolError) {
+                            is AssistantApiException -> toolError.message
+                            is IOException -> "Network error during ${call.function.name}: ${toolError.message ?: toolError.javaClass.simpleName}"
+                            else -> null
+                        } ?: "Tool ${call.function.name} failed."
                         val errorResult = buildJsonObject {
                             put("status", "error")
                             put("error", friendly.take(500))
@@ -921,8 +978,19 @@ class AgentExecutor(
                         saveToolMessage(conversationId, call, errorResult)
                         working += ApiMessage("tool", errorResult, call.id, call.function.name)
                     } finally {
+                        finished[index] = true
                         toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = false))
                     }
+                }
+                } finally {
+                    // A cancelled turn can leave lookups that were started but never applied;
+                    // close their chips so nothing keeps spinning.
+                    lookups.forEachIndexed { index, deferred ->
+                        if (deferred != null && !finished[index]) {
+                            toolActivity.tryEmit(ToolActivity(conversationId, calls[index].function.name, started = false))
+                        }
+                    }
+                }
                 }
             }
         } catch (cancelled: CancellationException) {
@@ -941,6 +1009,7 @@ class AgentExecutor(
             if (agentRunningActivity) {
                 toolActivity.tryEmit(ToolActivity(conversationId, TOOL_AGENT_RUNNING, started = false))
             }
+            if (agentPlan.value?.conversationId == conversationId) agentPlan.value = null
         }
     }
 
@@ -1352,7 +1421,16 @@ class AgentExecutor(
         )
     }
 
-    private suspend fun apiMessageFor(message: MessageEntity): ApiMessage {
+    private fun decodeCitations(message: MessageEntity): List<Citation> =
+        runCatching { json.decodeFromString<List<Citation>>(message.citationsJson) }.getOrDefault(emptyList())
+
+    private fun decodeOutputs(message: MessageEntity): List<GeneratedOutput> =
+        runCatching { json.decodeFromString<List<GeneratedOutput>>(message.outputsJson) }.getOrDefault(emptyList())
+
+    private suspend fun apiMessageFor(message: MessageEntity, withEvidence: Boolean = false): ApiMessage {
+        if (withEvidence && message.role == "ASSISTANT") {
+            return ApiMessage("assistant", TurnEvidence.annotate(message.content, decodeCitations(message), decodeOutputs(message)))
+        }
         val attachments = runCatching { json.decodeFromString<List<ChatAttachment>>(message.attachmentsJson) }.getOrDefault(emptyList())
         if (message.role != "USER" || attachments.isEmpty()) return ApiMessage(message.role.lowercase(), message.content)
         val parts = buildJsonArray {
@@ -1681,7 +1759,7 @@ class AgentExecutor(
     private fun artifactToolAuto() = ToolDefinition(
         function = FunctionDefinition(
             name = "create_artifact",
-            description = "Return a finished local file the user can save on this phone: a document (Markdown, saved as DOCX), spreadsheet (CSV, saved as XLSX), database (SQL, saved as SQLite), or pdf (plain text or Markdown, saved as PDF). Call it exactly once with the complete deliverable.",
+            description = "Return a finished local file the user can save on this phone: a document (Markdown, saved as DOCX), spreadsheet (CSV, saved as XLSX), database (SQL, saved as SQLite), or pdf (plain text or Markdown, saved as PDF). Use it only when the user wants a file, download, or export, not for ordinary answers. Call it exactly once with the complete deliverable.",
             parameters = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -1757,7 +1835,7 @@ class AgentExecutor(
     private fun fetchUrlTool() = ToolDefinition(
         function = FunctionDefinition(
             name = "fetch_url",
-            description = "Download a public http(s) page and return its readable text. Use when the user pasted a specific link.",
+            description = "Download a public http(s) page and return its readable text (up to ${PublicWebClient.MAX_TEXT_CHARS} characters). Use it to read a link the user shared, or to read a result URL returned by parallel_search when its excerpts are not enough. Pass the URL exactly as given; other URLs are refused.",
             parameters = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -1867,6 +1945,43 @@ class AgentExecutor(
         )
     )
 
+    private fun updatePlanTool() = ToolDefinition(
+        function = FunctionDefinition(
+            name = AgentTurnPolicy.UPDATE_PLAN,
+            description = "Show the user a live checklist of your plan for this task and keep it current. Call it first for work with three or more distinct steps, then again as steps start and finish; send the whole list every time. It can be called in the same round as other tools. Skip it for simple questions.",
+            parameters = buildJsonObject {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("steps") {
+                        put("type", "array"); put("minItems", 1); put("maxItems", AgentPlanParser.MAX_STEPS)
+                        putJsonObject("items") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("title") {
+                                    put("type", "string")
+                                    put("description", "Short step, e.g. Compare battery tests")
+                                    put("maxLength", AgentPlanParser.MAX_TITLE_CHARS)
+                                }
+                                putJsonObject("status") {
+                                    put("type", "string")
+                                    put("enum", buildJsonArray {
+                                        add(JsonPrimitive("pending"))
+                                        add(JsonPrimitive("in_progress"))
+                                        add(JsonPrimitive("done"))
+                                    })
+                                }
+                            }
+                            put("required", buildJsonArray { add(JsonPrimitive("title")); add(JsonPrimitive("status")) })
+                            put("additionalProperties", false)
+                        }
+                    }
+                }
+                put("required", buildJsonArray { add(JsonPrimitive("steps")) })
+                put("additionalProperties", false)
+            }
+        )
+    )
+
     private fun validateAskUser(arguments: String): InlineQuestion {
         val raw = runCatching { json.decodeFromString(InlineQuestion.serializer(), arguments) }
             .getOrElse { throw AssistantApiException(ErrorKind.VALIDATION, "The model supplied an invalid user question.") }
@@ -1905,7 +2020,7 @@ class AgentExecutor(
         return WeatherArgs(place)
     }
 
-    private fun validateFetchArgs(arguments: String): FetchUrlArgs {
+    private fun validateFetchArgs(arguments: String, allowlist: FetchAllowlist): FetchUrlArgs {
         val raw = runCatching { json.decodeFromString<FetchUrlArgs>(arguments) }
             .getOrElse { throw AssistantApiException(ErrorKind.VALIDATION, "The model supplied an invalid URL.") }
         val url = raw.url.trim()
@@ -1913,8 +2028,65 @@ class AgentExecutor(
             throw AssistantApiException(ErrorKind.VALIDATION, "The model supplied an invalid URL.")
         }
         PublicWebClient.requireSafeHttpUrl(url)
+        if (!allowlist.permits(url)) throw AssistantApiException(ErrorKind.VALIDATION, FetchAllowlist.REFUSAL)
         return FetchUrlArgs(url)
     }
+
+    /** Result of a network lookup tool, produced off the main thread by [lookup]. */
+    private sealed interface Lookup {
+        data class Search(val response: ParallelSearchResponse) : Lookup
+        data class Page(val page: FetchedPage) : Lookup
+        data class Weather(val report: WeatherReport) : Lookup
+    }
+
+    /**
+     * The network half of the lookup tools. Runs on the IO dispatcher, possibly alongside
+     * other lookups from the same round, so it validates and fetches but never touches turn
+     * state (citations, session id, history); the caller applies results in call order.
+     * The blocking public-web calls are interruptible so a cancelled turn stops waiting.
+     */
+    private suspend fun lookup(
+        call: ToolCall,
+        searchWidth: Int,
+        searchSession: String?,
+        model: String,
+        settings: SettingsState,
+        allowlist: FetchAllowlist
+    ): Lookup = when (call.function.name) {
+        AgentTurnPolicy.PARALLEL_SEARCH -> {
+            val args = validateSearchArgs(call.function.arguments, searchWidth)
+            val parallelKey = credentials.parallelKey()
+                ?: throw AssistantApiException(ErrorKind.INVALID_KEY, "Parallel Search is enabled but its API key is missing.")
+            val response = parallel.search(
+                parallelKey,
+                ParallelSearchRequest(
+                    objective = args.objective,
+                    searchQueries = args.searchQueries,
+                    mode = args.mode,
+                    maxCharsTotal = settings.maxSearchChars,
+                    sessionId = searchSession,
+                    clientModel = model
+                )
+            )
+            Lookup.Search(response)
+        }
+        AgentTurnPolicy.FETCH_URL -> {
+            val client = publicWeb ?: throw AssistantApiException(ErrorKind.VALIDATION, "Page fetch is not available.")
+            val url = validateFetchArgs(call.function.arguments, allowlist).url
+            Lookup.Page(runInterruptible { client.fetchPage(url) })
+        }
+        AgentTurnPolicy.GET_WEATHER -> {
+            val client = publicWeb ?: throw AssistantApiException(ErrorKind.VALIDATION, "Weather is not available.")
+            val args = validateWeatherArgs(call.function.arguments)
+            val lat = settings.locationLat.takeIf { settings.locationEnabled }
+            val lon = settings.locationLon.takeIf { settings.locationEnabled }
+            Lookup.Weather(runInterruptible { client.weather(args.place, lat, lon) })
+        }
+        else -> error("${call.function.name} is not a lookup tool")
+    }
+
+    private suspend fun Deferred<Result<Lookup>>?.awaitLookup(): Lookup =
+        checkNotNull(this) { "Lookup was not started for this call." }.await().getOrThrow()
 
     private fun validateRememberArgs(arguments: String): ValidatedRemember {
         val raw = runCatching { json.decodeFromString<RememberFactArgs>(arguments) }
@@ -2020,6 +2192,13 @@ class AgentExecutor(
         const val TOOL_VIDEO_CREATION = "video_creation"
         const val TOOL_AUDIO_CREATION = "audio_creation"
         const val MINIMAX_MAX_COMPLETION_TOKENS = 8_192
+
+        /** Network-bound tools whose calls in one round run concurrently (see [lookup]). */
+        private val LOOKUP_TOOLS = setOf(
+            AgentTurnPolicy.PARALLEL_SEARCH,
+            AgentTurnPolicy.FETCH_URL,
+            AgentTurnPolicy.GET_WEATHER
+        )
     }
 }
 
