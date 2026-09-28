@@ -14,11 +14,12 @@ android {
         applicationId = "ai.daylight.assistant"
         minSdk = 28
         targetSdk = 35
-// Kryzz AI 5.8.0 - Agent Auto rework, phase 1: cheap tools offered every round, fetch_url
-//      reads search results (allowlisted URLs only), strict forced-search gate, concurrent
-//      lookups off the main thread, sources carried into history, update_plan checklist card
-        versionCode = 81
-        versionName = "5.8.0"
+// Kryzz AI 5.9.0 - Agent Auto rework, phase 2: one review pass checks substantial answers
+//      against the request and sources before they are final (setting, default on), a
+//      16-step budget (4..24) replaces the 6-round cap, a per-turn cost cap (default $0.25)
+//      ends tool use with a written answer, older search and page results are compacted
+        versionCode = 82
+        versionName = "5.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

@@ -26,6 +26,11 @@ import ai.daylight.assistant.data.remote.ToolDefinition
  * (schedule, skill, code). A forced first search no longer withholds the other tools: the
  * executor forces it with a named tool_choice, so offering them does not dilute the call.
  *
+ * v5.9 room to work: the small round cap (6, hard maximum 8) became a step budget
+ * (default [DEFAULT_STEP_BUDGET], range [MIN_STEP_BUDGET]..[MAX_STEP_BUDGET]) plus a per-turn
+ * cost cap ([costCapReached]). Hitting either one moves the turn into the same terminal
+ * no-tools round, so it still ends with a written answer.
+ *
  * Everything here is pure and unit-tested; [AgentExecutor] only maps the planned tool
  * names to its [ToolDefinition] builders and executes the transitions.
  */
@@ -56,6 +61,25 @@ internal object AgentTurnPolicy {
      */
     const val FREE_PLAN_ROUNDS = 3
 
+    /** v5.9: tool rounds per turn (the "step budget"), set in Settings within this range. */
+    const val DEFAULT_STEP_BUDGET = 16
+    const val MIN_STEP_BUDGET = 4
+    const val MAX_STEP_BUDGET = 24
+
+    /** The pre-5.9 default of the old "Maximum tool rounds" slider. */
+    const val LEGACY_DEFAULT_TOOL_ROUNDS = 6
+
+    /** v5.9: default per-turn cost cap in US cents; 0 means the cap is off. */
+    const val DEFAULT_COST_CAP_CENTS = 25
+
+    /**
+     * Cost cap fallback for providers that report tokens but no cost (MiniMax today): the cap
+     * is converted to a token allowance at this rate, which assumes a blended price of
+     * $0.50 per million tokens. The default $0.25 cap therefore allows 500k tokens per turn.
+     * Prompt tokens are billed again every round, so the running total tracks spend closely.
+     */
+    const val TOKENS_PER_USD_WITHOUT_COST = 2_000_000L
+
     /** One-shot re-ask when the model described a tool call instead of invoking it. */
     const val NUDGE_DIRECTIVE =
         "You described a tool call in prose but did not invoke it. Call the tool now through " +
@@ -78,6 +102,15 @@ internal object AgentTurnPolicy {
             "in full using those results. Do not call any more tools, do not say you cannot " +
             "answer, and do not repeat the tool output verbatim — write a clear, complete reply."
 
+    /**
+     * v5.9: the terminal directive used when the per-turn cost cap stopped the tools. The
+     * executor appends [costCapNote] to the answer itself, so the model is not asked to.
+     */
+    const val COST_CAP_DIRECTIVE =
+        "The per-turn cost cap in Settings has been reached, so no more tools can run. Answer " +
+            "the user's original question now in full, using the results above. Where a part of " +
+            "the request still needed more lookups, say briefly what is missing. Do not call any tools."
+
     /** Turn-fixed facts about the request and settings (computed once per turn). */
     data class ToolContext(
         val agentMode: Boolean,
@@ -92,7 +125,8 @@ internal object AgentTurnPolicy {
         /** Settings allow web search and a Parallel key exists. */
         val searchAvailable: Boolean,
         val searchRoundCap: Int,
-        val maxToolRounds: Int,
+        /** v5.9: tool rounds allowed this turn (Settings step budget). */
+        val stepBudget: Int,
         /** AUTO fresh-info gate: force the first parallel_search round. */
         val forceSearchFirst: Boolean,
         val offerMediaImage: Boolean,
@@ -116,7 +150,9 @@ internal object AgentTurnPolicy {
         val terminalStarted: Boolean = false,
         val outputKinds: Set<OutputKind> = emptySet(),
         val skillCreated: Boolean = false,
-        val didSearch: Boolean = false
+        val didSearch: Boolean = false,
+        /** v5.9: the per-turn cost cap was reached; the next round is the terminal one. */
+        val costCapped: Boolean = false
     )
 
     data class RoundPlan(
@@ -141,13 +177,17 @@ internal object AgentTurnPolicy {
     }
 
     fun planRound(p: TurnProgress, c: ToolContext): RoundPlan {
-        val withinLimit = ToolRoundLimiter.canRun(p.toolRounds, c.maxToolRounds)
-        if (p.terminalStarted || !withinLimit) {
+        val withinLimit = ToolRoundLimiter.canRun(p.toolRounds, c.stepBudget)
+        if (p.terminalStarted || !withinLimit || p.costCapped) {
             return RoundPlan(
                 toolNames = emptyList(),
                 forcedTool = null,
                 terminal = true,
-                terminalDirective = if (p.terminalStarted) null else TERMINAL_DIRECTIVE
+                terminalDirective = when {
+                    p.terminalStarted -> null
+                    p.costCapped -> COST_CAP_DIRECTIVE
+                    else -> TERMINAL_DIRECTIVE
+                }
             )
         }
         val needsArtifact = c.artifactCapability && p.outputKinds.isEmpty()
@@ -203,6 +243,38 @@ internal object AgentTurnPolicy {
         }?.takeIf { it in names }
         return RoundPlan(toolNames = names, forcedTool = forcedTool, terminal = false, terminalDirective = null)
     }
+
+    /**
+     * v5.9 step budget from Settings. [stored] is the new "agent_step_budget" value; when it
+     * was never written, [legacyRounds] from the old "max_tool_rounds" slider is migrated:
+     * the old default of 6 (a user who never raised the cap, or moved the slider back to it)
+     * becomes the new default, and any other choice is kept and clamped into the new range,
+     * so a user who picked 8 gets 8 and a user who picked 2 gets the minimum of 4. The new
+     * key is separate so an explicit choice of 6 after the upgrade is not migrated again.
+     */
+    fun stepBudgetFromStored(stored: Int?, legacyRounds: Int?): Int = when {
+        stored != null -> stored.coerceIn(MIN_STEP_BUDGET, MAX_STEP_BUDGET)
+        legacyRounds == null || legacyRounds == LEGACY_DEFAULT_TOOL_ROUNDS -> DEFAULT_STEP_BUDGET
+        else -> legacyRounds.coerceIn(MIN_STEP_BUDGET, MAX_STEP_BUDGET)
+    }
+
+    /**
+     * v5.9 per-turn cost cap. [capUsd] <= 0 means the cap is off. When the provider reported
+     * a cost ([spentUsd] non-null) that decides; otherwise the cap falls back to a token
+     * allowance ([TOKENS_PER_USD_WITHOUT_COST]) measured on [totalTokens]. With neither
+     * cost nor usage reported, [totalTokens] stays 0 and the cap never trips; the step
+     * budget still bounds the turn.
+     */
+    fun costCapReached(spentUsd: Double?, totalTokens: Long, capUsd: Double): Boolean {
+        if (capUsd <= 0.0) return false
+        if (spentUsd != null) return spentUsd >= capUsd
+        return totalTokens >= (capUsd * TOKENS_PER_USD_WITHOUT_COST).toLong()
+    }
+
+    /** Appended to an answer whose tools were stopped by the cost cap. */
+    fun costCapNote(capUsd: Double): String =
+        "_Further tool use stopped at the per-turn cost cap of $${"%.2f".format(java.util.Locale.US, capUsd)} " +
+            "(Settings > Search & tools)._"
 
     /**
      * Whether a round that returned [callNames] spends the tool budget. Plan-only rounds are

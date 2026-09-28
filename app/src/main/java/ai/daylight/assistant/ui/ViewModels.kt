@@ -141,6 +141,7 @@ private fun toolDisplayLabel(tool: String): String = when (tool) {
     AgentExecutor.TOOL_MEMORY_SAVE -> "Remembering that"
     AgentExecutor.TOOL_SEARCH_PAST_CHATS -> "Searching past chats"
     AgentExecutor.TOOL_AGENT_RUNNING -> "Agent at work"
+    AgentExecutor.TOOL_REVIEWING -> "Reviewing the answer"
     AgentExecutor.TOOL_IMAGE_CREATION -> "Creating your image"
     AgentExecutor.TOOL_VIDEO_CREATION -> "Generating your video"
     AgentExecutor.TOOL_AUDIO_CREATION -> "Creating your audio"
@@ -1883,7 +1884,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setPersona(id: String, custom: String) = viewModelScope.launch { container.preferences.setPersona(id, custom) }
     fun setSearch(value: Boolean) = viewModelScope.launch { container.preferences.setSearchEnabled(value) }
     fun setSearchChars(value: Int) = viewModelScope.launch { container.preferences.setMaxSearchChars(value) }
-    fun setToolRounds(value: Int) = viewModelScope.launch { container.preferences.setMaxToolRounds(value) }
+    fun setStepBudget(value: Int) = viewModelScope.launch { container.preferences.setStepBudget(value) }
+    fun setCostCapCents(value: Int) = viewModelScope.launch { container.preferences.setCostCapCents(value) }
+    fun setReviewAnswers(value: Boolean) = viewModelScope.launch { container.preferences.setReviewAnswers(value) }
     fun setTheme(value: ThemeMode) = viewModelScope.launch { container.preferences.setTheme(value) }
     fun setBackgroundStyle(value: BackgroundStyle) = viewModelScope.launch { container.preferences.setBackgroundStyle(value) }
     fun setColouredGradient(value: GradientPalette) = viewModelScope.launch { container.preferences.setColouredGradient(value) }
