@@ -14,12 +14,14 @@ android {
         applicationId = "ai.daylight.assistant"
         minSdk = 28
         targetSdk = 35
-// Kryzz AI 5.9.0 - Agent Auto rework, phase 2: one review pass checks substantial answers
-//      against the request and sources before they are final (setting, default on), a
-//      16-step budget (4..24) replaces the 6-round cap, a per-turn cost cap (default $0.25)
-//      ends tool use with a written answer, older search and page results are compacted
-        versionCode = 82
-        versionName = "5.9.0"
+// Kryzz AI 5.10.0 - Agent Auto rework, phase 3: Fast / Balanced / Max quality presets set
+//      model, reasoning, step budget, review and cost cap per agent turn (new Max model
+//      slot), stronger tool-calling defaults for agent and research with a one-time switch
+//      offer for gpt-4o-mini users, tool-aware model fallback, and prompt caching (static
+//      system prompt, per-turn context before the latest message, one tool list per turn,
+//      cache_control breakpoints for Anthropic models)
+        versionCode = 83
+        versionName = "5.10.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

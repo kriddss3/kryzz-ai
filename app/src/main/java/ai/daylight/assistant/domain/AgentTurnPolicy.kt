@@ -31,6 +31,30 @@ import ai.daylight.assistant.data.remote.ToolDefinition
  * cost cap ([costCapReached]). Hitting either one moves the turn into the same terminal
  * no-tools round, so it still ends with a written answer.
  *
+ * v5.10 stable tool list: providers cache the request prefix, and the tool list comes before
+ * the system prompt in it, so a list that changed between rounds made every round of a turn
+ * pay full price for the whole history. [planRound] now offers one list per turn, fixed by
+ * the turn's [ToolContext], in a fixed order:
+ *
+ *  - fetch_url is offered from the first round whenever a URL is known or a search could
+ *    return one; [FetchAllowlist] still refuses URLs that no search or user message produced.
+ *  - create_artifact and create_code_project stay offered after a file exists; a second call
+ *    replaces the earlier file.
+ *  - parallel_search stays offered past the per-turn search cap, and one generated image,
+ *    video or track per kind stays the limit; the executor refuses the extra calls with a
+ *    tool error ([refusal]) instead of hiding the tool.
+ *  - The terminal round sends the same list with tool_choice "none" on OpenRouter
+ *    ([keepsToolsOnTerminalRound]). MiniMax does not document "none", so it keeps the
+ *    pre-5.10 terminal round without tools.
+ *  - Voice chat is the exception: its only tool, parallel_search, is still withdrawn after
+ *    its single round, because a refused second search would add a round trip to a spoken
+ *    reply and its short prompt gains little from caching.
+ *
+ * The per-turn keyword gates for media, schedule, skill and code tools stay: they depend
+ * only on the latest user message, so they never change within a turn. The cost is a cache
+ * miss on the rare turn whose gate differs from the previous turn; the gain is that a video
+ * tool that polls for minutes is never offered to a plain question.
+ *
  * Everything here is pure and unit-tested; [AgentExecutor] only maps the planned tool
  * names to its [ToolDefinition] builders and executes the transitions.
  */
@@ -156,10 +180,14 @@ internal object AgentTurnPolicy {
     )
 
     data class RoundPlan(
+        /** v5.10: the turn's stable tool list, sent on every round including the terminal one. */
         val toolNames: List<String>,
-        /** Non-null when the model must call this tool (named choice on MiniMax, REQUIRED elsewhere). */
+        /** Non-null when the model must call this tool (a named tool_choice on every provider). */
         val forcedTool: String?,
-        /** Terminal round: no tools offered; whatever text comes back ends the turn. */
+        /**
+         * Terminal round: no tool may run; whatever text comes back ends the turn. The tools
+         * are still sent with tool_choice "none" where [keepsToolsOnTerminalRound] allows.
+         */
         val terminal: Boolean,
         /** Set only on the transition INTO the terminal round; null while already terminal. */
         val terminalDirective: String?
@@ -177,10 +205,11 @@ internal object AgentTurnPolicy {
     }
 
     fun planRound(p: TurnProgress, c: ToolContext): RoundPlan {
+        val names = offeredTools(p, c)
         val withinLimit = ToolRoundLimiter.canRun(p.toolRounds, c.stepBudget)
         if (p.terminalStarted || !withinLimit || p.costCapped) {
             return RoundPlan(
-                toolNames = emptyList(),
+                toolNames = names,
                 forcedTool = null,
                 terminal = true,
                 terminalDirective = when {
@@ -193,45 +222,13 @@ internal object AgentTurnPolicy {
         val needsArtifact = c.artifactCapability && p.outputKinds.isEmpty()
         val needsSkill = c.skillCapability && !p.skillCreated
         val needsCode = c.codeCapability && OutputKind.CODE !in p.outputKinds
-        val allowSearch = c.searchAvailable &&
-            p.searchRounds < c.searchRoundCap.coerceIn(1, ToolRoundLimiter.HARD_MAXIMUM)
+        val allowSearch = searchAllowed(p, c)
         // AUTO's fresh-info gate: force the first parallel_search round so news, prices and
         // scores are not answered from stale memory. First round only (didSearch flips).
         val forceSearch = c.forceSearchFirst && !p.didSearch && !needsSkill && !needsCode && allowSearch
         val needsDeepPass = allowSearch && c.deepResearch &&
             DeepSearchPolicy.shouldForceAnotherPass(p.searchRounds, c.searchDepth)
         val forceWideFirst = allowSearch && c.wideSearch && !p.didSearch
-
-        val names = buildList {
-            if (!c.voiceMode && !needsSkill && !needsCode) add(SEARCH_PAST_CHATS)
-            if (allowSearch && !needsSkill && !needsCode) add(PARALLEL_SEARCH)
-            if (needsArtifact) add(CREATE_ARTIFACT)
-            if (needsSkill) add(CREATE_SKILL)
-            if (needsCode) add(CREATE_CODE_PROJECT)
-            // AUTO media tools: keyword-gated in the context so generate_video is never
-            // offered on a plain text question (it would poll the provider for minutes).
-            val autoMedia = c.agentMode && c.capabilityAuto
-            if (autoMedia && c.offerMediaImage && OutputKind.IMAGE !in p.outputKinds) add(GENERATE_IMAGE)
-            if (autoMedia && c.offerMediaVideo && OutputKind.VIDEO !in p.outputKinds) add(GENERATE_VIDEO)
-            if (autoMedia && c.offerMediaAudio && OutputKind.AUDIO !in p.outputKinds) add(GENERATE_AUDIO)
-            val utility = c.agentMode && !needsSkill && !needsCode && !c.voiceMode
-            if (utility) {
-                add(UPDATE_PLAN)
-                add(GET_CURRENT_TIME)
-                add(CALCULATE)
-                if (c.memoryEnabled) {
-                    add(REMEMBER_FACT)
-                    add(RECALL_MEMORIES)
-                }
-                if (c.publicWebAvailable) add(GET_WEATHER)
-                if (c.publicWebAvailable && c.offerFetch) add(FETCH_URL)
-                if (c.offerSchedule) add(SCHEDULE_TASK)
-                add(ASK_USER)
-                if (p.outputKinds.none { it in ArtifactKinds.fileKinds }) add(CREATE_ARTIFACT)
-                if (c.offerSkillAuto && !p.skillCreated) add(CREATE_SKILL)
-                if (c.offerCodeAuto && OutputKind.CODE !in p.outputKinds) add(CREATE_CODE_PROJECT)
-            }
-        }.distinct()
         val forcedTool = when {
             forceSearch -> PARALLEL_SEARCH
             needsSkill -> CREATE_SKILL
@@ -243,6 +240,84 @@ internal object AgentTurnPolicy {
         }?.takeIf { it in names }
         return RoundPlan(toolNames = names, forcedTool = forcedTool, terminal = false, terminalDirective = null)
     }
+
+    /**
+     * v5.10: the tool list for the whole turn (see the class comment). Only voice chat still
+     * depends on [p]: its single search is withdrawn once used.
+     */
+    private fun offeredTools(p: TurnProgress, c: ToolContext): List<String> {
+        if (c.voiceMode) return if (searchAllowed(p, c)) listOf(PARALLEL_SEARCH) else emptyList()
+        // The dedicated Skill maker and Code capabilities offer only their one tool.
+        val dedicatedMaker = c.skillCapability || c.codeCapability
+        return buildList {
+            if (!dedicatedMaker) add(SEARCH_PAST_CHATS)
+            if (c.searchAvailable && !dedicatedMaker) add(PARALLEL_SEARCH)
+            if (c.artifactCapability) add(CREATE_ARTIFACT)
+            if (c.skillCapability) add(CREATE_SKILL)
+            if (c.codeCapability) add(CREATE_CODE_PROJECT)
+            // AUTO media tools: keyword-gated in the context so generate_video is never
+            // offered on a plain text question (it would poll the provider for minutes).
+            val autoMedia = c.agentMode && c.capabilityAuto
+            if (autoMedia && c.offerMediaImage) add(GENERATE_IMAGE)
+            if (autoMedia && c.offerMediaVideo) add(GENERATE_VIDEO)
+            if (autoMedia && c.offerMediaAudio) add(GENERATE_AUDIO)
+            if (c.agentMode && !dedicatedMaker) {
+                add(UPDATE_PLAN)
+                add(GET_CURRENT_TIME)
+                add(CALCULATE)
+                if (c.memoryEnabled) {
+                    add(REMEMBER_FACT)
+                    add(RECALL_MEMORIES)
+                }
+                if (c.publicWebAvailable) add(GET_WEATHER)
+                // A search this turn can make result URLs readable, so fetch_url is offered
+                // up front instead of appearing mid-turn.
+                if (c.publicWebAvailable && (c.offerFetch || c.searchAvailable)) add(FETCH_URL)
+                if (c.offerSchedule) add(SCHEDULE_TASK)
+                add(ASK_USER)
+                add(CREATE_ARTIFACT)
+                if (c.offerSkillAuto) add(CREATE_SKILL)
+                if (c.offerCodeAuto) add(CREATE_CODE_PROJECT)
+            }
+        }.distinct()
+    }
+
+    private fun searchAllowed(p: TurnProgress, c: ToolContext): Boolean =
+        c.searchAvailable && p.searchRounds < c.searchRoundCap.coerceIn(1, ToolRoundLimiter.HARD_MAXIMUM)
+
+    /** v5.10: tool result for a search past the per-turn search cap. */
+    const val SEARCH_LIMIT_REFUSAL =
+        "The web search limit for this turn has been reached. Answer from the results above, " +
+            "or read one of the result pages with fetch_url if it is offered."
+
+    /** v5.10: tool result for a second image, video or track of the same kind in one turn. */
+    const val MEDIA_REPEAT_REFUSAL =
+        "One file of this kind was already generated this turn. Describe any change the user " +
+            "wants and let them ask for a new one."
+
+    /** v5.10: tool result for a second create_skill call in one turn. */
+    const val SKILL_REPEAT_REFUSAL = "A skill was already saved this turn. Do not create another one."
+
+    /**
+     * v5.10: why a call of [toolName] must not run, or null when it may. [p] is the progress
+     * at the start of the round, so calls within one round are judged together, as they were
+     * when the tool was withdrawn from the next round instead.
+     */
+    fun refusal(toolName: String, p: TurnProgress, c: ToolContext): String? = when (toolName) {
+        PARALLEL_SEARCH -> SEARCH_LIMIT_REFUSAL.takeUnless { searchAllowed(p, c) }
+        GENERATE_IMAGE -> MEDIA_REPEAT_REFUSAL.takeIf { OutputKind.IMAGE in p.outputKinds }
+        GENERATE_VIDEO -> MEDIA_REPEAT_REFUSAL.takeIf { OutputKind.VIDEO in p.outputKinds }
+        GENERATE_AUDIO -> MEDIA_REPEAT_REFUSAL.takeIf { OutputKind.AUDIO in p.outputKinds }
+        CREATE_SKILL -> SKILL_REPEAT_REFUSAL.takeIf { p.skillCreated }
+        else -> null
+    }
+
+    /**
+     * v5.10: whether the terminal round keeps the tool list and sends tool_choice "none".
+     * OpenRouter documents "none" ("the model will not call any tool and instead generates a
+     * message"); MiniMax does not, so it keeps the terminal round without tools.
+     */
+    fun keepsToolsOnTerminalRound(provider: ChatProvider): Boolean = provider == ChatProvider.OPENROUTER
 
     /**
      * v5.9 step budget from Settings. [stored] is the new "agent_step_budget" value; when it

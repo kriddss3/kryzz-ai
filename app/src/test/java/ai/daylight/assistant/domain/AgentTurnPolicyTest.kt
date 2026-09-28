@@ -77,13 +77,17 @@ class AgentTurnPolicyTest {
         assertThat(voicePlan.toolNames).doesNotContain(AgentTurnPolicy.UPDATE_PLAN)
     }
 
-    @Test fun askUserIsNotOfferedOnTheTerminalRound() {
+    @Test fun terminalRoundKeepsTheToolListButCallsNothing() {
+        // v5.10: the terminal round resends the turn's tools (tool_choice "none" on
+        // OpenRouter) so its request keeps the cached prefix; terminal means no call runs.
+        val first = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext())
         val plan = AgentTurnPolicy.planRound(
             AgentTurnPolicy.TurnProgress(terminalStarted = true),
             autoContext()
         )
         assertThat(plan.terminal).isTrue()
-        assertThat(plan.toolNames).doesNotContain(AgentTurnPolicy.ASK_USER)
+        assertThat(plan.forcedTool).isNull()
+        assertThat(plan.toolNames).containsExactlyElementsIn(first.toolNames).inOrder()
     }
 
     @Test fun freshInfoForcesTheFirstWebSearch() {
@@ -132,7 +136,9 @@ class AgentTurnPolicyTest {
         val exhausted = AgentTurnPolicy.TurnProgress(toolRounds = 6, searchRounds = 2, didSearch = true)
         val plan = AgentTurnPolicy.planRound(exhausted, autoContext(stepBudget = 6))
         assertThat(plan.terminal).isTrue()
-        assertThat(plan.toolNames).isEmpty()
+        assertThat(plan.toolNames).isEqualTo(
+            AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext(stepBudget = 6)).toolNames
+        )
         assertThat(plan.forcedTool).isNull()
         assertThat(plan.terminalDirective).isEqualTo(AgentTurnPolicy.TERMINAL_DIRECTIVE)
         // The directive is attached once: re-planning while terminal adds nothing.
@@ -155,7 +161,7 @@ class AgentTurnPolicyTest {
         val capped = AgentTurnPolicy.TurnProgress(toolRounds = 2, searchRounds = 2, didSearch = true, costCapped = true)
         val plan = AgentTurnPolicy.planRound(capped, autoContext())
         assertThat(plan.terminal).isTrue()
-        assertThat(plan.toolNames).isEmpty()
+        assertThat(plan.forcedTool).isNull()
         assertThat(plan.terminalDirective).isEqualTo(AgentTurnPolicy.COST_CAP_DIRECTIVE)
         val again = AgentTurnPolicy.planRound(capped.copy(terminalStarted = true), autoContext())
         assertThat(again.terminalDirective).isNull()
@@ -239,7 +245,8 @@ class AgentTurnPolicyTest {
             autoContext().copy(artifactCapability = true)
         )
         assertThat(plan.forcedTool).isNull()
-        assertThat(plan.toolNames).doesNotContain(AgentTurnPolicy.CREATE_ARTIFACT)
+        // v5.10: still offered (stable list); a second call replaces the file.
+        assertThat(plan.toolNames).contains(AgentTurnPolicy.CREATE_ARTIFACT)
     }
 
     @Test fun voiceModeOffersSearchOnlyAndCapsAtOneRound() {
@@ -299,14 +306,22 @@ class AgentTurnPolicyTest {
         )
     }
 
-    @Test fun fetchIsOfferedOnceAUrlIsReadable() {
-        val noUrls = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext(offerFetch = false))
-        assertThat(noUrls.toolNames).doesNotContain(AgentTurnPolicy.FETCH_URL)
-        val afterSearch = AgentTurnPolicy.planRound(
-            AgentTurnPolicy.TurnProgress(toolRounds = 1, searchRounds = 1, didSearch = true),
-            autoContext(offerFetch = true)
+    @Test fun fetchIsOfferedFromTheFirstRoundWhenAUrlCanBecomeReadable() {
+        // v5.10: a search this turn can make result URLs readable, so fetch_url is part of
+        // the turn's list from round 0 instead of appearing after the first search.
+        val withSearch = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext(offerFetch = false))
+        assertThat(withSearch.toolNames).contains(AgentTurnPolicy.FETCH_URL)
+        // No search and no known URL: nothing could ever be fetched this turn.
+        val nothing = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(),
+            autoContext(offerFetch = false, searchAvailable = false)
         )
-        assertThat(afterSearch.toolNames).contains(AgentTurnPolicy.FETCH_URL)
+        assertThat(nothing.toolNames).doesNotContain(AgentTurnPolicy.FETCH_URL)
+        val pastedLink = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(),
+            autoContext(offerFetch = true, searchAvailable = false)
+        )
+        assertThat(pastedLink.toolNames).contains(AgentTurnPolicy.FETCH_URL)
     }
 
     @Test fun withoutThePublicWebClientNeitherWeatherNorFetchIsOffered() {
@@ -317,18 +332,80 @@ class AgentTurnPolicyTest {
         assertThat(plan.toolNames).containsNoneOf(AgentTurnPolicy.GET_WEATHER, AgentTurnPolicy.FETCH_URL)
     }
 
-    @Test fun autoCreateArtifactIsOfferedUntilAFileExists() {
+    @Test fun autoCreateArtifactStaysOfferedAfterAFileExists() {
+        // v5.10: a second create_artifact replaces the file instead of the tool vanishing.
         val plan = AgentTurnPolicy.planRound(
             AgentTurnPolicy.TurnProgress(toolRounds = 1, outputKinds = setOf(OutputKind.SPREADSHEET)),
             autoContext()
         )
-        assertThat(plan.toolNames).doesNotContain(AgentTurnPolicy.CREATE_ARTIFACT)
-        // An image is not a file deliverable, so a document can still follow it.
-        val afterImage = AgentTurnPolicy.planRound(
-            AgentTurnPolicy.TurnProgress(toolRounds = 1, outputKinds = setOf(OutputKind.IMAGE)),
-            autoContext()
+        assertThat(plan.toolNames).contains(AgentTurnPolicy.CREATE_ARTIFACT)
+        assertThat(plan.forcedTool).isNull()
+    }
+
+    // ---------- v5.10 stable tool list ----------
+
+    @Test fun toolListIsStableAcrossEveryRoundOfATurn() {
+        // The tool list is part of the provider's cached prefix: any change between rounds
+        // makes the whole history full price again.
+        val contexts = listOf(
+            autoContext(),
+            autoContext(forceSearchFirst = true, stepBudget = 4),
+            autoContext(offerFetch = true, memoryEnabled = false),
+            autoContext().copy(artifactCapability = true),
+            autoContext().copy(skillCapability = true),
+            autoContext().copy(codeCapability = true),
+            autoContext().copy(deepResearch = true, searchRoundCap = 2),
+            autoContext().copy(offerMediaImage = true, offerMediaVideo = true, offerSchedule = true),
+            autoContext().copy(agentMode = false, capabilityAuto = false) // chat mode
         )
-        assertThat(afterImage.toolNames).contains(AgentTurnPolicy.CREATE_ARTIFACT)
+        val progressions = listOf(
+            AgentTurnPolicy.TurnProgress(toolRounds = 1, searchRounds = 1, didSearch = true),
+            AgentTurnPolicy.TurnProgress(toolRounds = 3, searchRounds = 5, didSearch = true),
+            AgentTurnPolicy.TurnProgress(toolRounds = 2, outputKinds = setOf(OutputKind.DOCUMENT, OutputKind.IMAGE)),
+            AgentTurnPolicy.TurnProgress(toolRounds = 1, outputKinds = setOf(OutputKind.CODE), skillCreated = true),
+            AgentTurnPolicy.TurnProgress(toolRounds = 2, nudged = true, costCapped = true),
+            AgentTurnPolicy.TurnProgress(toolRounds = 30, terminalStarted = true)
+        )
+        contexts.forEach { ctx ->
+            val first = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), ctx).toolNames
+            progressions.forEach { progress ->
+                assertThat(AgentTurnPolicy.planRound(progress, ctx).toolNames).containsExactlyElementsIn(first).inOrder()
+            }
+        }
+    }
+
+    @Test fun callsPastATurnLimitAreRefusedInsteadOfHidden() {
+        val ctx = autoContext(stepBudget = 16).copy(searchRoundCap = 2, offerMediaImage = true)
+        val fresh = AgentTurnPolicy.TurnProgress()
+        assertThat(AgentTurnPolicy.refusal(AgentTurnPolicy.PARALLEL_SEARCH, fresh, ctx)).isNull()
+        val searched = AgentTurnPolicy.TurnProgress(toolRounds = 2, searchRounds = 2, didSearch = true)
+        assertThat(AgentTurnPolicy.refusal(AgentTurnPolicy.PARALLEL_SEARCH, searched, ctx))
+            .isEqualTo(AgentTurnPolicy.SEARCH_LIMIT_REFUSAL)
+        // One image per turn, as when the tool used to disappear after the first one.
+        assertThat(AgentTurnPolicy.refusal(AgentTurnPolicy.GENERATE_IMAGE, fresh, ctx)).isNull()
+        val imaged = AgentTurnPolicy.TurnProgress(toolRounds = 1, outputKinds = setOf(OutputKind.IMAGE))
+        assertThat(AgentTurnPolicy.refusal(AgentTurnPolicy.GENERATE_IMAGE, imaged, ctx))
+            .isEqualTo(AgentTurnPolicy.MEDIA_REPEAT_REFUSAL)
+        assertThat(AgentTurnPolicy.refusal(AgentTurnPolicy.GENERATE_VIDEO, imaged, ctx)).isNull()
+        assertThat(
+            AgentTurnPolicy.refusal(AgentTurnPolicy.CREATE_SKILL, AgentTurnPolicy.TurnProgress(skillCreated = true), ctx)
+        ).isEqualTo(AgentTurnPolicy.SKILL_REPEAT_REFUSAL)
+        // Files and code projects are replaced, never refused.
+        val filed = AgentTurnPolicy.TurnProgress(toolRounds = 1, outputKinds = setOf(OutputKind.DOCUMENT, OutputKind.CODE))
+        assertThat(AgentTurnPolicy.refusal(AgentTurnPolicy.CREATE_ARTIFACT, filed, ctx)).isNull()
+        assertThat(AgentTurnPolicy.refusal(AgentTurnPolicy.CREATE_CODE_PROJECT, filed, ctx)).isNull()
+    }
+
+    @Test fun onlyOpenRouterKeepsToolsOnTheTerminalRound() {
+        assertThat(AgentTurnPolicy.keepsToolsOnTerminalRound(ChatProvider.OPENROUTER)).isTrue()
+        assertThat(AgentTurnPolicy.keepsToolsOnTerminalRound(ChatProvider.MINIMAX)).isFalse()
+    }
+
+    @Test fun dedicatedMakersOfferOnlyTheirOwnTool() {
+        val skill = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext().copy(skillCapability = true))
+        assertThat(skill.toolNames).containsExactly(AgentTurnPolicy.CREATE_SKILL)
+        val code = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext().copy(codeCapability = true))
+        assertThat(code.toolNames).containsExactly(AgentTurnPolicy.CREATE_CODE_PROJECT)
     }
 
     @Test fun offeredToolNamesAreNeverDuplicated() {

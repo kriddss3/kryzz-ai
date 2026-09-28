@@ -36,4 +36,18 @@ class ModelSelectionTest {
             )
         ).isEqualTo("provider/a")
     }
+
+    @Test
+    fun toolSlotsFallBackToAToolCapableModelInsteadOfTheAlphabeticalFirst() {
+        // v5.10: agent, research and Max pass the catalog's tool-capable IDs.
+        assertThat(
+            chooseAvailableModel(
+                current = "old-provider/model",
+                available = setOf("provider/a-chat-only", "provider/tools", "provider/z"),
+                preferred = "provider/missing",
+                toolCapable = setOf("provider/tools", "provider/z"),
+                candidates = listOf("provider/gone", "provider/z")
+            )
+        ).isEqualTo("provider/z")
+    }
 }

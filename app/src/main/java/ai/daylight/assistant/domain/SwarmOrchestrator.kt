@@ -5,6 +5,7 @@ import ai.daylight.assistant.data.local.AssistantDao
 import ai.daylight.assistant.data.local.ConversationEntity
 import ai.daylight.assistant.data.local.MessageEntity
 import ai.daylight.assistant.data.preferences.AppPreferences
+import ai.daylight.assistant.data.preferences.agentQualityInputs
 import ai.daylight.assistant.data.remote.ApiMessage
 import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.ChatRequest
@@ -123,11 +124,18 @@ class SwarmOrchestrator(
         if (existing.none { it.role == "USER" }) onFirstUserMessage(conversationId, clean)
         if (settings.memoryEnabled) memoryRepository.ingest(clean, conversationId)
 
-        val model = when (capability) {
-            AgentCapability.DEEP_RESEARCH, AgentCapability.WIDE_SEARCH -> settings.researchModel
-            else -> settings.agentModel
-        }.ifBlank { settings.defaultModel }
-        val reasoning = settings.modelReasoning[model]?.apiValue?.let { ReasoningConfig(effort = it, exclude = true) }
+        // v5.10: the Agent quality preset picks the swarm's model and reasoning too, so Fast
+        // and Max mean the same thing for planner, subagents and synthesis as for one agent.
+        val turnSettings = AgentQualityPolicy.resolve(
+            quality = settings.agentQuality,
+            user = settings.agentQualityInputs(),
+            research = capability in setOf(AgentCapability.DEEP_RESEARCH, AgentCapability.WIDE_SEARCH)
+        )
+        val model = turnSettings.model.ifBlank { settings.defaultModel }
+        // MiniMax takes no reasoning field, as in AgentExecutor.
+        val reasoning = if (provider == ChatProvider.MINIMAX) null else {
+            turnSettings.reasoning.apiValue?.let { ReasoningConfig(effort = it, exclude = true) }
+        }
         val preset = AssistantPreset.byId(settings.presetId)
         val basePrompt = if (preset.id == "custom") settings.customPrompt.ifBlank { AssistantPreset.balanced.prompt } else preset.prompt
 

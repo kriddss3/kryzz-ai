@@ -51,13 +51,15 @@ internal object MiniMaxToolSafety {
 
     /**
      * After a MiniMax 2013 / validation reject:
+     * 0. v5.10: a terminal round (tool_choice "none") drops its tools, as it did before it
+     *    kept them for caching; switching it to "auto" would let tools run past the budget
      * 1. drop a named/required tool_choice (keep the tools)
      * 2. drop the extra utility tools, keep search / artifact / media
      * 3. strip tools entirely
      */
     fun nextValidationRetry(request: ChatRequest): ChatRequest {
         val tools = request.tools
-        if (tools.isNullOrEmpty()) return request.copy(tools = null, toolChoice = null)
+        if (tools.isNullOrEmpty() || request.toolChoice == ToolChoice.NONE) return request.copy(tools = null, toolChoice = null)
         if (request.toolChoice != null && request.toolChoice != ToolChoice.AUTO) {
             return request.copy(toolChoice = ToolChoice.AUTO)
         }

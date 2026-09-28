@@ -19,6 +19,8 @@ import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.ErrorKind
 import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.domain.AgentExecutor
+import ai.daylight.assistant.domain.AgentModelChoice
+import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.AssistantPreset
 import ai.daylight.assistant.domain.MemoryEngine
@@ -382,7 +384,9 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
                         models.value = available
                         container.preferences.reconcileAvailableModels(
                             provider = provider,
-                            text = available.map { it.id }.toSet()
+                            text = available.map { it.id }.toSet(),
+                            // v5.10: tool-aware fallback for the agent, research and Max slots.
+                            toolCapable = AgentModelChoice.toolCapableIds(available)
                         )
                     } ?: textResult.exceptionOrNull()?.let { failure ->
                         modelsError.value = failure.message ?: "Could not load models."
@@ -432,6 +436,12 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
 
     fun selectModel(id: String, purpose: ModelPurpose) = viewModelScope.launch { container.preferences.setModel(id, purpose) }
     fun setReasoning(id: String, effort: ReasoningEffort) = viewModelScope.launch { container.preferences.setReasoning(id, effort) }
+    /** v5.10: Agent mode quality preset from the composer. */
+    fun setAgentQuality(value: AgentQuality) = viewModelScope.launch { container.preferences.setAgentQuality(value) }
+    /** v5.10: the one-time agent model suggestion; Switch moves to the new default, Keep changes nothing. */
+    fun answerAgentModelSuggestion(switchModel: Boolean) = viewModelScope.launch {
+        container.preferences.answerAgentModelSuggestion(if (switchModel) AgentModelChoice.OPENROUTER_AGENT_DEFAULT else null)
+    }
 
     fun updateComposer(value: String) {
         composer.value = value
@@ -1531,7 +1541,9 @@ class ModelsViewModel(private val container: AppContainer) : ViewModel() {
                         models.value = available
                         container.preferences.reconcileAvailableModels(
                             provider = provider,
-                            text = available.map { it.id }.toSet()
+                            text = available.map { it.id }.toSet(),
+                            // v5.10: tool-aware fallback for the agent, research and Max slots.
+                            toolCapable = AgentModelChoice.toolCapableIds(available)
                         )
                     } ?: chatResult.exceptionOrNull()?.let { failure ->
                         error.value = failure.message ?: "Could not load chat models."
@@ -1626,7 +1638,9 @@ class LlmCatalogViewModel(private val container: AppContainer) : ViewModel() {
                         models.value = available
                         container.preferences.reconcileAvailableModels(
                             provider = provider,
-                            text = available.map { it.id }.toSet()
+                            text = available.map { it.id }.toSet(),
+                            // v5.10: tool-aware fallback for the agent, research and Max slots.
+                            toolCapable = AgentModelChoice.toolCapableIds(available)
                         )
                     } ?: catalogResult.exceptionOrNull()?.let { failure ->
                         error.value = failure.message ?: "Could not load the ${provider.label} model catalog."
@@ -1887,6 +1901,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setStepBudget(value: Int) = viewModelScope.launch { container.preferences.setStepBudget(value) }
     fun setCostCapCents(value: Int) = viewModelScope.launch { container.preferences.setCostCapCents(value) }
     fun setReviewAnswers(value: Boolean) = viewModelScope.launch { container.preferences.setReviewAnswers(value) }
+    fun setAgentQuality(value: AgentQuality) = viewModelScope.launch { container.preferences.setAgentQuality(value) }
     fun setTheme(value: ThemeMode) = viewModelScope.launch { container.preferences.setTheme(value) }
     fun setBackgroundStyle(value: BackgroundStyle) = viewModelScope.launch { container.preferences.setBackgroundStyle(value) }
     fun setColouredGradient(value: GradientPalette) = viewModelScope.launch { container.preferences.setColouredGradient(value) }
