@@ -3,7 +3,8 @@ package ai.daylight.assistant.domain
 import ai.daylight.assistant.data.remote.ParallelResult
 
 object ToolRoundLimiter {
-    const val HARD_MAXIMUM = 8
+    /** v5.9: follows the step budget's upper bound (was 8). */
+    const val HARD_MAXIMUM = AgentTurnPolicy.MAX_STEP_BUDGET
     fun canRun(completedRounds: Int, configuredMaximum: Int): Boolean =
         completedRounds < configuredMaximum.coerceIn(1, HARD_MAXIMUM)
 }

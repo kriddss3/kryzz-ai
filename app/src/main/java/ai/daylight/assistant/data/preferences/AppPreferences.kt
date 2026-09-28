@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import ai.daylight.assistant.domain.ThemeMode
+import ai.daylight.assistant.domain.AgentTurnPolicy
 import ai.daylight.assistant.domain.AppPalette
 import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.ChatDensity
@@ -50,7 +51,12 @@ data class SettingsState(
     val customPrompt: String = "",
     val searchEnabled: Boolean = true,
     val maxSearchChars: Int = 12_000,
-    val maxToolRounds: Int = 6,
+    /** v5.9: agent tool rounds per turn (replaces the 1..8 "maximum tool rounds"). */
+    val stepBudget: Int = AgentTurnPolicy.DEFAULT_STEP_BUDGET,
+    /** v5.9: per-turn agent cost cap in US cents; 0 turns the cap off. */
+    val costCapCents: Int = AgentTurnPolicy.DEFAULT_COST_CAP_CENTS,
+    /** v5.9: run one review pass over substantial agent answers before they are final. */
+    val reviewAnswers: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.DARK,
     val backgroundStyle: BackgroundStyle = BackgroundStyle.CONSTELLATION,
     val colouredGradient: GradientPalette = GradientPalette.MONOCHROME,
@@ -98,7 +104,11 @@ class AppPreferences(private val context: Context) {
         val customPrompt = stringPreferencesKey("custom_prompt")
         val search = booleanPreferencesKey("search_enabled")
         val searchChars = intPreferencesKey("max_search_chars")
+        // Legacy key kept for migration only (see AgentTurnPolicy.stepBudgetFromStored).
         val toolRounds = intPreferencesKey("max_tool_rounds")
+        val stepBudget = intPreferencesKey("agent_step_budget")
+        val costCapCents = intPreferencesKey("agent_cost_cap_cents")
+        val reviewAnswers = booleanPreferencesKey("agent_review_answers")
         val theme = stringPreferencesKey("theme")
         val backgroundStyle = stringPreferencesKey("background_style")
         val colouredGradient = stringPreferencesKey("coloured_gradient")
@@ -151,7 +161,9 @@ class AppPreferences(private val context: Context) {
                 customPrompt = p[Keys.customPrompt] ?: "",
                 searchEnabled = p[Keys.search] ?: true,
                 maxSearchChars = (p[Keys.searchChars] ?: 12_000).coerceIn(2_000, 50_000),
-                maxToolRounds = (p[Keys.toolRounds] ?: 6).coerceIn(1, 8),
+                stepBudget = AgentTurnPolicy.stepBudgetFromStored(p[Keys.stepBudget], p[Keys.toolRounds]),
+                costCapCents = (p[Keys.costCapCents] ?: AgentTurnPolicy.DEFAULT_COST_CAP_CENTS).coerceIn(0, MAX_COST_CAP_CENTS),
+                reviewAnswers = p[Keys.reviewAnswers] ?: true,
                 themeMode = runCatching { ThemeMode.valueOf(p[Keys.theme] ?: "DARK") }.getOrDefault(ThemeMode.DARK),
                 // 4.0.1 has one supported visual identity. Keep the legacy key and
                 // enum values so old DataStore files remain readable, but never let
@@ -296,7 +308,11 @@ class AppPreferences(private val context: Context) {
     }
     suspend fun setSearchEnabled(value: Boolean) = context.dataStore.edit { it[Keys.search] = value }
     suspend fun setMaxSearchChars(value: Int) = context.dataStore.edit { it[Keys.searchChars] = value.coerceIn(2_000, 50_000) }
-    suspend fun setMaxToolRounds(value: Int) = context.dataStore.edit { it[Keys.toolRounds] = value.coerceIn(1, 8) }
+    suspend fun setStepBudget(value: Int) = context.dataStore.edit {
+        it[Keys.stepBudget] = value.coerceIn(AgentTurnPolicy.MIN_STEP_BUDGET, AgentTurnPolicy.MAX_STEP_BUDGET)
+    }
+    suspend fun setCostCapCents(value: Int) = context.dataStore.edit { it[Keys.costCapCents] = value.coerceIn(0, MAX_COST_CAP_CENTS) }
+    suspend fun setReviewAnswers(value: Boolean) = context.dataStore.edit { it[Keys.reviewAnswers] = value }
     suspend fun setTheme(value: ThemeMode) = context.dataStore.edit { it[Keys.theme] = value.name }
     suspend fun setBackgroundStyle(value: BackgroundStyle) = context.dataStore.edit { it[Keys.backgroundStyle] = value.name }
     suspend fun setColouredGradient(value: GradientPalette) = context.dataStore.edit { it[Keys.colouredGradient] = value.name }
@@ -349,6 +365,7 @@ class AppPreferences(private val context: Context) {
 
     private companion object {
         val json = Json { ignoreUnknownKeys = true }
+        const val MAX_COST_CAP_CENTS = 500
 
         fun decodeReasoning(raw: String?): Map<String, ReasoningEffort> = raw.orEmpty()
             .split('|')

@@ -16,7 +16,9 @@ class AgentSupportTest {
         assertThat(ToolRoundLimiter.canRun(3, 3)).isFalse()
         assertThat(ToolRoundLimiter.canRun(7, 8)).isTrue()
         assertThat(ToolRoundLimiter.canRun(8, 8)).isFalse()
-        assertThat(ToolRoundLimiter.canRun(8, 99)).isFalse()
+        assertThat(ToolRoundLimiter.canRun(23, 24)).isTrue()
+        assertThat(ToolRoundLimiter.canRun(24, 24)).isFalse()
+        assertThat(ToolRoundLimiter.canRun(24, 99)).isFalse()
     }
 
     @Test fun citationMappingFiltersInvalidLinksAndDeduplicatesUrls() {

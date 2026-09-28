@@ -411,7 +411,7 @@ internal fun KryzzChatAiControlsSheet(
                             steps = 3
                         )
                         Text(
-                            "${settings.maxSearchChars / 1_000}k search context · ${settings.maxToolRounds} tool round${if (settings.maxToolRounds == 1) "" else "s"}",
+                            "${settings.maxSearchChars / 1_000}k search context · ${settings.stepBudget}-step budget",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

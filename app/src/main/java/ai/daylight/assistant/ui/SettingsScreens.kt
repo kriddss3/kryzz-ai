@@ -82,6 +82,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.daylight.assistant.BuildConfig
+import ai.daylight.assistant.domain.AgentTurnPolicy
 import ai.daylight.assistant.domain.AssistantPreset
 import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.ChatProvider
@@ -1021,7 +1022,13 @@ private fun presetDescription(id: String): String? = when (id) {
     else -> null
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** v5.9: cost cap choices in US cents; 0 is Off. */
+private val costCapOptionsCents = listOf(0, 10, 25, 50, 100, 200)
+
+private fun costCapLabel(cents: Int): String =
+    if (cents <= 0) "Off" else "$" + String.format(java.util.Locale.US, "%.2f", cents / 100.0)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -1061,13 +1068,45 @@ fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
 
             SettingsGroup(title = "Agent limits") {
                 SliderSetting(
-                    title = "Maximum tool rounds · ${settings.maxToolRounds}",
-                    subtitle = "The agent always stops at this bound. Deep search uses two related passes when allowed; eight is the hard maximum.",
-                    value = settings.maxToolRounds.toFloat(),
-                    onValueChange = { vm.setToolRounds(it.roundToInt()) },
-                    valueRange = 1f..8f,
-                    steps = 6,
-                    enabled = settings.searchEnabled
+                    title = "Step budget · ${settings.stepBudget} tool rounds",
+                    subtitle = "How many rounds of tool use one agent turn may take. When the budget runs out, the agent writes its answer from what it found.",
+                    value = settings.stepBudget.toFloat(),
+                    onValueChange = { vm.setStepBudget(it.roundToInt()) },
+                    valueRange = AgentTurnPolicy.MIN_STEP_BUDGET.toFloat()..AgentTurnPolicy.MAX_STEP_BUDGET.toFloat(),
+                    steps = AgentTurnPolicy.MAX_STEP_BUDGET - AgentTurnPolicy.MIN_STEP_BUDGET - 1
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text("Cost cap per turn", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Stops tool use once a turn has spent this much and writes the answer. Uses the cost OpenRouter reports; for MiniMax it counts tokens instead.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    costCapOptionsCents.forEach { cents ->
+                        FilterChip(
+                            selected = cents == settings.costCapCents,
+                            onClick = { vm.setCostCapCents(cents) },
+                            label = { Text(costCapLabel(cents)) },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                SettingSwitch(
+                    title = "Review answers before sending",
+                    subtitle = "After research or file work, the agent checks its draft against your request and the sources once, and fixes what it finds.",
+                    checked = settings.reviewAnswers,
+                    onChecked = vm::setReviewAnswers
                 )
             }
         }

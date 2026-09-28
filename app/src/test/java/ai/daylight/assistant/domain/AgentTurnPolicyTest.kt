@@ -15,7 +15,7 @@ class AgentTurnPolicyTest {
     private fun autoContext(
         forceSearchFirst: Boolean = false,
         searchAvailable: Boolean = true,
-        maxToolRounds: Int = 6,
+        stepBudget: Int = AgentTurnPolicy.DEFAULT_STEP_BUDGET,
         voiceMode: Boolean = false,
         offerFetch: Boolean = false,
         publicWebAvailable: Boolean = true,
@@ -31,8 +31,8 @@ class AgentTurnPolicyTest {
         wideSearch = false,
         searchDepth = 2,
         searchAvailable = searchAvailable,
-        searchRoundCap = if (voiceMode) 1 else maxToolRounds,
-        maxToolRounds = maxToolRounds,
+        searchRoundCap = if (voiceMode) 1 else stepBudget,
+        stepBudget = stepBudget,
         forceSearchFirst = forceSearchFirst,
         offerMediaImage = false,
         offerMediaVideo = false,
@@ -130,15 +130,71 @@ class AgentTurnPolicyTest {
 
     @Test fun budgetExhaustionPlansOneTerminalRoundThenStops() {
         val exhausted = AgentTurnPolicy.TurnProgress(toolRounds = 6, searchRounds = 2, didSearch = true)
-        val plan = AgentTurnPolicy.planRound(exhausted, autoContext(maxToolRounds = 6))
+        val plan = AgentTurnPolicy.planRound(exhausted, autoContext(stepBudget = 6))
         assertThat(plan.terminal).isTrue()
         assertThat(plan.toolNames).isEmpty()
         assertThat(plan.forcedTool).isNull()
         assertThat(plan.terminalDirective).isEqualTo(AgentTurnPolicy.TERMINAL_DIRECTIVE)
         // The directive is attached once: re-planning while terminal adds nothing.
-        val again = AgentTurnPolicy.planRound(exhausted.copy(terminalStarted = true), autoContext(maxToolRounds = 6))
+        val again = AgentTurnPolicy.planRound(exhausted.copy(terminalStarted = true), autoContext(stepBudget = 6))
         assertThat(again.terminal).isTrue()
         assertThat(again.terminalDirective).isNull()
+    }
+
+    // ---------- v5.9 step budget and cost cap ----------
+
+    @Test fun defaultStepBudgetLeavesRoomForLongRuns() {
+        val progress = AgentTurnPolicy.TurnProgress(toolRounds = 8, searchRounds = 4, didSearch = true)
+        val plan = AgentTurnPolicy.planRound(progress, autoContext())
+        assertThat(plan.terminal).isFalse()
+        val spent = progress.copy(toolRounds = AgentTurnPolicy.DEFAULT_STEP_BUDGET)
+        assertThat(AgentTurnPolicy.planRound(spent, autoContext()).terminal).isTrue()
+    }
+
+    @Test fun costCapSwitchesToTerminalRoundWithItsOwnDirective() {
+        val capped = AgentTurnPolicy.TurnProgress(toolRounds = 2, searchRounds = 2, didSearch = true, costCapped = true)
+        val plan = AgentTurnPolicy.planRound(capped, autoContext())
+        assertThat(plan.terminal).isTrue()
+        assertThat(plan.toolNames).isEmpty()
+        assertThat(plan.terminalDirective).isEqualTo(AgentTurnPolicy.COST_CAP_DIRECTIVE)
+        val again = AgentTurnPolicy.planRound(capped.copy(terminalStarted = true), autoContext())
+        assertThat(again.terminalDirective).isNull()
+    }
+
+    @Test fun costCapUsesReportedCostWhenKnown() {
+        assertThat(AgentTurnPolicy.costCapReached(0.24, 10_000_000, 0.25)).isFalse()
+        assertThat(AgentTurnPolicy.costCapReached(0.25, 0, 0.25)).isTrue()
+        assertThat(AgentTurnPolicy.costCapReached(1.5, 0, 0.25)).isTrue()
+    }
+
+    @Test fun costCapFallsBackToTokensWhenCostIsUnknown() {
+        // MiniMax reports tokens only: $0.25 allows 500k tokens.
+        assertThat(AgentTurnPolicy.costCapReached(null, 499_999, 0.25)).isFalse()
+        assertThat(AgentTurnPolicy.costCapReached(null, 500_000, 0.25)).isTrue()
+        // No usage reported at all: the cap cannot trip.
+        assertThat(AgentTurnPolicy.costCapReached(null, 0, 0.25)).isFalse()
+    }
+
+    @Test fun costCapOffNeverTrips() {
+        assertThat(AgentTurnPolicy.costCapReached(99.0, 99_000_000, 0.0)).isFalse()
+    }
+
+    @Test fun costCapNoteNamesTheCap() {
+        assertThat(AgentTurnPolicy.costCapNote(0.25)).contains("$0.25")
+        assertThat(AgentTurnPolicy.costCapNote(0.25)).contains("cost cap")
+    }
+
+    @Test fun stepBudgetMigratesLegacyToolRounds() {
+        // Never set anywhere: the new default.
+        assertThat(AgentTurnPolicy.stepBudgetFromStored(null, null)).isEqualTo(16)
+        // The old default of 6 moves to the new default.
+        assertThat(AgentTurnPolicy.stepBudgetFromStored(null, 6)).isEqualTo(16)
+        // Other old choices are kept, clamped into 4..24.
+        assertThat(AgentTurnPolicy.stepBudgetFromStored(null, 8)).isEqualTo(8)
+        assertThat(AgentTurnPolicy.stepBudgetFromStored(null, 2)).isEqualTo(4)
+        // A value saved under the new key wins, including an explicit 6.
+        assertThat(AgentTurnPolicy.stepBudgetFromStored(6, 8)).isEqualTo(6)
+        assertThat(AgentTurnPolicy.stepBudgetFromStored(99, null)).isEqualTo(24)
     }
 
     @Test fun forcedToolIsAlwaysOffered() {

@@ -265,6 +265,7 @@ class AgentExecutor(
         var freePlanRounds = 0
         var completedSearchRounds = 0
         var didSearch = false
+        var didFetch = false
         var skillCreated = false
         // v5.7 agent-loop redesign: continuation is decided from what the model DID
         // (returned tool calls or not) via AgentTurnPolicy, not by regex-matching its
@@ -272,6 +273,12 @@ class AgentExecutor(
         // single terminal no-tools round that guarantees the turn ends with an answer.
         var nudgedForTools = false
         var terminalRoundStarted = false
+        // v5.9: at most one review pass per turn; the cost cap moves the turn to its terminal
+        // round, and the answer then says so (costCapNote).
+        var reviewed = false
+        var costCapped = false
+        var stoppedByCostCap = false
+        val costCapUsd = if (voiceMode) 0.0 else settings.costCapCents / 100.0
         var activeId: String? = null
         var activeText = ""
         var requestPromptTokens = 0L
@@ -291,7 +298,104 @@ class AgentExecutor(
             capability in setOf(AgentCapability.DEEP_RESEARCH, AgentCapability.WIDE_SEARCH) -> settings.researchModel
             else -> settings.agentModel
         }
+        fun addUsage(usage: Usage?) {
+            if (usage == null) return
+            hasUsage = true
+            requestPromptTokens += usage.promptTokens ?: 0
+            requestCompletionTokens += usage.completionTokens ?: 0
+            requestTotalTokens += usage.totalTokens ?: ((usage.promptTokens ?: 0) + (usage.completionTokens ?: 0))
+            requestCachedInputTokens += usage.promptTokensDetails?.cachedTokens ?: 0
+            usage.cost?.let { cost -> hasCost = true; requestCost += cost }
+        }
+        fun chatRequest(tools: List<ToolDefinition>, forcedTool: String?) = ChatRequest(
+            model = model,
+            messages = working,
+            tools = tools.ifEmpty { null },
+            toolChoice = when {
+                tools.isEmpty() -> null
+                // Pin the named function on every provider: MiniMax rejects the
+                // string "required" (status 2013), and elsewhere "required" would let
+                // the model satisfy a forced search with any other offered tool.
+                forcedTool != null -> ToolChoice.named(forcedTool)
+                else -> ToolChoice.AUTO
+            },
+            reasoning = if (voiceMode || provider == ChatProvider.MINIMAX) null else settings.modelReasoning[model]?.apiValue?.let { effort ->
+                ReasoningConfig(effort = effort, exclude = true)
+            },
+            // Voice chat always routes to the lowest-latency provider serving this model.
+            provider = if (voiceMode && provider == ChatProvider.OPENROUTER) ProviderPreferences() else null,
+            // MiniMax thinking + a tool call can exceed a tiny default completion budget.
+            maxTokens = if (provider == ChatProvider.MINIMAX) MINIMAX_MAX_COMPLETION_TOKENS else null
+        )
         val agentRunningActivity = mode == AssistantMode.AGENT && !voiceMode
+
+        /**
+         * v5.9 review pass (see [AnswerReview]). The draft stays on screen while the reviewer
+         * runs; a revision replaces it in the same message as it streams, the sentinel keeps
+         * it. Any failure other than cancellation keeps the draft, and a cancelled review
+         * leaves the draft in the message instead of a half-written revision.
+         */
+        suspend fun reviewDraft(messageId: String, draft: String): String {
+            val offerArtifact = AnswerReview.offersArtifact(outputs.map { it.kind }.toSet())
+            val reviewTools = if (offerArtifact) {
+                listOf(if (capability.outputKind() != null) artifactTool(capability) else artifactToolAuto())
+            } else emptyList()
+            working += ApiMessage("assistant", draft)
+            working += ApiMessage("system", AnswerReview.directive(offerArtifact))
+            toolActivity.tryEmit(ToolActivity(conversationId, TOOL_REVIEWING, started = true))
+            try {
+                var revising = false
+                val review = collectWithRetry(
+                    client = client,
+                    key = key,
+                    request = chatRequest(reviewTools, forcedTool = null),
+                    messageId = messageId,
+                    allowEmpty = true,
+                    recoverInlineToolCalls = offerArtifact,
+                    // The draft is on screen; retry notices would overwrite it.
+                    showRetryNotices = false,
+                    onText = { value ->
+                        val visible = ToolCallXml.scrubToolBlocks(value.scrubThinkTags())
+                        if (!revising && AnswerReview.classify(visible, complete = false) == AnswerReview.Verdict.REVISION) {
+                            revising = true
+                        }
+                        if (revising) {
+                            activeText = visible
+                            dao.updateMessageContent(messageId, visible, MessageStatus.STREAMING.name)
+                        }
+                    }
+                )
+                addUsage(review.usage)
+                // A corrected file replaces the earlier one; a failed replacement keeps it.
+                review.toolCalls.lastOrNull { it.function.name == AgentTurnPolicy.CREATE_ARTIFACT }?.let { call ->
+                    toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
+                    try {
+                        createArtifact(conversationId, call, capability, outputs)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        Unit
+                    } finally {
+                        toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = false))
+                    }
+                }
+                val revision = review.text.trim()
+                return if (AnswerReview.classify(revision, complete = true) == AnswerReview.Verdict.REVISION) revision else {
+                    if (revising) dao.updateMessageContent(messageId, draft, MessageStatus.STREAMING.name)
+                    activeText = draft
+                    draft
+                }
+            } catch (cancelled: CancellationException) {
+                activeText = draft
+                throw cancelled
+            } catch (_: Throwable) {
+                activeText = draft
+                dao.updateMessageContent(messageId, draft, MessageStatus.STREAMING.name)
+                return draft
+            } finally {
+                toolActivity.tryEmit(ToolActivity(conversationId, TOOL_REVIEWING, started = false))
+            }
+        }
         if (agentRunningActivity) {
             toolActivity.tryEmit(ToolActivity(conversationId, TOOL_AGENT_RUNNING, started = true))
         }
@@ -329,10 +433,10 @@ class AgentExecutor(
                     // spoken reply stays responsive — anything heavier goes to text mode.
                     searchRoundCap = when {
                         voiceMode -> 1
-                        capability == AgentCapability.AUTO -> settings.maxToolRounds.coerceIn(1, ToolRoundLimiter.HARD_MAXIMUM)
+                        capability == AgentCapability.AUTO -> settings.stepBudget.coerceIn(1, ToolRoundLimiter.HARD_MAXIMUM)
                         else -> conversation.searchDepth.coerceIn(1, 3)
                     },
-                    maxToolRounds = settings.maxToolRounds,
+                    stepBudget = settings.stepBudget,
                     // AUTO does not force a tool call on every turn (that would fire a web
                     // search on "hi" or "write me a poem"). But when the user's message
                     // plausibly depends on fresh / time-sensitive / source-backed facts, AUTO
@@ -366,14 +470,22 @@ class AgentExecutor(
                     terminalStarted = terminalRoundStarted,
                     outputKinds = outputs.map { it.kind }.toSet(),
                     skillCreated = skillCreated,
-                    didSearch = didSearch
+                    didSearch = didSearch,
+                    costCapped = costCapped
                 )
                 val plan = AgentTurnPolicy.planRound(turn, toolContext)
                 if (plan.terminal && !terminalRoundStarted) {
-                    // The tool budget ran out: exactly one terminal no-tools round so the
-                    // turn still ends with a written answer instead of a limit notice.
+                    // The tool budget or the cost cap ran out: exactly one terminal no-tools
+                    // round so the turn still ends with a written answer instead of a limit notice.
                     terminalRoundStarted = true
+                    stoppedByCostCap = plan.terminalDirective == AgentTurnPolicy.COST_CAP_DIRECTIVE
                     plan.terminalDirective?.let { working += ApiMessage("system", it) }
+                }
+                // v5.9: shrink older search and page results once they crowd the context.
+                val compacted = ContextCompactor.compact(working)
+                if (compacted !== working) {
+                    working.clear()
+                    working.addAll(compacted)
                 }
                 val tools = if (plan.terminal) emptyList() else plan.toolNames.mapNotNull { name ->
                     when (name) {
@@ -398,26 +510,7 @@ class AgentExecutor(
                         else -> null
                     }
                 }
-                val request = ChatRequest(
-                    model = model,
-                    messages = working,
-                    tools = tools.ifEmpty { null },
-                    toolChoice = when {
-                        tools.isEmpty() -> null
-                        // Pin the named function on every provider: MiniMax rejects the
-                        // string "required" (status 2013), and elsewhere "required" would let
-                        // the model satisfy a forced search with any other offered tool.
-                        plan.forcedTool != null -> ToolChoice.named(plan.forcedTool)
-                        else -> ToolChoice.AUTO
-                    },
-                    reasoning = if (voiceMode || provider == ChatProvider.MINIMAX) null else settings.modelReasoning[model]?.apiValue?.let { effort ->
-                        ReasoningConfig(effort = effort, exclude = true)
-                    },
-                    // Voice chat always routes to the lowest-latency provider serving this model.
-                    provider = if (voiceMode && provider == ChatProvider.OPENROUTER) ProviderPreferences() else null,
-                    // MiniMax thinking + a tool call can exceed a tiny default completion budget.
-                    maxTokens = if (provider == ChatProvider.MINIMAX) MINIMAX_MAX_COMPLETION_TOKENS else null
-                )
+                val request = chatRequest(tools, plan.forcedTool)
                 val allowEmptyRound = outputs.isNotEmpty() || skillCreated || completedToolRounds > 0 ||
                     freePlanRounds > 0 || plan.terminal
                 val onStreamText: suspend (String) -> Unit = { value ->
@@ -461,13 +554,10 @@ class AgentExecutor(
                 }
                 val resolved = streamed ?: throw (streamError ?: AssistantApiException(ErrorKind.UNKNOWN, "The model returned no response."))
                 val historyText = resolved.rawText.ifBlank { resolved.text }
-                resolved.usage?.let { usage ->
-                    hasUsage = true
-                    requestPromptTokens += usage.promptTokens ?: 0
-                    requestCompletionTokens += usage.completionTokens ?: 0
-                    requestTotalTokens += usage.totalTokens ?: ((usage.promptTokens ?: 0) + (usage.completionTokens ?: 0))
-                    requestCachedInputTokens += usage.promptTokensDetails?.cachedTokens ?: 0
-                    usage.cost?.let { cost -> hasCost = true; requestCost += cost }
+                addUsage(resolved.usage)
+                // v5.9: once spend reaches the cap, the next planned round is the terminal one.
+                if (!costCapped) {
+                    costCapped = AgentTurnPolicy.costCapReached(requestCost.takeIf { hasCost }, requestTotalTokens, costCapUsd)
                 }
 
                 val calls = resolved.toolCalls
@@ -506,7 +596,7 @@ class AgentExecutor(
                         continue
                     }
                     AgentTurnPolicy.After.FINISH -> {
-                        val finalText = activeText.ifBlank {
+                        var finalText = activeText.ifBlank {
                             when {
                                 outputs.isNotEmpty() -> "Created ${outputs.first().title}. Use the output card below to save or open it."
                                 skillCreated -> "The reusable skill was created and saved locally."
@@ -523,6 +613,23 @@ class AgentExecutor(
                                 )
                             }
                         }
+                        val reviewInput = AnswerReview.Input(
+                            agentMode = mode == AssistantMode.AGENT,
+                            voiceMode = voiceMode,
+                            enabled = settings.reviewAnswers,
+                            capability = capability,
+                            didSearch = didSearch,
+                            didFetch = didFetch,
+                            outputKinds = outputs.map { it.kind }.toSet(),
+                            draft = activeText,
+                            alreadyReviewed = reviewed,
+                            costCapped = costCapped
+                        )
+                        if (AnswerReview.shouldReview(reviewInput)) {
+                            reviewed = true
+                            finalText = reviewDraft(messageId, activeText)
+                        }
+                        if (stoppedByCostCap) finalText += "\n\n" + AgentTurnPolicy.costCapNote(costCapUsd)
                         val totalGenerationTimeMs = (SystemClock.elapsedRealtime() - generationStartedAt).coerceAtLeast(0L)
                         dao.finishMessage(
                             messageId, finalText, MessageStatus.COMPLETE.name, json.encodeToString(citations),
@@ -543,7 +650,7 @@ class AgentExecutor(
 
                 dao.deleteMessage(messageId)
                 activeId = null
-                if (!ToolRoundLimiter.canRun(completedToolRounds, settings.maxToolRounds)) {
+                if (!ToolRoundLimiter.canRun(completedToolRounds, settings.stepBudget)) {
                     // Paranoia: the planner goes terminal at the budget, so calls here mean
                     // a recovered inline call slipped through. Answer with what we have
                     // instead of executing past the configured limit.
@@ -636,16 +743,7 @@ class AgentExecutor(
                         }
 
                         "create_artifact" -> {
-                            val output = outputStore.materialize(validateArtifact(call.function.arguments, capability))
-                            outputs.clear()
-                            outputs += output
-                            val result = buildJsonObject {
-                                put("status", "created_locally")
-                                put("type", output.kind.name.lowercase())
-                                put("title", output.title)
-                                put("file_name", output.fileName)
-                            }.toString()
-                            saveToolMessage(conversationId, call, result)
+                            val result = createArtifact(conversationId, call, capability, outputs)
                             working += ApiMessage("tool", result, call.id, call.function.name)
                         }
 
@@ -812,6 +910,7 @@ class AgentExecutor(
 
                         "fetch_url" -> {
                             val page = (pendingLookup.awaitLookup() as Lookup.Page).page
+                            didFetch = true
                             val structured = buildJsonObject {
                                 put("url", page.url)
                                 put("title", page.title)
@@ -1326,6 +1425,7 @@ class AgentExecutor(
         messageId: String,
         allowEmpty: Boolean = false,
         recoverInlineToolCalls: Boolean = true,
+        showRetryNotices: Boolean = true,
         onText: suspend (String) -> Unit
     ): StreamedResult {
         var attempt = 0
@@ -1356,9 +1456,9 @@ class AgentExecutor(
             val error = failure
             val wait = error?.retryAfterSeconds
             if (error?.kind == ErrorKind.RATE_LIMIT && text.isEmpty() && attempt == 0 && wait != null && wait <= 60) {
-                dao.updateMessageContent(messageId, "Waiting ${wait}s for the provider rate limit…", MessageStatus.STREAMING.name)
+                if (showRetryNotices) dao.updateMessageContent(messageId, "Waiting ${wait}s for the provider rate limit…", MessageStatus.STREAMING.name)
                 delay(wait * 1_000)
-                dao.updateMessageContent(messageId, "", MessageStatus.STREAMING.name)
+                if (showRetryNotices) dao.updateMessageContent(messageId, "", MessageStatus.STREAMING.name)
                 attempt++
                 continue
             }
@@ -2147,6 +2247,29 @@ class AgentExecutor(
         }
         return SimplePromptArgs(prompt)
     }
+    /**
+     * Runs a create_artifact call: materialises the file, makes it the turn's only file output
+     * (a new call replaces the earlier file) and saves the tool row. Returns the tool result.
+     */
+    private suspend fun createArtifact(
+        conversationId: String,
+        call: ToolCall,
+        capability: AgentCapability,
+        outputs: MutableList<GeneratedOutput>
+    ): String {
+        val output = outputStore.materialize(validateArtifact(call.function.arguments, capability))
+        outputs.clear()
+        outputs += output
+        val result = buildJsonObject {
+            put("status", "created_locally")
+            put("type", output.kind.name.lowercase())
+            put("title", output.title)
+            put("file_name", output.fileName)
+        }.toString()
+        saveToolMessage(conversationId, call, result)
+        return result
+    }
+
     private suspend fun saveToolMessage(conversationId: String, call: ToolCall, content: String) {
         dao.upsertMessage(
             MessageEntity(
@@ -2188,6 +2311,8 @@ class AgentExecutor(
         const val TOOL_MEMORY_SAVE = "memory_save"
         const val TOOL_SEARCH_PAST_CHATS = "search_past_chats"
         const val TOOL_AGENT_RUNNING = "agent_running"
+        /** v5.9: the review pass over a draft answer (see [AnswerReview]). */
+        const val TOOL_REVIEWING = "reviewing_answer"
         const val TOOL_IMAGE_CREATION = "image_creation"
         const val TOOL_VIDEO_CREATION = "video_creation"
         const val TOOL_AUDIO_CREATION = "audio_creation"
