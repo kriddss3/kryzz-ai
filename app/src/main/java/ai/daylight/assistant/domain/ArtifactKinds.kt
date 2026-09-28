@@ -56,8 +56,12 @@ internal object ArtifactKinds {
      */
     fun normalizeContent(kind: OutputKind, content: String): String {
         var text = stripOuterFence(content.trim())
-        if (kind == OutputKind.SPREADSHEET && looksLikeMarkdownTable(text)) {
-            text = markdownTableToCsv(text)
+        if (kind == OutputKind.SPREADSHEET) {
+            // v5.11: each `### Sheet: Name` section is converted on its own, so the markers
+            // survive and a workbook of Markdown tables still becomes separate sheets.
+            text = SpreadsheetContent.mapSections(text) { section ->
+                if (looksLikeMarkdownTable(section)) markdownTableToCsv(section) else section
+            }
         }
         return text
     }

@@ -103,6 +103,10 @@ interface AssistantDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
     suspend fun messages(conversationId: String): List<MessageEntity>
 
+    /** v5.11: the stored tool results of a conversation, for the per-answer work log. */
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND role = 'TOOL' ORDER BY createdAt ASC")
+    fun observeToolMessages(conversationId: String): Flow<List<MessageEntity>>
+
     @Query(
         """
         SELECT m.conversationId AS conversationId,
@@ -157,6 +161,9 @@ interface AssistantDao {
 
     @Query("DELETE FROM messages WHERE conversationId = :conversationId AND createdAt >= :fromTimestamp")
     suspend fun deleteMessagesFrom(conversationId: String, fromTimestamp: Long)
+
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId AND role = 'TOOL' AND createdAt >= :fromTimestamp")
+    suspend fun deleteToolMessagesFrom(conversationId: String, fromTimestamp: Long)
 
     @Query("DELETE FROM messages")
     suspend fun deleteAllMessages()

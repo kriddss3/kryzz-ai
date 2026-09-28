@@ -20,6 +20,7 @@ import kotlinx.serialization.json.Json
 class ConversationRepository(private val dao: AssistantDao, private val json: Json) {
     fun conversations(archived: Boolean, query: String): Flow<List<ConversationSummary>> = dao.observeConversations(archived, query)
     fun messages(conversationId: String): Flow<List<MessageEntity>> = dao.observeVisibleMessages(conversationId)
+    fun toolMessages(conversationId: String): Flow<List<MessageEntity>> = dao.observeToolMessages(conversationId)
     suspend fun conversation(id: String) = dao.conversation(id)
     fun observeConversation(id: String): Flow<ConversationEntity?> = dao.observeConversation(id)
     fun folders(): Flow<List<ConversationFolderEntity>> = dao.observeConversationFolders()
@@ -91,6 +92,7 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
     suspend fun latestUserMessage(id: String) = dao.latestUserMessage(id)
     suspend fun deleteMessage(id: String) = dao.deleteMessage(id)
     suspend fun deleteFrom(conversationId: String, timestamp: Long) = dao.deleteMessagesFrom(conversationId, timestamp)
+    suspend fun deleteToolRowsFrom(conversationId: String, timestamp: Long) = dao.deleteToolMessagesFrom(conversationId, timestamp)
 
     fun citations(message: MessageEntity): List<Citation> =
         runCatching { json.decodeFromString<List<Citation>>(message.citationsJson) }.getOrDefault(emptyList())

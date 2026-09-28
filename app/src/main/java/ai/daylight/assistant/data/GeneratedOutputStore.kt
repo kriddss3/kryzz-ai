@@ -39,10 +39,12 @@ class GeneratedOutputStore(context: Context) {
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "csv", "text/csv"
             ) { OfficeFileGenerator.spreadsheet(it) }
+            // v5.11: PdfDocument with system fonts first (full Unicode); the standard-14
+            // writer is the fallback, and the raw text after that.
             OutputKind.PDF -> materializeOffice(
                 output, content, "pdf", "application/pdf",
                 "txt", "text/plain"
-            ) { OfficeFileGenerator.pdf(it) }
+            ) { markdown -> runCatching { PdfDocumentRenderer.render(markdown) }.getOrElse { OfficeFileGenerator.pdf(markdown) } }
             OutputKind.DATABASE -> materializeDatabase(output, content)
             else -> output
         }

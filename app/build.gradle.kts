@@ -14,14 +14,15 @@ android {
         applicationId = "ai.daylight.assistant"
         minSdk = 28
         targetSdk = 35
-// Kryzz AI 5.10.0 - Agent Auto rework, phase 3: Fast / Balanced / Max quality presets set
-//      model, reasoning, step budget, review and cost cap per agent turn (new Max model
-//      slot), stronger tool-calling defaults for agent and research with a one-time switch
-//      offer for gpt-4o-mini users, tool-aware model fallback, and prompt caching (static
-//      system prompt, per-turn context before the latest message, one tool list per turn,
-//      cache_control breakpoints for Anthropic models)
-        versionCode = 83
-        versionName = "5.10.0"
+// Kryzz AI 5.11.0 - Agent Auto rework, phase 4: generated files look professional (one
+//      Markdown block model renders DOCX with heading styles, real lists, bordered tables,
+//      code and links; XLSX gets typed numbers, percentages, booleans and formulas, column
+//      widths, a frozen header, an autofilter and `### Sheet: Name` multi-sheet workbooks;
+//      PDF renders through PdfDocument with system fonts for full Unicode, with the old
+//      writer as fallback), a work log under each agent answer built from the stored tool
+//      rows, and live activity chips that show the query, page or place of each call
+        versionCode = 84
+        versionName = "5.11.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

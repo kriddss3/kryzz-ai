@@ -22,6 +22,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -113,6 +114,15 @@ import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MicNone
 import androidx.compose.material.icons.outlined.MicOff
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Calculate
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -211,6 +221,9 @@ import ai.daylight.assistant.domain.ReasoningEffort
 import ai.daylight.assistant.domain.SubagentState
 import ai.daylight.assistant.domain.SwarmPhase
 import ai.daylight.assistant.domain.SwarmStatus
+import ai.daylight.assistant.domain.WorkLog
+import ai.daylight.assistant.domain.WorkStep
+import ai.daylight.assistant.domain.WorkStepKind
 import ai.daylight.assistant.ui.theme.LocalGlassOpacity
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import ai.daylight.assistant.ui.agent.BotMood
@@ -313,6 +326,7 @@ fun ChatScreen(
     val swarmStatus by vm.swarmStatus.collectAsStateWithLifecycle()
     val pendingQuestion by vm.pendingQuestion.collectAsStateWithLifecycle()
     val agentPlan by vm.agentPlan.collectAsStateWithLifecycle()
+    val workLogs by vm.workLogs.collectAsStateWithLifecycle()
     val pager = rememberPagerState(initialPage = initialMode.ordinal, pageCount = { AssistantMode.entries.size })
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -539,6 +553,7 @@ onRemoveAttachment = vm::removeAttachment,
                             activities = activities,
                             swarmStatus = swarmStatus,
                             plan = agentPlan?.takeIf { it.conversationId == vm.conversationId },
+                            workLogs = workLogs,
                             onRegenerate = vm::regenerate,
                             onEdit = vm::startEditing,
                             onSaveOutput = {
@@ -839,14 +854,16 @@ private fun ChatPane(
     activities: List<String> = emptyList(),
     swarmStatus: SwarmStatus? = null,
     plan: AgentPlan? = null,
-    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> }
+    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
+    workLogs: Map<String, WorkLog> = emptyMap()
 ) {
     MessageList(
         mode, messages, error, generating, capability, density, citations, outputs, attachments,
         onRegenerate, onEdit, onSaveOutput, onOpenOutput, onSpeak,
         speakingMessageId, synthesizingMessageId,
         onShowUsage,
-        skillCreatedFor, onCreateSkill, activities, swarmStatus, Modifier.fillMaxSize(), onQuestionAnswer, plan
+        skillCreatedFor, onCreateSkill, activities, swarmStatus, Modifier.fillMaxSize(), onQuestionAnswer, plan,
+        workLogs = workLogs
     )
 }
 
@@ -875,7 +892,8 @@ private fun MessageList(
     swarmStatus: SwarmStatus? = null,
     modifier: Modifier = Modifier,
     onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
-    plan: AgentPlan? = null
+    plan: AgentPlan? = null,
+    workLogs: Map<String, WorkLog> = emptyMap()
 ) {
     val motionEnabled = LocalKryzzMotionEnabled.current
     val listState = rememberLazyListState()
@@ -942,6 +960,7 @@ private fun MessageList(
                             onShowUsage = { onShowUsage(message) },
                             onCreateSkill = { onCreateSkill(message) },
                             onQuestionAnswer = onQuestionAnswer,
+                            workLog = workLogs[message.id],
                             modifier = Modifier.widthIn(max = 860.dp).fillMaxWidth()
                         )
                     }
@@ -965,7 +984,8 @@ private fun MessageList(
                         "generate_image" -> "Generating the image…"
                         "generate_video" -> "Generating the video…"
                         "generate_audio" -> "Generating the audio…"
-                        else -> "$tool…"
+                        // v5.11: detailed labels ("Searching: pixel 10 battery test") end in their own text.
+                        else -> if (':' in tool) tool else "$tool…"
                     }
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -978,7 +998,7 @@ private fun MessageList(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
-                            Text(label, style = MaterialTheme.typography.labelMedium)
+                            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -1550,6 +1570,7 @@ private fun MessageItem(
     onShowUsage: () -> Unit,
     onCreateSkill: () -> Unit,
     onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
+    workLog: WorkLog? = null,
     modifier: Modifier = Modifier
 ) {
     val isUser = message.role == "USER"
@@ -1675,6 +1696,10 @@ private fun MessageItem(
             Box(Modifier.widthIn(max = 780.dp).fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp)) {
                 messageContent()
             }
+            // v5.11: the steps behind this answer, hidden while it streams (the live chips cover that).
+            if (workLog != null && message.status != MessageStatus.STREAMING.name) {
+                WorkLogRow(workLog, Modifier.widthIn(max = 780.dp).fillMaxWidth().padding(top = 8.dp))
+            }
         }
 
         outputs.forEach { output -> GeneratedOutputCard(output, onSaveOutput, onOpenOutput) }
@@ -1770,6 +1795,114 @@ private fun MessageItem(
                 listOfNotNull(message.totalTokens?.let { "$it tokens" }, message.cost?.let { "≈ $${"%.6f".format(it)}" }).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** v5.11: what the agent did for an answer. One quiet summary line; tapping it lists the steps. */
+@Composable
+private fun WorkLogRow(log: WorkLog, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val motionEnabled = LocalKryzzMotionEnabled.current
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Surface(
+        modifier = modifier.animateContentSize(if (motionEnabled) tween(170) else snap()),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (expanded) 0.42f else 0.24f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f))
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Outlined.Build, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
+                Text(
+                    log.summary,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Icon(
+                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    if (expanded) "Hide steps" else "Show steps",
+                    Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (expanded) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Column(
+                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    log.steps.forEach { step ->
+                        WorkStepLine(step) { url ->
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkStepLine(step: WorkStep, onOpen: (String) -> Unit) {
+    val icon = if (step.failed) Icons.Outlined.ErrorOutline else when (step.kind) {
+        WorkStepKind.SEARCH -> Icons.Outlined.Search
+        WorkStepKind.PAGE -> Icons.Outlined.Language
+        WorkStepKind.CALCULATION -> Icons.Outlined.Calculate
+        WorkStepKind.WEATHER -> Icons.Outlined.WbSunny
+        WorkStepKind.FILE -> Icons.Outlined.Description
+        WorkStepKind.MEMORY -> Icons.Outlined.Lightbulb
+        WorkStepKind.PAST_CHATS -> Icons.Outlined.History
+        WorkStepKind.TIME, WorkStepKind.SCHEDULE -> Icons.Outlined.Schedule
+        WorkStepKind.SKILL -> Icons.Outlined.Extension
+        WorkStepKind.QUESTION -> Icons.Outlined.ChatBubbleOutline
+        WorkStepKind.OTHER -> Icons.Outlined.Build
+    }
+    val url = step.url
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (url != null) Modifier.clickable { onOpen(url) } else Modifier),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(
+            icon, null, Modifier.padding(top = 1.dp).size(14.dp),
+            tint = if (step.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                step.title,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            step.detail?.let { detail ->
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (step.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (step.failed) 3 else 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (url != null) {
+            Icon(
+                Icons.AutoMirrored.Outlined.OpenInNew, "Open page", Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
