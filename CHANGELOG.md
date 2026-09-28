@@ -2,6 +2,46 @@
 
 Public GitHub versions. Internal Kryzz build numbers are in parentheses.
 
+## v1.1.2 — 2026-09-28 (internal 5.11.0, versionCode 84)
+
+Source and debug APK for the Agent Auto rework that landed after public v1.1 (internal 5.7.2). Internal drops 5.8 through 5.11 are included. There is no public v1.1.1.
+
+### Agent
+
+- Live checklist. Auto can keep a plan card through the turn (`update_plan`). Pure planning rounds do not eat the step budget.
+- Time, calculate, weather, and file creation are offered every round, so "put that in a spreadsheet" works without a keyword match.
+- `fetch_url` only opens a page the user shared, a search result from this chat, or a site the user named. Injected page text cannot turn the tool into an open fetch.
+- Search fires on precise fresh-info phrases, not everyday words like "game" or "now".
+- The last few replies carry their citations and file names back into context, so "open source 3" and "add a column to that sheet" have something to point at.
+- Substantial answers get one review pass before they are sent. Trivial turns skip it.
+- Per-turn cost cap, default $0.25, adjustable up to $2. Hitting the cap still writes a final answer.
+- Long research compacts older search and page results once context passes 60k characters. Citations, titles, and URLs stay.
+- Step budget is 4–24 (default 16), replacing the old 1–8 tool-round slider. Voice stays on one round.
+
+### Quality
+
+- Agent composer chip: **Fast**, **Balanced**, **Max**.
+- Fast is a short, low-reasoning run (8 steps). Balanced uses the settings you already picked. Max uses the strongest configured model, high reasoning, 24 steps, and the review pass.
+- Requests are laid out so compatible providers can cache the stable prefix across turns and tool rounds.
+- Agent default is `google/gemini-3.8-flash`. Max default is `anthropic/claude-sonnet-5`. Chat stays `openai/gpt-4o-mini`.
+- If the selected model cannot call tools, the composer says so.
+
+### Files and activity
+
+- One Markdown model drives DOCX, XLSX, and PDF: headings, lists, tables, code, quotes, links.
+- DOCX uses real heading styles, numbered lists, bordered tables, and hyperlinks.
+- XLSX writes typed numbers, percentages, booleans, and formulas; freezes the header; adds an autofilter. `### Sheet: Name` starts another sheet.
+- PDF renders with system fonts, so Latvian, Polish, Greek, Cyrillic, and CJK text survive. Page numbers included.
+- A work-log line sits under each agent answer ("3 searches · read 4 pages · 1 file · 48s") and expands into the steps.
+- Activity chips name the query, page, or place, and concurrent calls no longer share one chip.
+
+### Build
+
+- Debug package: `ai.daylight.assistant.debug`
+- Release package: `ai.daylight.assistant`
+- versionCode 84 upgrades in place over the v1.1 debug APK (versionCode 80).
+- Unit tests: 400, 0 failures on the 5.11.0 drop.
+
 ## v1.1 — 2026-09-08 (internal 5.7.2, versionCode 80)
 
 Source, debug APK, and notes for everything shipped after public v1.0 (internal 5.1.15).

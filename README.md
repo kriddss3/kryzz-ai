@@ -1,6 +1,6 @@
 # Kryzz AI
 
-> Public **v1.1**. The source in this repository is internal build **v5.7.2** (versionCode 80). Public **v1.0** was internal **v5.1.15**. Builds 1.x through 5.1.14 were never published.
+> Public **v1.1.2**. The source in this repository is internal build **v5.11.0** (versionCode 84). Public **v1.1** was internal **v5.7.2**. Public **v1.0** was internal **v5.1.15**. Builds 1.x through 5.1.14 were never published. There is no public v1.1.1.
 
 A private, local-first Android AI workspace for chat, voice, and tool-driven workflows.
 
@@ -10,18 +10,19 @@ Build it yourself, read the code, fork it.
 
 ---
 
-## What's new in v1.1
+## What's new in v1.1.2
 
-Since the first public drop (v5.1.15):
+Since public v1.1 (internal 5.7.2). This drop is internal **5.11.0**.
 
-- **MiniMax** as an alternative chat and media provider, next to OpenRouter.
-- **Agent Auto** that actually runs tools across multiple steps — search, fetch a page, calculate, weather, local memory, reminders, files, and code zips.
-- **Interactive question cards** in Chat and Agent: tappable options plus a free-text box, instead of the model guessing.
-- **Generated files** include PDF alongside DOCX, XLSX, SQLite, and code ZIPs.
-- **Starter skills** (research brief, study notes, essay outline, and more) seed on first launch and can be toggled off.
-- **KryzzBot** mascot in Agent mode, 120 Hz on supported displays, and a much more reliable side panel.
+- **Live plan card.** Agent Auto keeps a checklist through the turn. Planning steps do not eat the work budget.
+- **Safer page reads.** `fetch_url` only opens a link you shared, a search result from this chat, or a site you named.
+- **Review before send.** Substantial answers get one check against the tool results. Short questions skip it.
+- **Cost cap.** Default $0.25 per turn, adjustable up to $2. Hitting the cap still finishes the answer.
+- **Fast / Balanced / Max.** A chip on the Agent composer. Max uses the strongest model, a 24-step budget, and the review pass.
+- **Finished files.** DOCX, XLSX, and PDF share one Markdown model: real headings, lists, tables, typed spreadsheet cells, multi-sheet workbooks, and Unicode PDFs.
+- **Work log.** Each agent answer can show what it did ("3 searches · read 4 pages · 1 file") and expand into the steps. Activity chips name the query, page, or place.
 
-See [`CHANGELOG.md`](./CHANGELOG.md) for the public summary, plus [`RELEASE_NOTES_5.1.15.md`](./RELEASE_NOTES_5.1.15.md) (v1.0) and [`RELEASE_NOTES_5.7.2.md`](./RELEASE_NOTES_5.7.2.md) (v1.1).
+See [`CHANGELOG.md`](./CHANGELOG.md). This drop's notes: [`RELEASE_NOTES_5.11.0.md`](./RELEASE_NOTES_5.11.0.md). Older public notes: [`RELEASE_NOTES_5.7.2.md`](./RELEASE_NOTES_5.7.2.md) (v1.1) and [`RELEASE_NOTES_5.1.15.md`](./RELEASE_NOTES_5.1.15.md) (v1.0).
 
 ---
 
@@ -48,11 +49,11 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for the public summary, plus [`RELEASE_NOTE
 ## What you can do
 
 - **Chat.** Streamed conversations with a model you pick, attachments, reasoning controls, editing, regeneration, cancellation, citations, token usage, and cost details. The model can also ask you a question with tappable options instead of guessing.
-- **Agent.** Bounded tool workflows, deep research, wide web search, content creation, reusable local skills, and generated files. Auto can search, fetch a public page, do arithmetic, check the weather, remember facts, schedule a reminder, and produce documents, spreadsheets, PDFs, or code zips.
+- **Agent.** Bounded tool workflows, deep research, wide web search, content creation, reusable local skills, and generated files. Auto can search, fetch an allowed page, do arithmetic, check the weather, remember facts, schedule a reminder, keep a live plan, and produce documents, spreadsheets, PDFs, or code zips. Fast / Balanced / Max sits on the composer.
 - **Voice.** Microphone transcription, spoken replies, automatic turn-taking, and barge-in to interrupt Kryzz mid-sentence.
 - **Memory.** Local, searchable, categorized, per-entry enable/disable, with optional cross-chat recall during conversation.
 - **Library.** Pin, folder, search, rename, delete, and JSON-import/export your conversations and skills.
-- **Generated outputs.** DOCX, XLSX, PDF, SQLite, code ZIPs, images, video, and music, kept in private app storage until you share them.
+- **Generated outputs.** DOCX, XLSX, PDF, SQLite, code ZIPs, images, video, and music, kept in private app storage until you share them. Documents, spreadsheets, and PDFs share one Markdown model, including typed cells and multi-sheet workbooks.
 
 Multimodal attachments and generated media require a model that supports them. Search and voice features need the relevant provider configured.
 
@@ -62,17 +63,17 @@ Multimodal attachments and generated media require a model that supports them. S
 
 A pre-built debug APK for the source in this repository is published as a **GitHub Release**:
 
-👉 **[`v1.1` release page →](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1)** — download `kryzz-ai-5.7.2-debug.apk` (~78 MB, debug-signed).
+👉 **[`v1.1.2` release page →](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1.2)** — download `kryzz-ai-5.11.0-debug.apk` (debug-signed).
 
 A copy of the same APK is also committed in this repo at:
 
 ```
-work-assets/releases/kryzz-ai-5.7.2-debug.apk
+work-assets/releases/kryzz-ai-5.11.0-debug.apk
 ```
 
 Debug-signed with the Android Studio default key, package `ai.daylight.assistant.debug`.
 
-The previous public build remains at [`kryzz-AI-v1-(debug)`](https://github.com/kriddss3/kryzz-ai/releases/tag/kryzz-AI-v1-(debug)) (`kryzz-ai-5.1.15-debug.apk`).
+Previous public builds stay up: [`v1.1`](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1) (`kryzz-ai-5.7.2-debug.apk`) and [`kryzz-AI-v1-(debug)`](https://github.com/kriddss3/kryzz-ai/releases/tag/kryzz-AI-v1-(debug)) (`kryzz-ai-5.1.15-debug.apk`).
 
 **To install on Android 9+:**
 
@@ -84,7 +85,7 @@ The previous public build remains at [`kryzz-AI-v1-(debug)`](https://github.com/
 
 > This is a debug build meant for evaluation and sideloading. For long-term installs on a daily-driver device, build your own signed release APK from this source.
 >
-> The debug package id is `ai.daylight.assistant.debug`. It upgrades in place over the v1.0 debug APK. It will **not** replace a separately signed `ai.daylight.assistant` release install.
+> The debug package id is `ai.daylight.assistant.debug`. versionCode 84 upgrades in place over the v1.1 and v1.0 debug APKs. It will **not** replace a separately signed `ai.daylight.assistant` release install.
 
 ---
 
@@ -191,7 +192,7 @@ Without those variables Gradle produces an unsigned release build. The signing c
 | `data/prefs`  | DataStore-backed settings + legacy-value coercion                             |
 | `data/remote` | Provider clients, request schemas, streaming, MiniMax media, error handling   |
 | `security`    | Android-Keystore-backed credential encryption                                 |
-| `domain`      | Agent loop, tools, skills, research, citations, question cards                |
+| `domain`      | Agent loop, quality presets, plan, review, files, citations, question cards  |
 | `voice`       | Recording, playback, adaptive turn detection, session state                   |
 | `ui`          | Compose navigation, screens, drawer, design system, ViewModels, KryzzBot      |
 
@@ -206,7 +207,8 @@ app/                     ← Kotlin source, Android resources, tests, Room schem
 build.gradle.kts
 settings.gradle.kts
 gradle/  gradlew*        ← Gradle wrapper
-CHANGELOG.md             ← public v1.0 → v1.1 summary
+CHANGELOG.md             ← public v1.0 → v1.1.2 summary
+RELEASE_NOTES_5.11.0.md  ← v1.1.2 internal notes
 RELEASE_NOTES_5.1.15.md  ← v1.0 internal notes
 RELEASE_NOTES_5.7.2.md   ← v1.1 internal notes
 work-assets/
