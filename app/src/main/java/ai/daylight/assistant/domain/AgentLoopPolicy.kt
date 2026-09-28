@@ -48,7 +48,9 @@ internal object AgentLoopPolicy {
         "fetch_url",
         "remember_fact",
         "recall_memories",
-        "schedule_task"
+        "schedule_task",
+        "ask_user",
+        "update_plan"
     )
 
     private val json = Json {
@@ -85,20 +87,27 @@ internal object AgentLoopPolicy {
         }.filter { it.isNotBlank() }
     }
 
+    /**
+     * Matching skills become PRIMARY (full instructions); the rest are listed by name and
+     * purpose. v5.8: when nothing matches, every skill is listed by name only. Before, all
+     * of them were injected in full as "PRIMARY … this is the workflow", so an unrelated
+     * question arrived wrapped in eight starter workflows the model felt bound to follow.
+     */
     fun selectActiveSkills(skills: List<SkillSummary>, userText: String): ActiveSkillSet {
         if (skills.isEmpty()) return ActiveSkillSet(emptyList(), emptyList())
         val scored = skills.map { it to skillRelevance(it, userText) }
         val matched = scored.filter { it.second > 0 }.sortedByDescending { it.second }.map { it.first }
-        return if (matched.isNotEmpty()) {
-            ActiveSkillSet(primary = matched.take(6), alsoActive = skills.filter { it !in matched })
-        } else {
-            ActiveSkillSet(primary = skills, alsoActive = emptyList())
-        }
+        return ActiveSkillSet(primary = matched.take(6), alsoActive = skills.filter { it !in matched.take(6) })
     }
 
     fun formatActiveSkillsPrompt(set: ActiveSkillSet): String {
         if (set.isEmpty) return ""
         val builder = StringBuilder()
+        if (set.primary.isEmpty()) {
+            builder.append("\n\nThe user has these local skills. None matched this request; apply one only if it clearly fits:\n")
+            set.alsoActive.forEach { builder.append("- ${it.name}: ${it.description}\n") }
+            return builder.toString().take(20_000)
+        }
         builder.append(
             "\n\nThe user has already created the following local skills. They are ACTIVE for this request. " +
                 "Follow every skill that applies — do not ask whether to use them, and do not wait for the user to pick one.\n"

@@ -14,11 +14,11 @@ android {
         applicationId = "ai.daylight.assistant"
         minSdk = 28
         targetSdk = 35
-// Kryzz AI 5.7.2 - Interactive question cards: chat-mode kryzz-question fenced blocks render
-//      as tappable option cards with a free-text box; agent mode gains the ask_user tool
-//      whose call suspends until the user answers (or dismisses) from the floating card
-        versionCode = 80
-        versionName = "5.7.2"
+// Kryzz AI 5.8.0 - Agent Auto rework, phase 1: cheap tools offered every round, fetch_url
+//      reads search results (allowlisted URLs only), strict forced-search gate, concurrent
+//      lookups off the main thread, sources carried into history, update_plan checklist card
+        versionCode = 81
+        versionName = "5.8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

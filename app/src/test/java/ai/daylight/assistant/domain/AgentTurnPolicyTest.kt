@@ -18,7 +18,7 @@ class AgentTurnPolicyTest {
         maxToolRounds: Int = 6,
         voiceMode: Boolean = false,
         offerFetch: Boolean = false,
-        offerWeather: Boolean = false,
+        publicWebAvailable: Boolean = true,
         memoryEnabled: Boolean = true
     ) = AgentTurnPolicy.ToolContext(
         agentMode = true,
@@ -37,11 +37,10 @@ class AgentTurnPolicyTest {
         offerMediaImage = false,
         offerMediaVideo = false,
         offerMediaAudio = false,
-        offerArtifactAuto = false,
         offerSkillAuto = false,
         offerCodeAuto = false,
         memoryEnabled = memoryEnabled,
-        offerWeather = offerWeather,
+        publicWebAvailable = publicWebAvailable,
         offerFetch = offerFetch,
         offerSchedule = false
     )
@@ -71,13 +70,11 @@ class AgentTurnPolicyTest {
         assertThat(plan.forcedTool).isNotEqualTo(AgentTurnPolicy.ASK_USER)
     }
 
-    @Test fun askUserIsNotOfferedInVoiceModeOrDuringForcedSearch() {
+    @Test fun askUserIsNotOfferedInVoiceMode() {
         // Voice turns keep tools minimal so the spoken reply stays responsive.
         val voicePlan = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext(voiceMode = true))
         assertThat(voicePlan.toolNames).doesNotContain(AgentTurnPolicy.ASK_USER)
-        // A forced first web search holds utility tools back so the required call wins.
-        val forcedPlan = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext(forceSearchFirst = true))
-        assertThat(forcedPlan.toolNames).doesNotContain(AgentTurnPolicy.ASK_USER)
+        assertThat(voicePlan.toolNames).doesNotContain(AgentTurnPolicy.UPDATE_PLAN)
     }
 
     @Test fun askUserIsNotOfferedOnTheTerminalRound() {
@@ -96,9 +93,13 @@ class AgentTurnPolicyTest {
         )
         assertThat(plan.forcedTool).isEqualTo(AgentTurnPolicy.PARALLEL_SEARCH)
         assertThat(plan.toolNames).contains(AgentTurnPolicy.PARALLEL_SEARCH)
-        // Past-chats and utility tools are held back so the forced call is the web search.
-        assertThat(plan.toolNames).doesNotContain(AgentTurnPolicy.SEARCH_PAST_CHATS)
-        assertThat(plan.toolNames).doesNotContain(AgentTurnPolicy.CALCULATE)
+        // v5.8: the executor pins the search with a named tool_choice, so the other tools
+        // stay offered instead of vanishing for the round.
+        assertThat(plan.toolNames).containsAtLeast(
+            AgentTurnPolicy.SEARCH_PAST_CHATS,
+            AgentTurnPolicy.CALCULATE,
+            AgentTurnPolicy.UPDATE_PLAN
+        )
     }
 
     @Test fun forcedSearchStopsOnceASearchRan() {
@@ -117,7 +118,7 @@ class AgentTurnPolicyTest {
         // via FORCE_FINAL_ANSWER whenever the follow-up text looked short or promised
         // another step.
         val progress = AgentTurnPolicy.TurnProgress(toolRounds = 1, searchRounds = 1, didSearch = true)
-        val plan = AgentTurnPolicy.planRound(progress, autoContext(offerFetch = true, offerWeather = true))
+        val plan = AgentTurnPolicy.planRound(progress, autoContext(offerFetch = true))
         assertThat(plan.terminal).isFalse()
         assertThat(plan.toolNames).containsAtLeast(
             AgentTurnPolicy.PARALLEL_SEARCH,
@@ -217,6 +218,94 @@ class AgentTurnPolicyTest {
             AgentTurnPolicy.TurnProgress(toolRounds = 2, searchRounds = 2, didSearch = true), ctx
         )
         assertThat(third.forcedTool).isNull()
+    }
+
+    @Test fun cheapToolsAreOfferedEveryAgentRoundWithoutKeywords() {
+        // v5.8: weather, files, planning, time and arithmetic no longer hide behind keyword
+        // gates; "put it in a table I can download" used to get no create_artifact at all.
+        val plan = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext())
+        assertThat(plan.toolNames).containsAtLeast(
+            AgentTurnPolicy.GET_WEATHER,
+            AgentTurnPolicy.CREATE_ARTIFACT,
+            AgentTurnPolicy.UPDATE_PLAN,
+            AgentTurnPolicy.GET_CURRENT_TIME,
+            AgentTurnPolicy.CALCULATE,
+            AgentTurnPolicy.ASK_USER
+        )
+        // Slow, costly or side-effecting tools stay gated.
+        assertThat(plan.toolNames).containsNoneOf(
+            AgentTurnPolicy.GENERATE_IMAGE,
+            AgentTurnPolicy.GENERATE_VIDEO,
+            AgentTurnPolicy.GENERATE_AUDIO,
+            AgentTurnPolicy.SCHEDULE_TASK,
+            AgentTurnPolicy.CREATE_SKILL,
+            AgentTurnPolicy.CREATE_CODE_PROJECT
+        )
+    }
+
+    @Test fun fetchIsOfferedOnceAUrlIsReadable() {
+        val noUrls = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), autoContext(offerFetch = false))
+        assertThat(noUrls.toolNames).doesNotContain(AgentTurnPolicy.FETCH_URL)
+        val afterSearch = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(toolRounds = 1, searchRounds = 1, didSearch = true),
+            autoContext(offerFetch = true)
+        )
+        assertThat(afterSearch.toolNames).contains(AgentTurnPolicy.FETCH_URL)
+    }
+
+    @Test fun withoutThePublicWebClientNeitherWeatherNorFetchIsOffered() {
+        val plan = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(),
+            autoContext(offerFetch = true, publicWebAvailable = false)
+        )
+        assertThat(plan.toolNames).containsNoneOf(AgentTurnPolicy.GET_WEATHER, AgentTurnPolicy.FETCH_URL)
+    }
+
+    @Test fun autoCreateArtifactIsOfferedUntilAFileExists() {
+        val plan = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(toolRounds = 1, outputKinds = setOf(OutputKind.SPREADSHEET)),
+            autoContext()
+        )
+        assertThat(plan.toolNames).doesNotContain(AgentTurnPolicy.CREATE_ARTIFACT)
+        // An image is not a file deliverable, so a document can still follow it.
+        val afterImage = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(toolRounds = 1, outputKinds = setOf(OutputKind.IMAGE)),
+            autoContext()
+        )
+        assertThat(afterImage.toolNames).contains(AgentTurnPolicy.CREATE_ARTIFACT)
+    }
+
+    @Test fun offeredToolNamesAreNeverDuplicated() {
+        // A dedicated Document run both needs create_artifact and gets the utility copy;
+        // a duplicate definition is rejected by some providers.
+        val contexts = listOf(
+            autoContext(),
+            autoContext(forceSearchFirst = true, offerFetch = true),
+            autoContext().copy(artifactCapability = true),
+            autoContext().copy(deepResearch = true)
+        )
+        contexts.forEach { ctx ->
+            val names = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), ctx).toolNames
+            assertThat(names).containsNoDuplicates()
+        }
+    }
+
+    @Test fun planOnlyRoundsAreFreeUpToTheCap() {
+        val planOnly = listOf(AgentTurnPolicy.UPDATE_PLAN)
+        assertThat(AgentTurnPolicy.roundCountsTowardBudget(planOnly, freePlanRoundsUsed = 0)).isFalse()
+        assertThat(
+            AgentTurnPolicy.roundCountsTowardBudget(planOnly, AgentTurnPolicy.FREE_PLAN_ROUNDS - 1)
+        ).isFalse()
+        // Past the cap a model stuck re-planning spends budget and still reaches the terminal round.
+        assertThat(
+            AgentTurnPolicy.roundCountsTowardBudget(planOnly, AgentTurnPolicy.FREE_PLAN_ROUNDS)
+        ).isTrue()
+        // Mixed rounds and ordinary rounds always count.
+        assertThat(
+            AgentTurnPolicy.roundCountsTowardBudget(listOf(AgentTurnPolicy.UPDATE_PLAN, AgentTurnPolicy.PARALLEL_SEARCH), 0)
+        ).isTrue()
+        assertThat(AgentTurnPolicy.roundCountsTowardBudget(listOf(AgentTurnPolicy.CALCULATE), 0)).isTrue()
+        assertThat(AgentTurnPolicy.roundCountsTowardBudget(emptyList(), 0)).isTrue()
     }
 
     // ---------- afterModel ----------

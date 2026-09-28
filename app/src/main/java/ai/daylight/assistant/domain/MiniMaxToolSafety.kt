@@ -26,7 +26,8 @@ internal object MiniMaxToolSafety {
         "fetch_url",
         "remember_fact",
         "recall_memories",
-        "schedule_task"
+        "schedule_task",
+        "update_plan"
     )
 
     fun datetimeParameters() = buildJsonObject {

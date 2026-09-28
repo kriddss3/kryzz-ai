@@ -18,6 +18,14 @@ import ai.daylight.assistant.data.remote.ToolDefinition
  *  - tool budget exhausted, or blank text after tool rounds -> exactly ONE terminal
  *    no-tools round so the turn still ends with a written answer instead of a limit notice
  *
+ * v5.8 tool offering: cheap tools whose effects stay on the phone (time, calculate,
+ * weather, create_artifact, update_plan) are offered every agent round instead of only when
+ * a keyword matched, and fetch_url is offered as soon as any readable URL is known (see
+ * [FetchAllowlist]), so a search can be followed by reading its results. Keyword gates
+ * remain only for slow or costly tools (image / video / music) and tools with side effects
+ * (schedule, skill, code). A forced first search no longer withholds the other tools: the
+ * executor forces it with a named tool_choice, so offering them does not dilute the call.
+ *
  * Everything here is pure and unit-tested; [AgentExecutor] only maps the planned tool
  * names to its [ToolDefinition] builders and executes the transitions.
  */
@@ -39,6 +47,14 @@ internal object AgentTurnPolicy {
     const val RECALL_MEMORIES = "recall_memories"
     const val SCHEDULE_TASK = "schedule_task"
     const val ASK_USER = "ask_user"
+    const val UPDATE_PLAN = "update_plan"
+
+    /**
+     * Rounds whose only calls are update_plan do not spend the tool budget, up to this many
+     * per turn: keeping the checklist current must not starve the real work of rounds. Past
+     * the cap they count normally, so a model stuck re-planning still hits the terminal round.
+     */
+    const val FREE_PLAN_ROUNDS = 3
 
     /** One-shot re-ask when the model described a tool call instead of invoking it. */
     const val NUDGE_DIRECTIVE =
@@ -82,11 +98,12 @@ internal object AgentTurnPolicy {
         val offerMediaImage: Boolean,
         val offerMediaVideo: Boolean,
         val offerMediaAudio: Boolean,
-        val offerArtifactAuto: Boolean,
         val offerSkillAuto: Boolean,
         val offerCodeAuto: Boolean,
         val memoryEnabled: Boolean,
-        val offerWeather: Boolean,
+        /** The key-free public web client (weather, page fetch) is wired in. */
+        val publicWebAvailable: Boolean,
+        /** At least one URL is readable under [FetchAllowlist], or the user asked to read a page. */
         val offerFetch: Boolean,
         val offerSchedule: Boolean
     )
@@ -138,17 +155,15 @@ internal object AgentTurnPolicy {
         val needsCode = c.codeCapability && OutputKind.CODE !in p.outputKinds
         val allowSearch = c.searchAvailable &&
             p.searchRounds < c.searchRoundCap.coerceIn(1, ToolRoundLimiter.HARD_MAXIMUM)
-        // AUTO's fresh-info gate: force the first parallel_search round so news / prices /
-        // weather are not answered from stale memory. First round only (didSearch flips).
+        // AUTO's fresh-info gate: force the first parallel_search round so news, prices and
+        // scores are not answered from stale memory. First round only (didSearch flips).
         val forceSearch = c.forceSearchFirst && !p.didSearch && !needsSkill && !needsCode && allowSearch
         val needsDeepPass = allowSearch && c.deepResearch &&
             DeepSearchPolicy.shouldForceAnotherPass(p.searchRounds, c.searchDepth)
         val forceWideFirst = allowSearch && c.wideSearch && !p.didSearch
 
         val names = buildList {
-            // During a forced first search, past-chats is held back so the required call
-            // can only be a web search; it returns on later rounds.
-            if (!c.voiceMode && !needsSkill && !needsCode && !forceSearch) add(SEARCH_PAST_CHATS)
+            if (!c.voiceMode && !needsSkill && !needsCode) add(SEARCH_PAST_CHATS)
             if (allowSearch && !needsSkill && !needsCode) add(PARALLEL_SEARCH)
             if (needsArtifact) add(CREATE_ARTIFACT)
             if (needsSkill) add(CREATE_SKILL)
@@ -159,23 +174,24 @@ internal object AgentTurnPolicy {
             if (autoMedia && c.offerMediaImage && OutputKind.IMAGE !in p.outputKinds) add(GENERATE_IMAGE)
             if (autoMedia && c.offerMediaVideo && OutputKind.VIDEO !in p.outputKinds) add(GENERATE_VIDEO)
             if (autoMedia && c.offerMediaAudio && OutputKind.AUDIO !in p.outputKinds) add(GENERATE_AUDIO)
-            val utility = c.agentMode && !needsSkill && !needsCode && !forceSearch && !c.voiceMode
+            val utility = c.agentMode && !needsSkill && !needsCode && !c.voiceMode
             if (utility) {
+                add(UPDATE_PLAN)
                 add(GET_CURRENT_TIME)
                 add(CALCULATE)
                 if (c.memoryEnabled) {
                     add(REMEMBER_FACT)
                     add(RECALL_MEMORIES)
                 }
-                if (c.offerWeather) add(GET_WEATHER)
-                if (c.offerFetch) add(FETCH_URL)
+                if (c.publicWebAvailable) add(GET_WEATHER)
+                if (c.publicWebAvailable && c.offerFetch) add(FETCH_URL)
                 if (c.offerSchedule) add(SCHEDULE_TASK)
                 add(ASK_USER)
-                if (c.offerArtifactAuto && p.outputKinds.none { it in ArtifactKinds.fileKinds }) add(CREATE_ARTIFACT)
+                if (p.outputKinds.none { it in ArtifactKinds.fileKinds }) add(CREATE_ARTIFACT)
                 if (c.offerSkillAuto && !p.skillCreated) add(CREATE_SKILL)
                 if (c.offerCodeAuto && OutputKind.CODE !in p.outputKinds) add(CREATE_CODE_PROJECT)
             }
-        }
+        }.distinct()
         val forcedTool = when {
             forceSearch -> PARALLEL_SEARCH
             needsSkill -> CREATE_SKILL
@@ -186,6 +202,15 @@ internal object AgentTurnPolicy {
             // Never force a tool that is not actually offered this round.
         }?.takeIf { it in names }
         return RoundPlan(toolNames = names, forcedTool = forcedTool, terminal = false, terminalDirective = null)
+    }
+
+    /**
+     * Whether a round that returned [callNames] spends the tool budget. Plan-only rounds are
+     * free until [FREE_PLAN_ROUNDS] of them have been used this turn.
+     */
+    fun roundCountsTowardBudget(callNames: List<String>, freePlanRoundsUsed: Int): Boolean {
+        val planOnly = callNames.isNotEmpty() && callNames.all { it == UPDATE_PLAN }
+        return !planOnly || freePlanRoundsUsed >= FREE_PLAN_ROUNDS
     }
 
     /**
@@ -230,7 +255,7 @@ internal object AgentTurnPolicy {
     private val namedTool = Regex(
         """\b(parallel_search|search_past_chats|create_artifact|create_skill|create_code_project|""" +
             """generate_image|generate_video|generate_audio|get_current_time|calculate|get_weather|""" +
-            """fetch_url|remember_fact|recall_memories|schedule_task|ask_user)\b"""
+            """fetch_url|remember_fact|recall_memories|schedule_task|ask_user|update_plan)\b"""
     )
 
     fun strictToolPromise(text: String): Boolean {

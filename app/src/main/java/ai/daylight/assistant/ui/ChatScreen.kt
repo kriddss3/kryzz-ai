@@ -101,6 +101,7 @@ import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Stop
@@ -189,6 +190,7 @@ import ai.daylight.assistant.data.ConversationRepository
 import ai.daylight.assistant.data.local.MessageEntity
 import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.domain.AgentCapability
+import ai.daylight.assistant.domain.AgentPlan
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.Citation
 import ai.daylight.assistant.domain.ChatAttachment
@@ -202,6 +204,7 @@ import ai.daylight.assistant.domain.MessageSegment
 import ai.daylight.assistant.domain.MessageStatus
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.OutputKind
+import ai.daylight.assistant.domain.PlanStepStatus
 import ai.daylight.assistant.domain.ReasoningEffort
 import ai.daylight.assistant.domain.SubagentState
 import ai.daylight.assistant.domain.SwarmPhase
@@ -307,6 +310,7 @@ fun ChatScreen(
     val activities by vm.activities.collectAsStateWithLifecycle()
     val swarmStatus by vm.swarmStatus.collectAsStateWithLifecycle()
     val pendingQuestion by vm.pendingQuestion.collectAsStateWithLifecycle()
+    val agentPlan by vm.agentPlan.collectAsStateWithLifecycle()
     val pager = rememberPagerState(initialPage = initialMode.ordinal, pageCount = { AssistantMode.entries.size })
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -519,6 +523,7 @@ onRemoveAttachment = vm::removeAttachment,
                             attachments = repository::attachments,
                             activities = activities,
                             swarmStatus = swarmStatus,
+                            plan = agentPlan?.takeIf { it.conversationId == vm.conversationId },
                             onRegenerate = vm::regenerate,
                             onEdit = vm::startEditing,
                             onSaveOutput = {
@@ -818,6 +823,7 @@ private fun ChatPane(
     onCreateSkill: (MessageEntity) -> Unit,
     activities: List<String> = emptyList(),
     swarmStatus: SwarmStatus? = null,
+    plan: AgentPlan? = null,
     onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> }
 ) {
     MessageList(
@@ -825,7 +831,7 @@ private fun ChatPane(
         onRegenerate, onEdit, onSaveOutput, onOpenOutput, onSpeak,
         speakingMessageId, synthesizingMessageId,
         onShowUsage,
-        skillCreatedFor, onCreateSkill, activities, swarmStatus, Modifier.fillMaxSize(), onQuestionAnswer
+        skillCreatedFor, onCreateSkill, activities, swarmStatus, Modifier.fillMaxSize(), onQuestionAnswer, plan
     )
 }
 
@@ -853,7 +859,8 @@ private fun MessageList(
     activities: List<String> = emptyList(),
     swarmStatus: SwarmStatus? = null,
     modifier: Modifier = Modifier,
-    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> }
+    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
+    plan: AgentPlan? = null
 ) {
     val motionEnabled = LocalKryzzMotionEnabled.current
     val listState = rememberLazyListState()
@@ -925,6 +932,13 @@ private fun MessageList(
                     }
                 }
             }
+            plan?.let { current ->
+                item(key = "agent-plan") {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                        AgentPlanCard(current, Modifier.widthIn(max = 860.dp).fillMaxWidth())
+                    }
+                }
+            }
             activities.forEach { tool ->
                 item(key = "tool-activity-$tool") {
                     val label = when (tool) {
@@ -966,6 +980,58 @@ private fun MessageList(
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.widthIn(max = 860.dp).padding(12.dp))
                     }
+                }
+            }
+        }
+    }
+}
+
+/** The agent's live `update_plan` checklist: done steps ticked, the active one spinning. */
+@Composable
+private fun AgentPlanCard(plan: AgentPlan, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+    ) {
+        Column(
+            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Text(
+                "Plan · ${plan.doneCount} of ${plan.steps.size} done",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            plan.steps.forEach { step ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    when (step.status) {
+                        PlanStepStatus.IN_PROGRESS -> CircularProgressIndicator(
+                            modifier = Modifier.size(13.dp),
+                            strokeWidth = 2.dp
+                        )
+                        PlanStepStatus.DONE -> Icon(
+                            Icons.Outlined.CheckCircle, "Step done", Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        PlanStepStatus.PENDING -> Icon(
+                            Icons.Outlined.RadioButtonUnchecked, "Step pending", Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    }
+                    Text(
+                        step.title,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (step.status == PlanStepStatus.PENDING) {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        } else MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
         }
