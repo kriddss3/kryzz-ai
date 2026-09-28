@@ -55,6 +55,15 @@ class MiniMaxToolSafetyTest {
         assertThat(next.toolChoice).isNull()
     }
 
+    @Test fun terminalRoundRetryDropsToolsInsteadOfAllowingCalls() {
+        // v5.10: the terminal round sends tools with tool_choice "none"; a rejected request
+        // must lose the tools, never switch to "auto" and let calls run past the budget.
+        val request = requestWith(tools = listOf(searchTool(), datetimeToolDef()), choice = ToolChoice.NONE)
+        val next = MiniMaxToolSafety.nextValidationRetry(request)
+        assertThat(next.tools).isNull()
+        assertThat(next.toolChoice).isNull()
+    }
+
     @Test fun timezoneArgDefaultsToLocal() {
         assertThat(MiniMaxToolSafety.timezoneArg("")).isEqualTo("local")
         assertThat(MiniMaxToolSafety.timezoneArg("{}")).isEqualTo("local")

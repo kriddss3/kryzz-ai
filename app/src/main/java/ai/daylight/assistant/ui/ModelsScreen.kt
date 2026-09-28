@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.Handyman
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -104,6 +105,7 @@ fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -
         ModelPurpose.CHAT -> settings.defaultModel
         ModelPurpose.AGENT -> settings.agentModel
         ModelPurpose.RESEARCH -> settings.researchModel
+        ModelPurpose.MAX -> settings.maxModel
         ModelPurpose.IMAGE -> settings.imageModel
         ModelPurpose.VIDEO -> settings.videoModel
         ModelPurpose.AUDIO -> settings.audioModel
@@ -216,7 +218,7 @@ fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -
             ) { target ->
                 when {
                     loading && models.isEmpty() && imageModels.isEmpty() && videoModels.isEmpty() && audioModels.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    target in setOf(ModelPurpose.CHAT, ModelPurpose.AGENT, ModelPurpose.RESEARCH) && chatFiltered.isEmpty() -> EmptyModels(error ?: "No matching text models were returned.")
+                    target in setOf(ModelPurpose.CHAT, ModelPurpose.AGENT, ModelPurpose.RESEARCH, ModelPurpose.MAX) && chatFiltered.isEmpty() -> EmptyModels(error ?: "No matching text models were returned.")
                     target == ModelPurpose.IMAGE && mediaFiltered.isEmpty() -> EmptyModels(
                         mediaError?.let { "Image models couldn't load: $it" }
                             ?: "No matching image models were returned. Add or verify your OpenRouter key, then refresh.",
@@ -232,7 +234,7 @@ fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -
                             ?: "No matching speech models were returned. Add or verify your OpenRouter key, then refresh.",
                         onRetry = vm::refresh
                     )
-                    target in setOf(ModelPurpose.CHAT, ModelPurpose.AGENT, ModelPurpose.RESEARCH) -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    target in setOf(ModelPurpose.CHAT, ModelPurpose.AGENT, ModelPurpose.RESEARCH, ModelPurpose.MAX) -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(chatFiltered, key = { it.id }) { model ->
                             TextModelCard(
                                 model = model,
@@ -260,6 +262,7 @@ private fun PurposeChip(purpose: ModelPurpose, selected: Boolean, onClick: () ->
         ModelPurpose.CHAT -> Icons.Outlined.SmartToy
         ModelPurpose.AGENT -> Icons.Outlined.AutoAwesome
         ModelPurpose.RESEARCH -> Icons.AutoMirrored.Outlined.ManageSearch
+        ModelPurpose.MAX -> Icons.Outlined.RocketLaunch
         ModelPurpose.IMAGE -> Icons.Outlined.Image
         ModelPurpose.VIDEO -> Icons.Outlined.Movie
         ModelPurpose.AUDIO -> Icons.Outlined.GraphicEq
@@ -433,6 +436,7 @@ private fun ModelPurpose.heading(): String = when (this) {
     ModelPurpose.CHAT -> "Everyday chat"
     ModelPurpose.AGENT -> "Agent"
     ModelPurpose.RESEARCH -> "Research"
+    ModelPurpose.MAX -> "Max"
     ModelPurpose.IMAGE -> "Image"
     ModelPurpose.VIDEO -> "Video"
     ModelPurpose.AUDIO -> "Audio"

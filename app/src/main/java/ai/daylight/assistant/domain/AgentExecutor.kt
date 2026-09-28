@@ -15,6 +15,7 @@ import ai.daylight.assistant.data.local.MessageEntity
 import ai.daylight.assistant.data.local.ScheduledTaskEntity
 import ai.daylight.assistant.data.preferences.AppPreferences
 import ai.daylight.assistant.data.preferences.SettingsState
+import ai.daylight.assistant.data.preferences.agentQualityInputs
 import ai.daylight.assistant.data.remote.ApiMessage
 import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.CalculateArgs
@@ -239,21 +240,48 @@ class AgentExecutor(
         val questionCardInstruction = if (!voiceMode && mode == AssistantMode.CHAT) {
             "\n\n${InlineQuestionProtocol.CHAT_PROTOCOL_PROMPT}"
         } else ""
-        val prompt = buildModePrompt(basePrompt, mode, capability) + enabledSkillsPrompt(enabledSkills, lastUser?.content.orEmpty()) +
-            questionCardInstruction +
-            (if (memoryContext.isNotBlank()) "\n\n$memoryContext" else "") +
+        // v5.10: the Agent quality preset decides the model, reasoning, step budget, review
+        // and cost cap of agent turns (AgentQualityPolicy). Chat and voice turns resolve as
+        // Balanced, which is exactly the user's own settings, and keep their own models below.
+        val agentTurn = mode == AssistantMode.AGENT && !voiceMode
+        val turnSettings = AgentQualityPolicy.resolve(
+            quality = if (agentTurn) settings.agentQuality else AgentQuality.BALANCED,
+            user = settings.agentQualityInputs(),
+            research = capability in setOf(AgentCapability.DEEP_RESEARCH, AgentCapability.WIDE_SEARCH)
+        )
+        val model = when {
+            voiceMode -> settings.voiceReplyModel.ifBlank {
+                if (settings.chatProvider == ChatProvider.OPENROUTER) settings.defaultModel else VoiceConfig.DEFAULT_LLM_MODEL
+            }.ifBlank { VoiceConfig.DEFAULT_LLM_MODEL }
+            mode == AssistantMode.CHAT -> settings.defaultModel
+            else -> turnSettings.model
+        }
+        val reasoningEffort = when {
+            voiceMode || provider == ChatProvider.MINIMAX -> null
+            agentTurn -> turnSettings.reasoning.apiValue
+            else -> settings.modelReasoning[model]?.apiValue
+        }
+        // v5.10 prompt caching (PromptLayout): the system prompt holds only turn-stable text,
+        // and what was retrieved for the latest message travels in its own message right
+        // before it, so the system prompt and the history stay a cacheable prefix.
+        val systemPrompt = buildModePrompt(basePrompt, mode, capability) + questionCardInstruction +
             (if (memoryInstruction.isNotBlank()) "\n\n$memoryInstruction" else "") +
-            (if (pastChatContext.isNotBlank()) "\n\n$pastChatContext" else "") +
-            (if (pastChatInstruction.isNotBlank()) "\n\n$pastChatInstruction" else "") +
-            (if (locationContext.isNotBlank()) "\n\n$locationContext" else "")
-        val working = mutableListOf(ApiMessage("system", prompt))
+            (if (pastChatInstruction.isNotBlank()) "\n\n$pastChatInstruction" else "")
+        val turnContext = PromptLayout.turnContext(
+            listOf(enabledSkillsPrompt(enabledSkills, lastUser?.content.orEmpty()), memoryContext, pastChatContext, locationContext)
+        )
         // The latest replies carry their sources and files back into context, so "open
         // source 3" or "add a column to that sheet" still has something to refer to.
         val evidenceReplies = if (voiceMode) emptySet() else history
             .filter { it.role == "ASSISTANT" && (it.citationsJson != "[]" || it.outputsJson != "[]") }
             .takeLast(TurnEvidence.MAX_ANNOTATED_REPLIES)
             .mapTo(mutableSetOf()) { it.id }
-        for (message in history) working += apiMessageFor(message, withEvidence = message.id in evidenceReplies)
+        val working = PromptLayout.build(
+            system = systemPrompt,
+            history = history.map { apiMessageFor(it, withEvidence = it.id in evidenceReplies) },
+            turnContext = turnContext,
+            cacheBreakpoints = provider == ChatProvider.OPENROUTER && PromptLayout.usesCacheBreakpoints(model)
+        ).toMutableList()
         // fetch_url may open what the user shared or what a search returned (see FetchAllowlist).
         val userTexts = allMessages.filter { it.role == "USER" }.map { it.content }
         val conversationUrls = userTexts.flatMap(FetchAllowlist::urlsIn) +
@@ -278,7 +306,7 @@ class AgentExecutor(
         var reviewed = false
         var costCapped = false
         var stoppedByCostCap = false
-        val costCapUsd = if (voiceMode) 0.0 else settings.costCapCents / 100.0
+        val costCapUsd = if (voiceMode) 0.0 else turnSettings.costCapCents / 100.0
         var activeId: String? = null
         var activeText = ""
         var requestPromptTokens = 0L
@@ -290,14 +318,6 @@ class AgentExecutor(
         var hasCost = false
         var firstTokenLatencyMs: Long? = null
         val generationStartedAt = SystemClock.elapsedRealtime()
-        val model = when {
-            voiceMode -> settings.voiceReplyModel.ifBlank {
-                if (settings.chatProvider == ChatProvider.OPENROUTER) settings.defaultModel else VoiceConfig.DEFAULT_LLM_MODEL
-            }.ifBlank { VoiceConfig.DEFAULT_LLM_MODEL }
-            mode == AssistantMode.CHAT -> settings.defaultModel
-            capability in setOf(AgentCapability.DEEP_RESEARCH, AgentCapability.WIDE_SEARCH) -> settings.researchModel
-            else -> settings.agentModel
-        }
         fun addUsage(usage: Usage?) {
             if (usage == null) return
             hasUsage = true
@@ -307,27 +327,31 @@ class AgentExecutor(
             requestCachedInputTokens += usage.promptTokensDetails?.cachedTokens ?: 0
             usage.cost?.let { cost -> hasCost = true; requestCost += cost }
         }
-        fun chatRequest(tools: List<ToolDefinition>, forcedTool: String?) = ChatRequest(
+        // v5.10: [noToolCalls] keeps the tools in the request (and in the cached prefix) but
+        // sends tool_choice "none", for the terminal round and a review that needs no tools.
+        fun chatRequest(tools: List<ToolDefinition>, forcedTool: String?, noToolCalls: Boolean = false) = ChatRequest(
             model = model,
             messages = working,
             tools = tools.ifEmpty { null },
             toolChoice = when {
                 tools.isEmpty() -> null
+                noToolCalls -> ToolChoice.NONE
                 // Pin the named function on every provider: MiniMax rejects the
                 // string "required" (status 2013), and elsewhere "required" would let
                 // the model satisfy a forced search with any other offered tool.
                 forcedTool != null -> ToolChoice.named(forcedTool)
                 else -> ToolChoice.AUTO
             },
-            reasoning = if (voiceMode || provider == ChatProvider.MINIMAX) null else settings.modelReasoning[model]?.apiValue?.let { effort ->
-                ReasoningConfig(effort = effort, exclude = true)
-            },
+            reasoning = reasoningEffort?.let { effort -> ReasoningConfig(effort = effort, exclude = true) },
             // Voice chat always routes to the lowest-latency provider serving this model.
             provider = if (voiceMode && provider == ChatProvider.OPENROUTER) ProviderPreferences() else null,
             // MiniMax thinking + a tool call can exceed a tiny default completion budget.
             maxTokens = if (provider == ChatProvider.MINIMAX) MINIMAX_MAX_COMPLETION_TOKENS else null
         )
-        val agentRunningActivity = mode == AssistantMode.AGENT && !voiceMode
+        val agentRunningActivity = agentTurn
+        // v5.10: the turn's tool list as last sent, reused by the review pass so its request
+        // shares the cached prefix too.
+        var turnTools: List<ToolDefinition> = emptyList()
 
         /**
          * v5.9 review pass (see [AnswerReview]). The draft stays on screen while the reviewer
@@ -337,9 +361,16 @@ class AgentExecutor(
          */
         suspend fun reviewDraft(messageId: String, draft: String): String {
             val offerArtifact = AnswerReview.offersArtifact(outputs.map { it.kind }.toSet())
-            val reviewTools = if (offerArtifact) {
-                listOf(if (capability.outputKind() != null) artifactTool(capability) else artifactToolAuto())
-            } else emptyList()
+            // v5.10: on OpenRouter the review resends the turn's tools (cache hit on the whole
+            // turn) with tool_choice "none", or "auto" when a flawed file may be replaced; only
+            // create_artifact calls are acted on. Otherwise it offers create_artifact alone.
+            val reuseTurnTools = AgentTurnPolicy.keepsToolsOnTerminalRound(provider) && turnTools.isNotEmpty() &&
+                (!offerArtifact || turnTools.any { it.function.name == AgentTurnPolicy.CREATE_ARTIFACT })
+            val reviewTools = when {
+                reuseTurnTools -> turnTools
+                offerArtifact -> listOf(if (capability.outputKind() != null) artifactTool(capability) else artifactToolAuto())
+                else -> emptyList()
+            }
             working += ApiMessage("assistant", draft)
             working += ApiMessage("system", AnswerReview.directive(offerArtifact))
             toolActivity.tryEmit(ToolActivity(conversationId, TOOL_REVIEWING, started = true))
@@ -348,7 +379,7 @@ class AgentExecutor(
                 val review = collectWithRetry(
                     client = client,
                     key = key,
-                    request = chatRequest(reviewTools, forcedTool = null),
+                    request = chatRequest(reviewTools, forcedTool = null, noToolCalls = reuseTurnTools && !offerArtifact),
                     messageId = messageId,
                     allowEmpty = true,
                     recoverInlineToolCalls = offerArtifact,
@@ -396,6 +427,55 @@ class AgentExecutor(
                 toolActivity.tryEmit(ToolActivity(conversationId, TOOL_REVIEWING, started = false))
             }
         }
+        val lastUserText = lastUser?.content.orEmpty()
+        // Turn-fixed context + per-round progress feed the pure planner in AgentTurnPolicy,
+        // which decides what to offer and what to force. v5.10: built once per turn so the
+        // offered tool list (part of the cached prefix) cannot drift between rounds.
+        val toolContext = AgentTurnPolicy.ToolContext(
+            agentMode = mode == AssistantMode.AGENT,
+            voiceMode = voiceMode,
+            capabilityAuto = capability == AgentCapability.AUTO,
+            artifactCapability = mode == AssistantMode.AGENT && capability.outputKind() != null,
+            skillCapability = mode == AssistantMode.AGENT && capability == AgentCapability.SKILL_MAKER,
+            codeCapability = mode == AssistantMode.AGENT && capability == AgentCapability.CODE,
+            deepResearch = capability == AgentCapability.DEEP_RESEARCH,
+            wideSearch = capability == AgentCapability.WIDE_SEARCH,
+            searchDepth = conversation.searchDepth.coerceIn(1, 3),
+            searchAvailable = settings.searchEnabled && credentials.hasParallelKey(),
+            // Voice chat keeps web search on but caps it at one round per turn so the
+            // spoken reply stays responsive — anything heavier goes to text mode.
+            searchRoundCap = when {
+                voiceMode -> 1
+                capability == AgentCapability.AUTO -> turnSettings.stepBudget.coerceIn(1, ToolRoundLimiter.HARD_MAXIMUM)
+                else -> conversation.searchDepth.coerceIn(1, 3)
+            },
+            stepBudget = turnSettings.stepBudget,
+            // AUTO does not force a tool call on every turn (that would fire a web
+            // search on "hi" or "write me a poem"). But when the user's message
+            // plausibly depends on fresh / time-sensitive / source-backed facts, AUTO
+            // proactively forces the first `parallel_search` round instead of waiting
+            // for the model to decide — which it often skips, answering from stale
+            // memory. The model can still search on its own for anything this gate
+            // misses because `tool_choice` stays "auto" otherwise.
+            forceSearchFirst = mode == AssistantMode.AGENT && capability == AgentCapability.AUTO &&
+                settings.searchEnabled && credentials.hasParallelKey() && messageLikelyNeedsSearch(lastUserText),
+            // AUTO gains media generation tools so it can produce images / video /
+            // music on its own. They are gated on keyword detection in the user's
+            // latest message so the model is only offered `generate_image` when the
+            // user actually asked for an image, etc. — this keeps AUTO from calling
+            // `generate_video` on a plain text question (which would hang for minutes
+            // on the provider poll). The dedicated Image / Video / Music capabilities
+            // keep their direct, no-tool path.
+            offerMediaImage = settings.imageModel.isNotBlank() && userWantsImage(lastUserText),
+            offerMediaVideo = settings.videoModel.isNotBlank() && userWantsVideo(lastUserText),
+            offerMediaAudio = settings.audioModel.isNotBlank() && userWantsAudio(lastUserText),
+            offerSkillAuto = userWantsSkill(lastUserText),
+            offerCodeAuto = userWantsCodeProject(lastUserText),
+            memoryEnabled = settings.memoryEnabled,
+            publicWebAvailable = publicWeb != null,
+            offerFetch = FetchAllowlist(conversationUrls, userTexts).hasKnownUrls || userWantsFetch(lastUserText),
+            offerSchedule = userWantsSchedule(lastUserText) && cronScheduler != null && conversations != null
+        )
         if (agentRunningActivity) {
             toolActivity.tryEmit(ToolActivity(conversationId, TOOL_AGENT_RUNNING, started = true))
         }
@@ -413,56 +493,8 @@ class AgentExecutor(
                     )
                 )
 
-                val lastUserText = lastUser?.content.orEmpty()
                 // Rebuilt every round: URLs a search returned this turn become readable.
                 val fetchAllowlist = FetchAllowlist(conversationUrls + citations.map(Citation::url), userTexts)
-                // Turn-fixed context + per-round progress feed the pure planner in
-                // AgentTurnPolicy, which decides what to offer and what to force.
-                val toolContext = AgentTurnPolicy.ToolContext(
-                    agentMode = mode == AssistantMode.AGENT,
-                    voiceMode = voiceMode,
-                    capabilityAuto = capability == AgentCapability.AUTO,
-                    artifactCapability = mode == AssistantMode.AGENT && capability.outputKind() != null,
-                    skillCapability = mode == AssistantMode.AGENT && capability == AgentCapability.SKILL_MAKER,
-                    codeCapability = mode == AssistantMode.AGENT && capability == AgentCapability.CODE,
-                    deepResearch = capability == AgentCapability.DEEP_RESEARCH,
-                    wideSearch = capability == AgentCapability.WIDE_SEARCH,
-                    searchDepth = conversation.searchDepth.coerceIn(1, 3),
-                    searchAvailable = settings.searchEnabled && credentials.hasParallelKey(),
-                    // Voice chat keeps web search on but caps it at one round per turn so the
-                    // spoken reply stays responsive — anything heavier goes to text mode.
-                    searchRoundCap = when {
-                        voiceMode -> 1
-                        capability == AgentCapability.AUTO -> settings.stepBudget.coerceIn(1, ToolRoundLimiter.HARD_MAXIMUM)
-                        else -> conversation.searchDepth.coerceIn(1, 3)
-                    },
-                    stepBudget = settings.stepBudget,
-                    // AUTO does not force a tool call on every turn (that would fire a web
-                    // search on "hi" or "write me a poem"). But when the user's message
-                    // plausibly depends on fresh / time-sensitive / source-backed facts, AUTO
-                    // proactively forces the first `parallel_search` round instead of waiting
-                    // for the model to decide — which it often skips, answering from stale
-                    // memory. The model can still search on its own for anything this gate
-                    // misses because `tool_choice` stays "auto" otherwise.
-                    forceSearchFirst = mode == AssistantMode.AGENT && capability == AgentCapability.AUTO &&
-                        settings.searchEnabled && credentials.hasParallelKey() && messageLikelyNeedsSearch(lastUserText),
-                    // AUTO gains media generation tools so it can produce images / video /
-                    // music on its own. They are gated on keyword detection in the user's
-                    // latest message so the model is only offered `generate_image` when the
-                    // user actually asked for an image, etc. — this keeps AUTO from calling
-                    // `generate_video` on a plain text question (which would hang for minutes
-                    // on the provider poll). The dedicated Image / Video / Music capabilities
-                    // keep their direct, no-tool path.
-                    offerMediaImage = settings.imageModel.isNotBlank() && userWantsImage(lastUserText),
-                    offerMediaVideo = settings.videoModel.isNotBlank() && userWantsVideo(lastUserText),
-                    offerMediaAudio = settings.audioModel.isNotBlank() && userWantsAudio(lastUserText),
-                    offerSkillAuto = userWantsSkill(lastUserText),
-                    offerCodeAuto = userWantsCodeProject(lastUserText),
-                    memoryEnabled = settings.memoryEnabled,
-                    publicWebAvailable = publicWeb != null,
-                    offerFetch = fetchAllowlist.hasKnownUrls || userWantsFetch(lastUserText),
-                    offerSchedule = userWantsSchedule(lastUserText) && cronScheduler != null && conversations != null
-                )
                 val turn = AgentTurnPolicy.TurnProgress(
                     toolRounds = completedToolRounds,
                     searchRounds = completedSearchRounds,
@@ -475,8 +507,8 @@ class AgentExecutor(
                 )
                 val plan = AgentTurnPolicy.planRound(turn, toolContext)
                 if (plan.terminal && !terminalRoundStarted) {
-                    // The tool budget or the cost cap ran out: exactly one terminal no-tools
-                    // round so the turn still ends with a written answer instead of a limit notice.
+                    // The tool budget or the cost cap ran out: exactly one terminal round without
+                    // tool calls so the turn still ends with a written answer instead of a limit notice.
                     terminalRoundStarted = true
                     stoppedByCostCap = plan.terminalDirective == AgentTurnPolicy.COST_CAP_DIRECTIVE
                     plan.terminalDirective?.let { working += ApiMessage("system", it) }
@@ -487,7 +519,10 @@ class AgentExecutor(
                     working.clear()
                     working.addAll(compacted)
                 }
-                val tools = if (plan.terminal) emptyList() else plan.toolNames.mapNotNull { name ->
+                // v5.10: the terminal round keeps the turn's tools and sends tool_choice "none"
+                // where the provider accepts it, so its request still hits the cached prefix.
+                val sendTools = !plan.terminal || AgentTurnPolicy.keepsToolsOnTerminalRound(provider)
+                val tools = if (!sendTools) emptyList() else plan.toolNames.mapNotNull { name ->
                     when (name) {
                         AgentTurnPolicy.SEARCH_PAST_CHATS -> pastChatTool()
                         AgentTurnPolicy.PARALLEL_SEARCH -> parallelTool(conversation.searchWidth.coerceIn(1, 5))
@@ -510,7 +545,8 @@ class AgentExecutor(
                         else -> null
                     }
                 }
-                val request = chatRequest(tools, plan.forcedTool)
+                if (tools.isNotEmpty()) turnTools = tools
+                val request = chatRequest(tools, plan.forcedTool, noToolCalls = plan.terminal)
                 val allowEmptyRound = outputs.isNotEmpty() || skillCreated || completedToolRounds > 0 ||
                     freePlanRounds > 0 || plan.terminal
                 val onStreamText: suspend (String) -> Unit = { value ->
@@ -537,9 +573,9 @@ class AgentExecutor(
                             request = attemptRequest,
                             messageId = messageId,
                             allowEmpty = allowEmptyRound,
-                            // The terminal round offers no tools; recovering inline XML tool
-                            // calls there could resurrect a call the budget already ruled out
-                            // and loop forever, so recovery is off for that one round.
+                            // The terminal round allows no tool calls; recovering inline XML
+                            // tool calls there could resurrect a call the budget already ruled
+                            // out and loop forever, so recovery is off for that one round.
                             recoverInlineToolCalls = !plan.terminal,
                             onText = onStreamText
                         )
@@ -575,7 +611,8 @@ class AgentExecutor(
                 val artifactExpected = userWantsArtifactCreated(lastUserText) &&
                     AgentTurnPolicy.CREATE_ARTIFACT in plan.toolNames &&
                     turn.outputKinds.none { it in ArtifactKinds.fileKinds }
-                when (AgentTurnPolicy.afterModel(turn, activeText, calls.size, tools.isNotEmpty(), artifactExpected)) {
+                val toolsCallable = tools.isNotEmpty() && !plan.terminal
+                when (AgentTurnPolicy.afterModel(turn, activeText, calls.size, toolsCallable, artifactExpected)) {
                     AgentTurnPolicy.After.NUDGE_ONCE -> {
                         nudgedForTools = true
                         dao.deleteMessage(messageId)
@@ -616,7 +653,7 @@ class AgentExecutor(
                         val reviewInput = AnswerReview.Input(
                             agentMode = mode == AssistantMode.AGENT,
                             voiceMode = voiceMode,
-                            enabled = settings.reviewAnswers,
+                            enabled = turnSettings.review,
                             capability = capability,
                             didSearch = didSearch,
                             didFetch = didFetch,
@@ -650,7 +687,7 @@ class AgentExecutor(
 
                 dao.deleteMessage(messageId)
                 activeId = null
-                if (!ToolRoundLimiter.canRun(completedToolRounds, settings.stepBudget)) {
+                if (!ToolRoundLimiter.canRun(completedToolRounds, turnSettings.stepBudget)) {
                     // Paranoia: the planner goes terminal at the budget, so calls here mean
                     // a recovered inline call slipped through. Answer with what we have
                     // instead of executing past the configured limit.
@@ -672,8 +709,11 @@ class AgentExecutor(
                 // strictly in call order, which keeps citation numbers, tool rows and the
                 // history deterministic.
                 val searchSession = sessionId
-                val lookups: List<Deferred<Result<Lookup>>?> = calls.map { call ->
-                    if (call.function.name !in LOOKUP_TOOLS) return@map null
+                // v5.10: tools stay offered for the whole turn, so calls past a per-turn limit
+                // (search cap, a second image of one kind, a second skill) are refused here.
+                val refusals = calls.map { AgentTurnPolicy.refusal(it.function.name, turn, toolContext) }
+                val lookups: List<Deferred<Result<Lookup>>?> = calls.mapIndexed { index, call ->
+                    if (call.function.name !in LOOKUP_TOOLS || refusals[index] != null) return@mapIndexed null
                     toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
                     // The voice UI plays a filler phrase so the user hears that a search is running.
                     if (voiceMode && call.function.name == AgentTurnPolicy.PARALLEL_SEARCH) {
@@ -693,6 +733,7 @@ class AgentExecutor(
                         toolActivity.tryEmit(ToolActivity(conversationId, call.function.name, started = true))
                     }
                     try {
+                        refusals[index]?.let { reason -> throw AssistantApiException(ErrorKind.VALIDATION, reason) }
                         when (call.function.name) {
                         TOOL_SEARCH_PAST_CHATS -> {
                             val args = validatePastChatArgs(call.function.arguments)

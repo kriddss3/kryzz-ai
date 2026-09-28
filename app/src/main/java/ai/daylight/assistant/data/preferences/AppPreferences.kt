@@ -10,6 +10,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import ai.daylight.assistant.domain.ThemeMode
+import ai.daylight.assistant.domain.AgentModelChoice
+import ai.daylight.assistant.domain.AgentQuality
+import ai.daylight.assistant.domain.AgentQualityPolicy
 import ai.daylight.assistant.domain.AgentTurnPolicy
 import ai.daylight.assistant.domain.AppPalette
 import ai.daylight.assistant.domain.BackgroundStyle
@@ -39,8 +42,11 @@ private val Context.dataStore by preferencesDataStore("daylight_preferences")
 data class SettingsState(
     val onboardingComplete: Boolean = false,
     val defaultModel: String = "openai/gpt-4o-mini",
-    val agentModel: String = "openai/gpt-4o-mini",
-    val researchModel: String = "openai/gpt-4o-mini",
+    // v5.10: stronger tool-calling defaults for new installs (see AgentModelChoice).
+    val agentModel: String = AgentModelChoice.OPENROUTER_AGENT_DEFAULT,
+    val researchModel: String = AgentModelChoice.OPENROUTER_RESEARCH_DEFAULT,
+    /** v5.10: the model Agent mode's Max quality uses; blank falls back to the agent model. */
+    val maxModel: String = AgentModelChoice.OPENROUTER_MAX_DEFAULT,
     val imageModel: String = "",
     val videoModel: String = "",
     val audioModel: String = "openai/gpt-4o-mini-tts-2025-12-15",
@@ -57,6 +63,10 @@ data class SettingsState(
     val costCapCents: Int = AgentTurnPolicy.DEFAULT_COST_CAP_CENTS,
     /** v5.9: run one review pass over substantial agent answers before they are final. */
     val reviewAnswers: Boolean = true,
+    /** v5.10: Agent mode quality preset (Fast / Balanced / Max). */
+    val agentQuality: AgentQuality = AgentQuality.DEFAULT,
+    /** v5.10: the one-time "switch from gpt-4o-mini" suggestion was answered (Switch or Keep). */
+    val agentModelSuggestionAnswered: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.DARK,
     val backgroundStyle: BackgroundStyle = BackgroundStyle.CONSTELLATION,
     val colouredGradient: GradientPalette = GradientPalette.MONOCHROME,
@@ -94,6 +104,7 @@ class AppPreferences(private val context: Context) {
         val model = stringPreferencesKey("default_model")
         val agentModel = stringPreferencesKey("agent_model")
         val researchModel = stringPreferencesKey("research_model")
+        val maxModel = stringPreferencesKey("max_model")
         val imageModel = stringPreferencesKey("image_model")
         val videoModel = stringPreferencesKey("video_model")
         val audioModel = stringPreferencesKey("audio_model")
@@ -109,6 +120,8 @@ class AppPreferences(private val context: Context) {
         val stepBudget = intPreferencesKey("agent_step_budget")
         val costCapCents = intPreferencesKey("agent_cost_cap_cents")
         val reviewAnswers = booleanPreferencesKey("agent_review_answers")
+        val agentQuality = stringPreferencesKey("agent_quality")
+        val agentModelSuggestion = booleanPreferencesKey("agent_model_suggestion_answered")
         val theme = stringPreferencesKey("theme")
         val backgroundStyle = stringPreferencesKey("background_style")
         val colouredGradient = stringPreferencesKey("coloured_gradient")
@@ -148,8 +161,12 @@ class AppPreferences(private val context: Context) {
             SettingsState(
                 onboardingComplete = p[Keys.onboarding] ?: false,
                 defaultModel = p[Keys.model] ?: "openai/gpt-4o-mini",
-                agentModel = p[Keys.agentModel] ?: (p[Keys.model] ?: "openai/gpt-4o-mini"),
-                researchModel = p[Keys.researchModel] ?: (p[Keys.agentModel] ?: p[Keys.model] ?: "openai/gpt-4o-mini"),
+                // v5.10: a stored model is never replaced; only a fresh install (nothing stored
+                // at all) starts on the new tool-calling defaults.
+                agentModel = p[Keys.agentModel] ?: (p[Keys.model] ?: AgentModelChoice.OPENROUTER_AGENT_DEFAULT),
+                researchModel = p[Keys.researchModel] ?: (p[Keys.agentModel] ?: p[Keys.model] ?: AgentModelChoice.OPENROUTER_RESEARCH_DEFAULT),
+                maxModel = p[Keys.maxModel]
+                    ?: modelDefaults(ChatProvider.from(p[Keys.chatProvider] ?: ChatProvider.OPENROUTER.name)).max,
                 imageModel = p[Keys.imageModel].orEmpty(),
                 videoModel = p[Keys.videoModel].orEmpty(),
                 audioModel = p[Keys.audioModel] ?: "openai/gpt-4o-mini-tts-2025-12-15",
@@ -164,6 +181,8 @@ class AppPreferences(private val context: Context) {
                 stepBudget = AgentTurnPolicy.stepBudgetFromStored(p[Keys.stepBudget], p[Keys.toolRounds]),
                 costCapCents = (p[Keys.costCapCents] ?: AgentTurnPolicy.DEFAULT_COST_CAP_CENTS).coerceIn(0, MAX_COST_CAP_CENTS),
                 reviewAnswers = p[Keys.reviewAnswers] ?: true,
+                agentQuality = AgentQuality.from(p[Keys.agentQuality]),
+                agentModelSuggestionAnswered = p[Keys.agentModelSuggestion] ?: false,
                 themeMode = runCatching { ThemeMode.valueOf(p[Keys.theme] ?: "DARK") }.getOrDefault(ThemeMode.DARK),
                 // 4.0.1 has one supported visual identity. Keep the legacy key and
                 // enum values so old DataStore files remain readable, but never let
@@ -212,6 +231,7 @@ class AppPreferences(private val context: Context) {
             ModelPurpose.CHAT -> it[Keys.model] = clean
             ModelPurpose.AGENT -> it[Keys.agentModel] = clean
             ModelPurpose.RESEARCH -> it[Keys.researchModel] = clean
+            ModelPurpose.MAX -> it[Keys.maxModel] = clean
             ModelPurpose.IMAGE -> it[Keys.imageModel] = clean
             ModelPurpose.VIDEO -> it[Keys.videoModel] = clean
             ModelPurpose.AUDIO -> it[Keys.audioModel] = clean
@@ -229,6 +249,7 @@ class AppPreferences(private val context: Context) {
         it[Keys.model] = defaults.default
         it[Keys.agentModel] = defaults.agent
         it[Keys.researchModel] = defaults.research
+        it[Keys.maxModel] = defaults.max
         it[Keys.imageModel] = defaults.image
         it[Keys.videoModel] = defaults.video
         it[Keys.audioModel] = defaults.audio
@@ -239,23 +260,48 @@ class AppPreferences(private val context: Context) {
      * Drops model IDs that the active provider did not return and chooses a valid
      * provider default when one is available. Empty catalogs are not authoritative:
      * a transient network failure must not erase a working preference.
+     *
+     * v5.10: [toolCapable] holds the text models whose catalog entry lists "tools" (null when
+     * the catalog carries no parameter data, as MiniMax's does). With it, the agent, research
+     * and Max slots fall back to tool-capable models only (see [AgentModelChoice.choose]).
      */
     suspend fun reconcileAvailableModels(
         provider: ChatProvider,
         text: Set<String> = emptySet(),
         image: Set<String> = emptySet(),
         video: Set<String> = emptySet(),
-        audio: Set<String> = emptySet()
+        audio: Set<String> = emptySet(),
+        toolCapable: Set<String>? = null
     ) = context.dataStore.edit {
         if (ChatProvider.from(it[Keys.chatProvider].orEmpty()) != provider) return@edit
         val defaults = modelDefaults(provider)
-        fun reconcile(key: Preferences.Key<String>, available: Set<String>, preferred: String) {
+        // The agent and research slots inherit the chat model while their own key was never
+        // written (see [state]); read that before the chat slot is reconciled, so an existing
+        // user keeps the model they run today and only a fresh install gets the new defaults.
+        val storedChat = it[Keys.model]
+        val storedAgent = it[Keys.agentModel]
+        fun reconcile(
+            key: Preferences.Key<String>,
+            available: Set<String>,
+            preferred: String,
+            current: String? = it[key],
+            candidates: List<String>? = null
+        ) {
             if (available.isEmpty()) return
-            chooseAvailableModel(it[key], available, preferred)?.let { selected -> it[key] = selected }
+            val selected = if (candidates == null) {
+                chooseAvailableModel(current, available, preferred)
+            } else {
+                chooseAvailableModel(current, available, preferred, toolCapable, candidates)
+            }
+            selected?.let { value -> it[key] = value }
         }
         reconcile(Keys.model, text, defaults.default)
-        reconcile(Keys.agentModel, text, defaults.agent)
-        reconcile(Keys.researchModel, text, defaults.research)
+        reconcile(Keys.agentModel, text, defaults.agent, storedAgent ?: storedChat, AgentModelChoice.TOOL_CAPABLE_FALLBACKS)
+        reconcile(
+            Keys.researchModel, text, defaults.research,
+            it[Keys.researchModel] ?: storedAgent ?: storedChat, AgentModelChoice.TOOL_CAPABLE_FALLBACKS
+        )
+        reconcile(Keys.maxModel, text, defaults.max, candidates = AgentModelChoice.MAX_FALLBACKS)
         reconcile(Keys.imageModel, image, defaults.image)
         reconcile(Keys.videoModel, video, defaults.video)
         reconcile(Keys.audioModel, audio, defaults.audio)
@@ -273,16 +319,20 @@ class AppPreferences(private val context: Context) {
         val default: String,
         val agent: String,
         val research: String,
+        val max: String,
         val image: String,
         val video: String,
         val audio: String
     )
 
     private fun modelDefaults(provider: ChatProvider): ModelDefaults = when (provider) {
+        // v5.10: agent, research and Max get tool-calling models; chat stays on gpt-4o-mini
+        // (no tools in chat). Choices and prices are documented in AgentModelChoice.
         ChatProvider.OPENROUTER -> ModelDefaults(
             default = "openai/gpt-4o-mini",
-            agent = "openai/gpt-4o-mini",
-            research = "openai/gpt-4o-mini",
+            agent = AgentModelChoice.OPENROUTER_AGENT_DEFAULT,
+            research = AgentModelChoice.OPENROUTER_RESEARCH_DEFAULT,
+            max = AgentModelChoice.OPENROUTER_MAX_DEFAULT,
             image = "",
             video = "",
             audio = "openai/gpt-4o-mini-tts-2025-12-15"
@@ -291,6 +341,7 @@ class AppPreferences(private val context: Context) {
             default = "MiniMax-M3",
             agent = "MiniMax-M3",
             research = "MiniMax-M3",
+            max = "MiniMax-M3",
             image = "image-01",
             video = "MiniMax-H3",
             audio = "music-01-free"
@@ -313,6 +364,16 @@ class AppPreferences(private val context: Context) {
     }
     suspend fun setCostCapCents(value: Int) = context.dataStore.edit { it[Keys.costCapCents] = value.coerceIn(0, MAX_COST_CAP_CENTS) }
     suspend fun setReviewAnswers(value: Boolean) = context.dataStore.edit { it[Keys.reviewAnswers] = value }
+    suspend fun setAgentQuality(value: AgentQuality) = context.dataStore.edit { it[Keys.agentQuality] = value.name }
+
+    /**
+     * v5.10: answers the one-time agent model suggestion. [switchTo] non-null (Switch) stores
+     * it as the agent model; null (Keep) leaves the model alone. Either way it never shows again.
+     */
+    suspend fun answerAgentModelSuggestion(switchTo: String?) = context.dataStore.edit {
+        switchTo?.trim()?.takeIf(String::isNotEmpty)?.let { model -> it[Keys.agentModel] = model }
+        it[Keys.agentModelSuggestion] = true
+    }
     suspend fun setTheme(value: ThemeMode) = context.dataStore.edit { it[Keys.theme] = value.name }
     suspend fun setBackgroundStyle(value: BackgroundStyle) = context.dataStore.edit { it[Keys.backgroundStyle] = value.name }
     suspend fun setColouredGradient(value: GradientPalette) = context.dataStore.edit { it[Keys.colouredGradient] = value.name }
@@ -386,12 +447,29 @@ class AppPreferences(private val context: Context) {
     }
 }
 
-internal fun chooseAvailableModel(current: String?, available: Set<String>, preferred: String): String? {
-    if (available.isEmpty()) return null
-    return current?.takeIf { it in available }
-        ?: preferred.takeIf { it in available }
-        ?: available.minOrNull()
-}
+/** v5.10: the settings [AgentQualityPolicy] maps an Agent quality preset over. */
+internal fun SettingsState.agentQualityInputs() = AgentQualityPolicy.UserSettings(
+    agentModel = agentModel,
+    researchModel = researchModel,
+    maxModel = maxModel,
+    modelReasoning = modelReasoning,
+    stepBudget = stepBudget,
+    reviewAnswers = reviewAnswers,
+    costCapCents = costCapCents
+)
+
+/**
+ * Model choice for one slot. Without [toolCapable] this is the pre-5.10 rule (current, then
+ * preferred, then the alphabetically first model); v5.10 slots that run tools pass the
+ * catalog's tool-capable IDs and ordered [candidates] (see [AgentModelChoice.choose]).
+ */
+internal fun chooseAvailableModel(
+    current: String?,
+    available: Set<String>,
+    preferred: String,
+    toolCapable: Set<String>? = null,
+    candidates: List<String> = emptyList()
+): String? = AgentModelChoice.choose(current, available, preferred, toolCapable, candidates)
 
 internal fun coerceSupportedBackgroundStyle(@Suppress("UNUSED_PARAMETER") storedValue: String?): BackgroundStyle =
     BackgroundStyle.CONSTELLATION

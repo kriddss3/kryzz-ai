@@ -21,7 +21,8 @@ enum class FontStyle { SYSTEM, MODERN, SERIF, MONOSPACE, PLAYFUL }
 enum class ChatDensity { COMPACT, COMFORTABLE, SPACIOUS }
 enum class TextPalette { ADAPTIVE, HIGH_CONTRAST, MINT, LAVENDER, AMBER, ROSE }
 enum class AssistantMode { CHAT, AGENT }
-enum class ModelPurpose { CHAT, AGENT, RESEARCH, IMAGE, VIDEO, AUDIO }
+/** v5.10: MAX is the optional model Agent mode's Max quality runs on (see AgentQuality). */
+enum class ModelPurpose { CHAT, AGENT, RESEARCH, MAX, IMAGE, VIDEO, AUDIO }
 
 enum class ChatProvider(val label: String) {
     OPENROUTER("OpenRouter"),

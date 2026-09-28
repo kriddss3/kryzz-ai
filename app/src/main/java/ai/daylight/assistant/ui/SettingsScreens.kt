@@ -82,6 +82,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.daylight.assistant.BuildConfig
+import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.domain.AgentTurnPolicy
 import ai.daylight.assistant.domain.AssistantPreset
 import ai.daylight.assistant.domain.ChatDensity
@@ -1064,6 +1065,35 @@ fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                     steps = 47,
                     enabled = settings.searchEnabled
                 )
+            }
+
+            // v5.10: Agent mode quality preset, also switchable from the Agent composer.
+            SettingsGroup(title = "Agent quality") {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text("Quality preset · ${settings.agentQuality.label}", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        settings.agentQuality.summary + " Fast and Max adjust the limits below for Agent mode; a reasoning level you picked for a model always wins.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AgentQuality.entries.forEach { quality ->
+                        FilterChip(
+                            selected = quality == settings.agentQuality,
+                            onClick = { vm.setAgentQuality(quality) },
+                            label = { Text(quality.label) },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        )
+                    }
+                }
             }
 
             SettingsGroup(title = "Agent limits") {

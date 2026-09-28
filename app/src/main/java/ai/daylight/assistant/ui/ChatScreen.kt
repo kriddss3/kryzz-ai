@@ -190,6 +190,8 @@ import ai.daylight.assistant.data.ConversationRepository
 import ai.daylight.assistant.data.local.MessageEntity
 import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.domain.AgentCapability
+import ai.daylight.assistant.domain.AgentModelChoice
+import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.domain.AgentPlan
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.Citation
@@ -441,8 +443,17 @@ fun requestVoice() {
     // A conversation locks into its mode once the first message is sent: the header
     // switcher then transforms into a New chat button and the pager stops swiping.
     val modeLocked = messages.any { it.role == "USER" }
-    val activePurpose = activeModelPurpose(currentMode, selectedCapability)
+    val activePurpose = activeModelPurpose(currentMode, selectedCapability, settings.agentQuality)
     val activeModelId = settings.modelFor(activePurpose)
+    // v5.10: the one-time gpt-4o-mini suggestion and the missing tool calling warning.
+    val agentModelNotice = KryzzAgentModelNotice(
+        suggestUpgrade = activePurpose == ModelPurpose.AGENT &&
+            AgentModelChoice.shouldSuggestUpgrade(settings.chatProvider, settings.agentModel, settings.agentModelSuggestionAnswered),
+        suggestedName = models.firstOrNull { it.id == AgentModelChoice.OPENROUTER_AGENT_DEFAULT }?.name
+            ?: AgentModelChoice.OPENROUTER_AGENT_DEFAULT.compactModel(),
+        lacksTools = activePurpose in setOf(ModelPurpose.AGENT, ModelPurpose.RESEARCH, ModelPurpose.MAX) &&
+            AgentModelChoice.knownToLackTools(activeModelId, models)
+    )
     val activeReasoning = settings.modelReasoning[activeModelId] ?: ReasoningEffort.AUTO
     val baseColors = MaterialTheme.colorScheme
     val darkBackground = baseColors.background.luminance() < 0.45f
@@ -480,6 +491,10 @@ fun requestVoice() {
                             editing = editing != null,
                             mode = currentMode,
                             capability = selectedCapability,
+                            quality = settings.agentQuality,
+                            onQuality = vm::setAgentQuality,
+                            modelNotice = agentModelNotice,
+                            onModelNoticeAnswer = vm::answerAgentModelSuggestion,
                             attachments = pendingAttachments,
                             rootNavVisible = rootNavVisible,
                             onPickImage = {
@@ -1184,6 +1199,10 @@ private fun Composer(
     editing: Boolean,
     mode: AssistantMode,
     capability: AgentCapability,
+    quality: AgentQuality,
+    onQuality: (AgentQuality) -> Unit,
+    modelNotice: KryzzAgentModelNotice,
+    onModelNoticeAnswer: (Boolean) -> Unit,
     attachments: List<ChatAttachment>,
     rootNavVisible: Boolean,
     onPickImage: () -> Unit,
@@ -1232,22 +1251,37 @@ onRemoveAttachment: (String) -> Unit,
         ) {
             Column(Modifier.padding(start = 6.dp, end = 7.dp, top = 4.dp, bottom = 6.dp)) {
                 if (mode == AssistantMode.AGENT) {
-                    Surface(
-                        onClick = onCapability,
-                        modifier = Modifier.padding(start = 8.dp, top = 6.dp, bottom = 2.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+                    Row(
+                        Modifier.padding(start = 8.dp, top = 6.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        Surface(
+                            onClick = onCapability,
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
                         ) {
-                            Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-                            Text("Workflow · ${capability.shortLabel}", style = MaterialTheme.typography.labelSmall)
+                            Row(
+                                Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text("Workflow · ${capability.shortLabel}", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
+                        // v5.10: Fast / Balanced / Max, next to the capability picker.
+                        KryzzAgentQualityChip(quality = quality, onSelect = onQuality)
+                    }
+                    if (modelNotice.visible) {
+                        KryzzAgentModelNoticeCard(
+                            notice = modelNotice,
+                            onSwitch = { onModelNoticeAnswer(true) },
+                            onKeep = { onModelNoticeAnswer(false) },
+                            modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 2.dp)
+                        )
                     }
                 }
                 if (attachments.isNotEmpty()) {
@@ -2019,11 +2053,14 @@ private fun shareMessage(context: Context, content: String) {
     context.startActivity(Intent.createChooser(share, "Share Kryzz response"))
 }
 
-private fun activeModelPurpose(mode: AssistantMode, capability: AgentCapability): ModelPurpose = when {
+// v5.10: under the Max quality preset, agent and research turns run on the Max slot, so the
+// header, AI controls and Models shortcut show and edit that slot.
+private fun activeModelPurpose(mode: AssistantMode, capability: AgentCapability, quality: AgentQuality): ModelPurpose = when {
     mode == AssistantMode.CHAT -> ModelPurpose.CHAT
     capability == AgentCapability.IMAGE -> ModelPurpose.IMAGE
     capability == AgentCapability.VIDEO -> ModelPurpose.VIDEO
     capability == AgentCapability.AUDIO -> ModelPurpose.AUDIO
+    quality == AgentQuality.MAX -> ModelPurpose.MAX
     capability in setOf(AgentCapability.DEEP_RESEARCH, AgentCapability.WIDE_SEARCH) -> ModelPurpose.RESEARCH
     else -> ModelPurpose.AGENT
 }
@@ -2032,6 +2069,7 @@ private fun SettingsState.modelFor(purpose: ModelPurpose): String = when (purpos
     ModelPurpose.CHAT -> defaultModel
     ModelPurpose.AGENT -> agentModel
     ModelPurpose.RESEARCH -> researchModel
+    ModelPurpose.MAX -> maxModel.ifBlank { agentModel }
     ModelPurpose.IMAGE -> imageModel
     ModelPurpose.VIDEO -> videoModel
     ModelPurpose.AUDIO -> audioModel

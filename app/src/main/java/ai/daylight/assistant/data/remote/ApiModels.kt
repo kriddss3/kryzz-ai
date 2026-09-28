@@ -68,6 +68,8 @@ data class ProviderPreferences(
 object ToolChoice {
     val AUTO: JsonElement = JsonPrimitive("auto")
     val REQUIRED: JsonElement = JsonPrimitive("required")
+    /** v5.10: tools stay in the request (and in the cached prefix) but none may be called. */
+    val NONE: JsonElement = JsonPrimitive("none")
     fun named(name: String): JsonElement = buildJsonObject {
         put("type", "function")
         putJsonObject("function") { put("name", name) }
