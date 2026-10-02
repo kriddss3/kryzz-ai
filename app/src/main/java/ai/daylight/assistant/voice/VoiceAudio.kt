@@ -11,6 +11,9 @@ internal const val VOICE_CAPTURE_SAMPLE_RATE = 16_000
 
 internal const val WAV_HEADER_BYTES = 44
 
+/** PCM16 mono bytes per millisecond at [VOICE_CAPTURE_SAMPLE_RATE]. */
+internal const val VOICE_BYTES_PER_MS = VOICE_CAPTURE_SAMPLE_RATE * 2 / 1_000
+
 /** MIME type for an OpenRouter /audio/transcriptions upload, inferred from the file extension. */
 internal fun audioMimeType(file: File): String = when (file.extension.lowercase()) {
     "wav" -> "audio/wav"
@@ -65,6 +68,43 @@ internal fun patchWavHeader(file: File, sampleRate: Int = VOICE_CAPTURE_SAMPLE_R
     RandomAccessFile(file, "rw").use { raf ->
         raf.seek(0)
         raf.write(wavHeader(dataBytes, sampleRate))
+    }
+}
+
+/**
+ * Copies the audio captured so far in a WAV that is still being recorded into [dest], with
+ * a header that matches, skipping the first [skipPcmBytes] of PCM. Used to transcribe a turn
+ * early, while the recorder keeps writing to [source].
+ */
+internal fun snapshotWav(
+    source: File,
+    dest: File,
+    skipPcmBytes: Long = 0L,
+    sampleRate: Int = VOICE_CAPTURE_SAMPLE_RATE
+): File {
+    writePcmTail(source.readBytes(), dest, skipPcmBytes, sampleRate)
+    return dest
+}
+
+/**
+ * Drops the first [pcmBytes] of audio from a finished 16-bit mono WAV in place. After a
+ * barge-in this removes the reply-time audio recorded before the user started talking.
+ */
+internal fun dropWavPrefix(file: File, pcmBytes: Long, sampleRate: Int = VOICE_CAPTURE_SAMPLE_RATE): File {
+    if (pcmBytes <= 0L || !file.isFile) return file
+    writePcmTail(file.readBytes(), file, pcmBytes, sampleRate)
+    return file
+}
+
+/** Writes the PCM of [wav] after [skipPcmBytes] (frame-aligned) to [dest] as a complete WAV. */
+private fun writePcmTail(wav: ByteArray, dest: File, skipPcmBytes: Long, sampleRate: Int) {
+    val end = WAV_HEADER_BYTES + ((wav.size - WAV_HEADER_BYTES).coerceAtLeast(0) and 1.inv())
+    val start = (WAV_HEADER_BYTES + (skipPcmBytes.coerceAtLeast(0L) and 1L.inv()))
+        .coerceAtMost(end.toLong()).toInt()
+    val pcmLength = end - start
+    dest.outputStream().use { out ->
+        out.write(wavHeader(pcmLength, sampleRate))
+        if (pcmLength > 0) out.write(wav, start, pcmLength)
     }
 }
 

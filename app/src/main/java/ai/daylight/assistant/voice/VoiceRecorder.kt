@@ -7,6 +7,7 @@ import android.media.MediaRecorder
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 /**
@@ -31,6 +32,7 @@ class VoiceRecorder(private val context: Context) {
      */
     @Volatile var muted: Boolean = false
     private val peak = AtomicInteger(0)
+    private val bytesCaptured = AtomicLong(0)
 
     fun start(): Result<Unit> = runCatching {
         stopInternal()
@@ -50,6 +52,7 @@ class VoiceRecorder(private val context: Context) {
             ?: error("Could not open the microphone.")
         recorder = instance
         peak.set(0)
+        bytesCaptured.set(0)
         capturing = true
         try {
             instance.startRecording()
@@ -65,8 +68,11 @@ class VoiceRecorder(private val context: Context) {
             recorder = null
             error("The microphone did not start recording.")
         }
+        // Read in short slices rather than whole hardware buffers: the level poll sees fresher
+        // audio, early snapshots are more current, and stop() never waits on a long read.
+        val readSize = minOf(minBuf, READ_CHUNK_BYTES)
         captureThread = thread(name = "kryzz-mic", isDaemon = true) {
-            captureLoop(instance, file, minBuf)
+            captureLoop(instance, file, readSize)
         }
         Unit
     }.onFailure {
@@ -77,6 +83,12 @@ class VoiceRecorder(private val context: Context) {
 
     /** Peak amplitude since the last poll, 0..32767. Resets on read, like MediaRecorder.maxAmplitude. */
     fun level(): Int = peak.getAndSet(0)
+
+    /** PCM bytes written to the current recording so far (after the WAV header). */
+    fun capturedBytes(): Long = bytesCaptured.get()
+
+    /** The WAV being recorded right now, still growing; null when the microphone is closed. */
+    fun currentFile(): File? = output?.takeIf { capturing }
 
     /** Closes the recording and returns the finished file (may be null when nothing was recorded). */
     fun stop(): File? {
@@ -114,6 +126,7 @@ class VoiceRecorder(private val context: Context) {
                         val samplePeak = pcmPeakAmplitude(buf, read)
                         peak.accumulateAndGet(samplePeak, ::maxOf)
                     }
+                    bytesCaptured.addAndGet(read.toLong())
                 } else if (read < 0) {
                     break
                 }
@@ -131,6 +144,11 @@ class VoiceRecorder(private val context: Context) {
         runCatching { recorder?.release() }
         recorder = null
         peak.set(0)
+    }
+
+    private companion object {
+        /** 20 ms of 16 kHz PCM16 mono. */
+        const val READ_CHUNK_BYTES = VOICE_CAPTURE_SAMPLE_RATE / 50 * 2
     }
 
     /**

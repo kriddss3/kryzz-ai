@@ -542,6 +542,21 @@ class FishAudioClient(private val http: OkHttpClient, private val json: Json) {
         }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * Opens the Fish TLS session before the first reply sentence is ready, so that TTS request
+     * does not pay DNS and handshake on top of synthesis. Unauthenticated and bodiless; the
+     * response itself is ignored.
+     */
+    fun warmConnection() {
+        val request = Request.Builder().url("https://api.fish.audio/v1/tts").head().build()
+        http.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = Unit
+            override fun onResponse(call: Call, response: Response) {
+                response.close()
+            }
+        })
+    }
+
     /** Renders one short phrase to verify the key (and voice when provided) without touching chat history. */
     suspend fun testKey(key: String, voiceId: String?, model: String = VoiceConfig.FISH_MODEL_FREE): Result<Unit> = withContext(Dispatchers.IO) {
         val file = File.createTempFile("kryzz-fish-test", ".mp3")

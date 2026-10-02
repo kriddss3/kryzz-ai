@@ -44,25 +44,35 @@ import ai.daylight.assistant.domain.ToolActivityDetail
 import ai.daylight.assistant.domain.WorkLog
 import ai.daylight.assistant.domain.WorkLogBuilder
 import ai.daylight.assistant.domain.WorkLogRow
+import ai.daylight.assistant.domain.VoiceReplyListener
 import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.AdaptiveEndOfSpeechDetector
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoicePhase
-import ai.daylight.assistant.voice.patchWavHeader
+import ai.daylight.assistant.voice.SpeechRunTracker
+import ai.daylight.assistant.voice.SpokenReplySegmenter
+import ai.daylight.assistant.voice.VOICE_BYTES_PER_MS
+import ai.daylight.assistant.voice.VoiceActivitySample
+import ai.daylight.assistant.voice.dropWavPrefix
+import ai.daylight.assistant.voice.snapshotWav
 import ai.daylight.assistant.voice.toSpeechText
-import ai.daylight.assistant.voice.toVoiceSegments
 import java.io.File
-import java.io.FileOutputStream
 import android.os.SystemClock
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.sqrt
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
@@ -101,6 +111,20 @@ private data class VoicePlaybackPlan(
     val provider: TtsProvider,
     val credentialed: Boolean
 )
+
+/** One sentence of a spoken reply, ready to play: a rendered clip, or a Fish PCM stream still downloading. */
+private sealed interface ReplyAudio {
+    class Clip(val file: File) : ReplyAudio
+    class Stream(val text: String, val pcm: Channel<ByteArray>) : ReplyAudio
+
+    /** Releases audio that will never be played. */
+    fun discard() {
+        when (this) {
+            is Clip -> file.delete()
+            is Stream -> pcm.cancel()
+        }
+    }
+}
 
 private object ChatDraftStore {
     private val drafts = ConcurrentHashMap<String, ChatDraftSnapshot>()
@@ -621,21 +645,24 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     val voiceMicMuted = MutableStateFlow(false)
     private var voiceJob: Job? = null
     private var voicePipelineJob: Job? = null
+    private var voiceFillerJob: Job? = null
     /** Set before deliberately cancelling the reply pipeline so its tail never reports a failure. */
     private var intentionalVoiceCancel = false
     private val voiceEndDetector = AdaptiveEndOfSpeechDetector()
     private var voiceStartedAt = 0L
     /**
-     * Detectors for the two barge-in gates. Promoted to fields so the LISTENING branch after
-     * a barge can keep using the same instance (already seeded), and so the soft-barge detector
-     * survives between barge-in attempts.
+     * Bumped whenever a voice turn is abandoned (barge-in, bubble tap, close). A turn whose
+     * number no longer matches is stale: its late cancellation or failure must not reset the
+     * phase of the session that moved on.
      */
-    private val bargeDetector = AdaptiveEndOfSpeechDetector(allowImmediateSpeechDuringCalibration = false)
-    private val softBargeDetector = AdaptiveEndOfSpeechDetector(allowImmediateSpeechDuringCalibration = false)
-    /** File captured during the SPEAKING monitor phase that holds the user's barge-in words. */
-    private var pendingBargePrefix: java.io.File? = null
-    /** Length in bytes of [pendingBargePrefix]; the WAV header is patched in [stopVoiceRecording]. */
-    private var pendingBargePrefixLength: Long = 0L
+    private var voiceTurn = 0L
+    /**
+     * PCM bytes at the start of the current recording to drop before transcription. After a
+     * barge-in the recording also holds the reply-time audio from before the user spoke.
+     */
+    private var bargeTrimBytes = 0L
+    /** Transcript started during the closing silence of the current utterance, if any. */
+    private var speculativeStt: Deferred<String>? = null
 
     // ── Per-message read aloud (Fish Audio, cached per message) ──────────────
     /** Message whose cached/generated audio is currently playing, if any. */
@@ -652,15 +679,20 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         if (!preserveMute) voiceMicMuted.value = false
         voiceTranscript.value = ""
         voiceLevel.value = 0f
+        cancelSpeculativeStt()
+        bargeTrimBytes = 0L
         voiceStartedAt = SystemClock.elapsedRealtime()
         voiceEndDetector.reset(voiceStartedAt)
-        container.warmOpenRouter()
+        // Speech-to-text, the reply model and the TTS host all get their TLS session while the
+        // user is still talking, so no step of the turn pays a handshake.
+        viewModelScope.launch(Dispatchers.IO) { runCatching { container.warmVoiceConnections() } }
         container.voiceRecorder.start().onFailure {
             error.value = it.message ?: "Could not open the microphone."
             return
         }
+        // start() always opens unmuted; a mute carried over from the last reply must hold.
+        container.voiceRecorder.muted = voiceMicMuted.value
         voicePhase.value = VoicePhase.LISTENING
-        if (!preserveMute) voiceMicMuted.value = false
         voiceJob = viewModelScope.launch {
             while (voicePhase.value == VoicePhase.LISTENING) {
                 val level = if (voiceMicMuted.value) 0 else container.voiceRecorder.level()
@@ -678,6 +710,7 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
                         stopVoiceRecording(automatic = true)
                         return@launch
                     }
+                    updateSpeculativeStt(activity, now)
                 }
                 delay(VOICE_POLL_MS)
             }
@@ -689,14 +722,15 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         when (voicePhase.value) {
             VoicePhase.LISTENING -> stopVoiceRecording()
             VoicePhase.PROCESSING -> cancelVoice()
-            // Interrupting the reply also discards the barge-in mic session; the
-            // session then carries on listening from scratch.
+            // Interrupting the reply also discards the barge-in mic session and, if the model
+            // is still writing, the rest of that reply; the session then listens from scratch.
             VoicePhase.SPEAKING -> {
                 voiceJob?.cancel()
                 voiceJob = null
                 intentionalVoiceCancel = true
                 voicePipelineJob?.cancel()
                 voicePipelineJob = null
+                abandonVoiceTurn()
                 container.voicePlayer.stop()
                 container.voiceRecorder.cancel()
                 rearmVoice()
@@ -724,78 +758,62 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         if (voicePhase.value != VoicePhase.LISTENING) return
         voiceJob?.cancel()
         voiceJob = null
-        val rawFile = container.voiceRecorder.stop()
-        // After a barge-in, the monitor captured the user's cut-off speech in a separate WAV.
-        // Concatenate it with whatever was recorded after the barge so STT hears the whole
-        // utterance, then patch the WAV header to reflect the combined size.
-        val file = mergeBargePrefix(rawFile)
+        val file = container.voiceRecorder.stop()
+        // After a barge-in the reply-time audio before the user spoke is dropped before upload;
+        // judge the clip by what will actually be sent.
+        val trimBytes = bargeTrimBytes
+        bargeTrimBytes = 0L
+        val sentBytes = (file?.length() ?: 0L) - trimBytes
         val duration = SystemClock.elapsedRealtime() - voiceStartedAt
         val noConfirmedSpeech = !voiceEndDetector.hasUsableSpeech
         // Automatic submission requires confirmed speech. An explicit orb tap remains the
         // escape hatch for very soft/brief speech that peak-amplitude detection may miss.
-        val unusable = file == null || file.length() < 2_000 || duration < 400L ||
-            (automatic && noConfirmedSpeech && (duration < 900L || file.length() < 6_000))
-        if (unusable) {
+        val unusable = sentBytes < 2_000 || duration < 400L ||
+            (automatic && noConfirmedSpeech && (duration < 900L || sentBytes < 6_000))
+        if (file == null || unusable) {
+            cancelSpeculativeStt()
             file?.delete()
             // Nothing usable was captured: stay in voice mode and keep listening.
             rearmVoice()
             return
         }
-voiceLevel.value = 0f
+        val early = speculativeStt
+        speculativeStt = null
+        voiceLevel.value = 0f
         voicePhase.value = VoicePhase.PROCESSING
-        processVoiceClip(file)
+        processVoiceClip(file, trimBytes, early)
     }
 
     /**
-     * Joins the barge-in prefix (the WAV captured while Kryzz was still speaking) with the
-     * WAV captured after the barge fired, returning a single combined file ready for upload.
-     * Returns [newClip] unchanged when there is no prefix.
+     * Starts transcribing the current utterance once the user has been quiet for
+     * [VoiceConfig.SPECULATIVE_STT_SILENCE_MS], while the end-of-speech window still runs.
+     * Most of the speech-to-text round trip then overlaps that wait instead of following it,
+     * which hides the extra latency of a slower model such as Whisper. Speech resuming
+     * discards the early transcript and the finished clip is used instead.
      */
-    private fun mergeBargePrefix(newClip: File?): File? {
-        val prefix = pendingBargePrefix
-        pendingBargePrefix = null
-        pendingBargePrefixLength = 0L
-        if (prefix == null || !prefix.isFile || prefix.length() <= 44) {
-            prefix?.delete()
-            return newClip
+    private fun updateSpeculativeStt(activity: VoiceActivitySample, now: Long) {
+        if (activity.isVoiceActive) {
+            cancelSpeculativeStt()
+            return
         }
-        if (newClip == null || !newClip.isFile || newClip.length() <= 44) {
-            // No continuation was captured: the prefix alone is the user's barge-in words.
-            runCatching { patchWavHeader(prefix) }
-            return prefix
-        }
-        // Concatenate the prefix's PCM body (skip its 44-byte header) with the new clip's PCM body.
-        val combined = try {
-            val out = File(prefix.parentFile, prefix.nameWithoutExtension + "-barged.wav")
-            val prefixIn = prefix.inputStream()
-            val newIn = newClip.inputStream()
-            val fos = FileOutputStream(out, false)
+        if (speculativeStt != null || !voiceEndDetector.hasUsableSpeech) return
+        if (voiceEndDetector.silenceMs(now) < VoiceConfig.SPECULATIVE_STT_SILENCE_MS) return
+        val source = container.voiceRecorder.currentFile() ?: return
+        val skip = bargeTrimBytes
+        speculativeStt = viewModelScope.async(Dispatchers.IO) {
+            val snapshot = File(source.parentFile, "${source.nameWithoutExtension}-early-$now.wav")
             try {
-                val head = ByteArray(44)
-                val headRead = prefixIn.read(head)
-                check(headRead == 44) { "Barge prefix WAV header is incomplete." }
-                fos.write(head) // placeholder header — patchWavHeader overwrites it with the true size
-                prefixIn.copyTo(fos) // append the prefix body
-                val skip = ByteArray(44)
-                val tailHeaderRead = newIn.read(skip)
-                check(tailHeaderRead == 44) { "Continuation WAV header is incomplete." }
-                newIn.copyTo(fos) // append the new clip body
+                snapshotWav(source, snapshot, skip)
+                container.transcribeVoice(snapshot, container.preferences.state.first().voiceSttModel)
             } finally {
-                runCatching { prefixIn.close() }
-                runCatching { newIn.close() }
-                runCatching { fos.close() }
+                snapshot.delete()
             }
-            runCatching { patchWavHeader(out) }
-            prefix.delete()
-            newClip.delete()
-            out
-        } catch (t: Throwable) {
-            // Fall back to the new clip alone — STT will at least hear the post-barge continuation.
-            prefix.delete()
-            runCatching { patchWavHeader(newClip) }
-            newClip
         }
-        return combined
+    }
+
+    private fun cancelSpeculativeStt() {
+        speculativeStt?.cancel()
+        speculativeStt = null
     }
 
     // ── Dictation ─────────────────────────────────────────────────────────────
@@ -855,27 +873,52 @@ voiceLevel.value = 0f
         intentionalVoiceCancel = true
         voicePipelineJob?.cancel()
         voicePipelineJob = null
-        // Drop any barge prefix we were holding — the user is closing the session.
-        pendingBargePrefix?.delete()
-        pendingBargePrefix = null
-        pendingBargePrefixLength = 0L
+        cancelSpeculativeStt()
+        bargeTrimBytes = 0L
         voiceMicMuted.value = false
         when (voicePhase.value) {
             VoicePhase.LISTENING -> container.voiceRecorder.cancel()
-            VoicePhase.PROCESSING -> {
-                generation?.cancel()
-                generation = null
-                generating.value = false
-            }
+            VoicePhase.PROCESSING -> Unit
             VoicePhase.SPEAKING -> {
                 container.voicePlayer.stop()
                 container.voiceRecorder.cancel()
             }
             VoicePhase.IDLE -> {}
         }
+        // A reply still being transcribed or written for this session is dropped too. In IDLE
+        // the running generation (if any) is not a live voice turn, so it is left alone.
+        if (voicePhase.value != VoicePhase.IDLE) abandonVoiceTurn()
         voicePhase.value = VoicePhase.IDLE
         voiceLevel.value = 0f
         voiceSearching.value = false
+    }
+
+    /**
+     * Drops the voice turn in flight: its late failure or cancellation is ignored, and a
+     * reply the model is still writing is stopped (it stays in the chat as interrupted).
+     */
+    private fun abandonVoiceTurn() {
+        voiceTurn++
+        voiceFillerJob?.cancel()
+        voiceFillerJob = null
+        if (generating.value) {
+            generation?.cancel()
+            generation = null
+            generating.value = false
+        }
+    }
+
+    /** Stops the reply's playback, rendering and barge-in mic when its turn fails mid-reply. */
+    private fun haltVoiceOutput() {
+        voiceJob?.cancel()
+        voiceJob = null
+        intentionalVoiceCancel = true
+        voicePipelineJob?.cancel()
+        voicePipelineJob = null
+        voiceFillerJob?.cancel()
+        voiceFillerJob = null
+        runCatching { container.voicePlayer.stop() }
+        container.voiceRecorder.cancel()
     }
 
     /**
@@ -889,10 +932,6 @@ voiceLevel.value = 0f
         intentionalVoiceCancel = true
         voicePipelineJob?.cancel()
         voicePipelineJob = null
-        // Drop any barge prefix we were holding — the previous turn is closed.
-        pendingBargePrefix?.delete()
-        pendingBargePrefix = null
-        pendingBargePrefixLength = 0L
         // The mic stays open while the reply plays (so the user can talk over it);
         // close that session before re-arming a fresh one.
         container.voiceRecorder.stop()?.delete()
@@ -904,9 +943,11 @@ voiceLevel.value = 0f
         beginVoice(preserveMute = true)
     }
 
-    private fun processVoiceClip(file: File) {
+    private fun processVoiceClip(file: File, trimBytes: Long, early: Deferred<String>?) {
+        val turn = ++voiceTurn
         generation = viewModelScope.launch {
             generating.value = true
+            var replySegments: Channel<String>? = null
             try {
                 // Credential decryption and voice-output readiness are independent of STT/LLM.
                 // Resolve them on IO while the remote pipeline does its work, then reuse the
@@ -919,7 +960,8 @@ voiceLevel.value = 0f
                         TtsProvider.OPENROUTER -> !container.credentials.openRouterKey().isNullOrBlank()
                     }
                 }
-                val text = container.transcribeVoice(file, settings.voiceSttModel).trim()
+                if (trimBytes > 0L) withContext(Dispatchers.IO) { runCatching { dropWavPrefix(file, trimBytes) } }
+                val text = transcribeVoiceTurn(file, settings.voiceSttModel, early).trim()
                 file.delete()
                 if (text.isBlank()) {
                     // Nothing intelligible was captured (e.g. an accidental barge-in):
@@ -930,46 +972,85 @@ voiceLevel.value = 0f
                     return@launch
                 }
                 voiceTranscript.value = text.take(200)
+                val plan = VoicePlaybackPlan(settings, provider, playbackReady.await())
+                // Sentences go to speech as the model writes them, so Kryzz starts talking
+                // after its first sentence instead of after the whole answer.
+                val segments = Channel<String>(Channel.UNLIMITED).also { replySegments = it }
+                val segmenter = SpokenReplySegmenter()
+                if (plan.credentialed) speakAnswer(segments, plan)
                 // While the agent runs (and may invoke parallel_search), play quick filler
                 // phrases ("Checking online, give me a sec") so the user isn't sitting in
-                // silence during the search round-trip. The job is cancelled once the real
-                // reply is ready so speakAnswer starts cleanly.
+                // silence during the search round-trip. The reply pipeline stops it before
+                // the first spoken sentence.
                 val fillerJob = startVoiceFillerListener(settings, provider)
+                voiceFillerJob = fillerJob
                 val answer = try {
                     container.agent.send(
                         conversationId,
                         text,
                         AssistantMode.CHAT,
                         AgentCapability.AUTO,
-                        voiceMode = true
+                        voiceMode = true,
+                        onVoiceText = VoiceReplyListener { round, value, done ->
+                            segmenter.onText(round, value).forEach { segments.trySend(it) }
+                            if (done) segmenter.finish().forEach { segments.trySend(it) }
+                        }
                     )
                 } finally {
                     voiceSearching.value = false
                     fillerJob.cancel()
-                } ?: run {
-                    runCatching { container.voicePlayer.stop() }
-                    voicePhase.value = VoicePhase.IDLE
-                    error.value = "The model returned no usable reply. Try again."
+                }
+                if (answer == null) {
+                    if (turn == voiceTurn) {
+                        haltVoiceOutput()
+                        voicePhase.value = VoicePhase.IDLE
+                        error.value = "The model returned no usable reply. Try again."
+                    }
                     return@launch
                 }
                 title.value = container.conversations.conversation(conversationId)?.title ?: title.value
-                speakAnswer(
-                    answer,
-                    VoicePlaybackPlan(settings, provider, playbackReady.await())
-                )
+                if (!plan.credentialed && turn == voiceTurn) {
+                    error.value = when (provider) {
+                        TtsProvider.FISH -> "The reply is in the chat. Add a Fish Audio key in Settings → Voice chat and pick a voice to hear responses."
+                        TtsProvider.OPENROUTER -> "The reply is in the chat. Add an OpenRouter API key in Settings → API keys to hear voice replies."
+                    }
+                    container.voiceRecorder.stop()?.delete()
+                    voicePhase.value = VoicePhase.IDLE
+                }
             } catch (cancelled: CancellationException) {
                 file.delete()
-                runCatching { container.voicePlayer.stop() }
-                voicePhase.value = VoicePhase.IDLE
+                if (turn == voiceTurn) {
+                    haltVoiceOutput()
+                    voicePhase.value = VoicePhase.IDLE
+                }
             } catch (t: Throwable) {
                 file.delete()
-                runCatching { container.voicePlayer.stop() }
-                voicePhase.value = VoicePhase.IDLE
-                error.value = t.message ?: "Voice chat failed."
+                if (turn == voiceTurn) {
+                    haltVoiceOutput()
+                    voicePhase.value = VoicePhase.IDLE
+                    error.value = t.message ?: "Voice chat failed."
+                }
             } finally {
-                generating.value = false
+                // Clear the flag before ending the reply stream: the reply pipeline re-arms the
+                // mic when the stream ends, and beginVoice refuses to start while a turn runs.
+                if (turn == voiceTurn) generating.value = false
+                replySegments?.close()
             }
         }
+    }
+
+    /** The early transcript when it finished cleanly, otherwise a transcription of the whole clip. */
+    private suspend fun transcribeVoiceTurn(file: File, sttModel: String, early: Deferred<String>?): String {
+        val earlyText = early?.let { pending ->
+            try {
+                pending.await()
+            } catch (_: Throwable) {
+                // A failed early pass falls back to the full clip; only our own cancellation propagates.
+                currentCoroutineContext().ensureActive()
+                null
+            }
+        }
+        return earlyText?.takeIf { it.isNotBlank() } ?: container.transcribeVoice(file, sttModel)
     }
 
     /**
@@ -992,6 +1073,8 @@ voiceLevel.value = 0f
                     voiceSearching.value = true
                     // Play a short two-note ascending cue to signal the search is in progress.
                     runCatching { container.voicePlayer.playSearchTone() }
+                    // Once part of the answer is being spoken, a filler phrase would talk over it.
+                    if (voicePhase.value != VoicePhase.PROCESSING) return@collect
                     val phrase = when (label) {
                         "checking online" -> listOf(
                             "Let me search that up.",
@@ -1028,6 +1111,11 @@ voiceLevel.value = 0f
                 openRouterVoice = settings.openRouterTtsVoice,
                 emotions = false
             )
+            // The answer may have started while the phrase rendered; never cut into it.
+            if (voicePhase.value != VoicePhase.PROCESSING) {
+                clip.delete()
+                return@runCatching
+            }
             // Play and wait for completion (or cancellation) so two fillers don't overlap.
             suspendCancellableCoroutine<Unit> { cont ->
                 container.voicePlayer.play(clip, {}, { failure ->
@@ -1037,155 +1125,154 @@ voiceLevel.value = 0f
                         else cont.resumeWithException(failure)
                     }
                 })
-                cont.invokeOnCancellation { runCatching { clip.delete() } }
+                cont.invokeOnCancellation {
+                    // Cancelled when the answer is about to speak: silence the filler first.
+                    container.voicePlayer.stop()
+                    runCatching { clip.delete() }
+                }
             }
         }
     }
 
     /**
-     * Speaks the reply with a pipelined TTS pipeline: the first sentence is synthesised
-     * alone so playback starts after a single sentence, while the remaining segments are
-     * synthesised in the background and queued after it. Fish runs in its low-latency mode.
+     * Speaks the reply while the model is still writing it. [segments] delivers sentences as
+     * they complete (see [SpokenReplySegmenter]); each is rendered as soon as it arrives and
+     * played in order, the next one rendering while the current one plays. Fish takes one
+     * request at a time, OpenRouter two.
      *
-     * While the reply plays, the microphone stays open: sustained speech from the user
-     * fades the TTS out and hands the session back to listening (barge-in), so the user
+     * While the reply plays, the microphone stays open: sustained speech from the user ducks
+     * and then stops the TTS and hands the session back to listening (barge-in), so the user
      * can talk over Kryzz and the next thing they say is sent as a new prompt.
      */
-    private fun speakAnswer(answer: String, plan: VoicePlaybackPlan) {
+    private fun speakAnswer(segments: ReceiveChannel<String>, plan: VoicePlaybackPlan) {
         voicePipelineJob = viewModelScope.launch {
             intentionalVoiceCancel = false
             val settings = plan.settings
             val provider = plan.provider
-            if (!plan.credentialed) {
-                error.value = when (plan.provider) {
-                    TtsProvider.FISH -> "The reply is in the chat. Add a Fish Audio key in Settings → Voice chat and pick a voice to hear responses."
-                    TtsProvider.OPENROUTER -> "The reply is in the chat. Add an OpenRouter API key in Settings → API keys to hear voice replies."
-                }
-                container.voiceRecorder.stop()?.delete()
-                voicePhase.value = VoicePhase.IDLE
-                return@launch
-            }
             val fishVoiceId = settings.fishVoiceId.ifBlank { null }
-            val spoken = answer.toSpeechText()
-            if (spoken.isBlank()) {
-                voicePhase.value = VoicePhase.IDLE
-                error.value = "The voice reply did not contain anything that could be spoken."
-                return@launch
-            }
-            // Fish PCM streaming is optional: on some devices/tiers the HTTP PCM
-            // body ends after the first ~100 ms. Default is a single full MP3.
+            // Fish PCM streaming is optional: on some devices/tiers the HTTP PCM body ends
+            // after the first ~100 ms, so the full-MP3 path stays available in Settings.
             val useFishStream = provider == TtsProvider.FISH && settings.voiceFishStreaming
-            val remaining = when {
-                useFishStream -> emptyList()
-                provider == TtsProvider.FISH -> listOf(spoken)
-                else -> spoken.toVoiceSegments()
-            }
-            val channel = Channel<File>(capacity = remaining.size.coerceAtLeast(1))
-            var firstSegmentError: Throwable? = null
+            // Parallel Fish requests risk the per-key concurrency limit. One at a time still
+            // renders the next sentence during playback, because Fish renders faster than speech.
+            val synthSemaphore = Semaphore(if (provider == TtsProvider.FISH) 1 else 2)
+            val ready = Channel<Deferred<ReplyAudio?>>(Channel.UNLIMITED)
+            val rendered = mutableListOf<File>()
+            var firstError: Throwable? = null
             val producer = launch {
                 try {
-                    val synthSemaphore = Semaphore(2)
-                    val pending = remaining.mapIndexed { index, segment ->
-                        async {
-                            synthSemaphore.withPermit {
-                                val clip = container.newVoiceFile()
-                                val ok = try {
-                                    container.synthesizeVoice(
-                                        text = segment,
-                                        destination = clip,
-                                        speed = settings.fishSpeed.toDouble(),
-                                        provider = provider,
-                                        fishModel = settings.fishModel,
-                                        fishVoiceId = fishVoiceId,
-                                        openRouterModel = settings.openRouterTtsModel,
-                                        openRouterVoice = settings.openRouterTtsVoice,
-                                        emotions = settings.voiceEmotions
-                                    )
-                                    true
+                    for (segment in segments) {
+                        val spoken = segment.toSpeechText()
+                        if (spoken.isBlank()) continue
+                        val audio: Deferred<ReplyAudio?> = if (useFishStream) {
+                            val pcm = Channel<ByteArray>(Channel.UNLIMITED)
+                            // Undispatched, so sentences queue for the render slot in order; the
+                            // download itself then continues on IO.
+                            launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
+                                try {
+                                    synthSemaphore.withPermit {
+                                        container.synthesizeVoiceStream(
+                                            text = spoken,
+                                            speed = settings.fishSpeed.toDouble(),
+                                            fishModel = settings.fishModel,
+                                            fishVoiceId = fishVoiceId,
+                                            emotions = settings.voiceEmotions
+                                        ).collect { pcm.send(it) }
+                                    }
+                                    pcm.close()
                                 } catch (cancelled: CancellationException) {
-                                    clip.delete()
+                                    pcm.cancel()
                                     throw cancelled
                                 } catch (t: Throwable) {
-                                    clip.delete()
-                                    if (index == 0 && provider != TtsProvider.FISH) firstSegmentError = t
-                                    false
+                                    pcm.close(t)
                                 }
-                                if (ok) clip else null
+                            }
+                            CompletableDeferred(ReplyAudio.Stream(spoken, pcm))
+                        } else {
+                            async {
+                                synthSemaphore.withPermit {
+                                    val clip = container.newVoiceFile()
+                                    try {
+                                        container.synthesizeVoice(
+                                            text = spoken,
+                                            destination = clip,
+                                            speed = settings.fishSpeed.toDouble(),
+                                            provider = provider,
+                                            fishModel = settings.fishModel,
+                                            fishVoiceId = fishVoiceId,
+                                            openRouterModel = settings.openRouterTtsModel,
+                                            openRouterVoice = settings.openRouterTtsVoice,
+                                            emotions = settings.voiceEmotions
+                                        )
+                                        rendered += clip
+                                        ReplyAudio.Clip(clip)
+                                    } catch (cancelled: CancellationException) {
+                                        clip.delete()
+                                        throw cancelled
+                                    } catch (t: Throwable) {
+                                        clip.delete()
+                                        if (firstError == null) firstError = t
+                                        null
+                                    }
+                                }
                             }
                         }
+                        ready.send(audio)
                     }
-                    for ((index, result) in pending.withIndex()) {
-                        val clip = result.await()
-                        if (clip != null) {
-                            try {
-                                channel.send(clip)
-                            } catch (cancelled: CancellationException) {
-                                clip.delete()
-                                throw cancelled
-                            }
-                        } else if (index == 0 && provider != TtsProvider.FISH) {
-                            break
-                        }
-                    }
-                } catch (_: CancellationException) {
                 } finally {
-                    channel.close()
+                    ready.close()
                 }
             }
             var playedAny = false
             var playbackStarted = false
+            var segmentCount = 0
             try {
-                if (useFishStream) {
-                    voicePhase.value = VoicePhase.SPEAKING
-                    try {
-                        // Arm the barge-in mic before AudioTrack starts. Starting
-                        // MediaRecorder in onStarted() was interrupting the PCM track
-                        // after the first ~100 ms on this device.
+                for (pending in ready) {
+                    if (voicePhase.value != VoicePhase.PROCESSING && voicePhase.value != VoicePhase.SPEAKING) break
+                    if (segmentCount++ == 0) {
+                        // A search filler must not talk over the answer.
+                        voiceFillerJob?.cancel()
+                        voiceFillerJob = null
+                        // Arm barge-in while the first sentence is still rendering and before any
+                        // AudioTrack starts (opening the mic after a PCM track started cut it off
+                        // on some devices), so the user can talk over Kryzz from its first word.
+                        voicePhase.value = VoicePhase.SPEAKING
                         startVoicePlaybackMonitor()
-                        playFishStreamAwait(spoken, settings, fishVoiceId) {
-                            playbackStarted = true
+                    }
+                    val audio = pending.await() ?: continue
+                    if (voicePhase.value != VoicePhase.SPEAKING) {
+                        audio.discard()
+                        break
+                    }
+                    try {
+                        when (audio) {
+                            is ReplyAudio.Clip -> playVoiceClipAwait(audio.file) { playbackStarted = true }
+                            is ReplyAudio.Stream -> playFishStreamAwait(audio, settings, fishVoiceId) { playbackStarted = true }
                         }
                         playedAny = true
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (t: Throwable) {
-                        firstSegmentError = t
+                        // One sentence failing to play does not end the reply; the next one still plays.
+                        if (firstError == null) firstError = t
                     }
-                } else {
-                    // Arm barge-in while the first clip is still synthesising so the user
-                    // can talk over Kryzz the moment it starts talking — not only after the
-                    // first TTS request returns. The monitor stays armed across segments
-                    // because phase remains SPEAKING until playback ends.
-                    voicePhase.value = VoicePhase.SPEAKING
-                    startVoicePlaybackMonitor()
-                }
-                for (clip in channel) {
-                    if (voicePhase.value != VoicePhase.PROCESSING && voicePhase.value != VoicePhase.SPEAKING) {
-                        clip.delete()
-                        break
-                    }
-                    // Monitor is armed in the branch above (Fish stream) or in the else block
-                    // (segmented synthesis), so barge-in works from the first audible chunk.
-                    playVoiceClipAwait(clip) {
-                        playbackStarted = true
-                    }
-                    playedAny = true
                 }
             } catch (_: CancellationException) {
-                // Barge-in or a manual stop: the pipeline is gone; any clips that were
-                // synthesised but never heard are deleted below.
-            } catch (t: Throwable) {
-                firstSegmentError = t
+                // Barge-in or a manual stop: the pipeline is gone; audio that was rendered but
+                // never heard is deleted below.
             }
             producer.cancel()
             runCatching { producer.join() }
             while (true) {
-                val pendingClip = channel.tryReceive()
-                if (!pendingClip.isSuccess) break
-                pendingClip.getOrNull()?.delete()
+                val leftover = ready.tryReceive().getOrNull() ?: break
+                leftover.cancel()
             }
+            rendered.forEach { it.delete() }
             val heard = playedAny || playbackStarted
-            if (voicePhase.value == VoicePhase.SPEAKING && heard) {
+            // Whoever stops the reply on purpose (barge-in, bubble tap, close, a failed turn) sets
+            // intentionalVoiceCancel first, and this cleanup can run inside their cancel() call.
+            // Re-arming then would open a fresh mic and throw away the user's barge-in words.
+            if (!intentionalVoiceCancel && voicePhase.value == VoicePhase.SPEAKING && heard) {
                 // The TTS switches itself off as soon as the reply ends; the session then
                 // re-arms the microphone instead of dropping back to normal chatting.
                 error.value = null
@@ -1196,23 +1283,40 @@ voiceLevel.value = 0f
                 // Nothing was ever heard: report only genuine generation failures here.
                 // Intentional interrupts (barge-in, orb tap, close) skip this branch, and
                 // playback errors after audio started are not generation failures.
+                voiceJob?.cancel()
+                voiceJob = null
                 container.voiceRecorder.stop()?.delete()
                 voicePhase.value = VoicePhase.IDLE
-                error.value = firstSegmentError?.message ?: "The voice reply could not be generated."
+                error.value = if (segmentCount == 0) {
+                    "The voice reply did not contain anything that could be spoken."
+                } else {
+                    firstError?.message ?: "The voice reply could not be generated."
+                }
             }
         }
     }
 
-    /** Watches reply playback for adaptive, sustained user speech and continues that turn. */
+    /**
+     * Watches reply playback for the user talking over it. The recording that starts here keeps
+     * running through a barge-in and becomes the user's next utterance, so nothing they say
+     * while the reply stops is lost; only the reply-time audio from before they started
+     * talking is cut off before upload (see [bargeTrimBytes]).
+     */
     private fun startVoicePlaybackMonitor() {
         val recorderLive = container.voiceRecorder.start().isSuccess
-        // Reset both barge detectors so a previous barge doesn't leak into this reply.
-        bargeDetector.reset(SystemClock.elapsedRealtime())
-        softBargeDetector.reset(SystemClock.elapsedRealtime())
-        pendingBargePrefix = null
-        pendingBargePrefixLength = 0L
+        // start() always opens unmuted; a user who muted must stay unheard during the reply.
+        if (recorderLive) container.voiceRecorder.muted = voiceMicMuted.value
+        bargeTrimBytes = 0L
+        // Two barge-in gates, each measured as one unbroken run of speech:
+        //   1. "outshouts reply": mic > player * margin + floor. Fast (BARGE_TRIGGER_MS).
+        //      Catches normal voices on a quiet phone speaker.
+        //   2. "soft": mic sustained above an absolute floor for longer. Catches a loud
+        //      speaker the user cannot outshout after echo cancellation.
+        val hardRun = SpeechRunTracker()
+        val softRun = SpeechRunTracker()
         voiceJob = viewModelScope.launch {
             var bargeArmed = false
+            var ducked = false
             while (true) {
                 val phaseNow = voicePhase.value
                 if (phaseNow != VoicePhase.SPEAKING && !(bargeArmed && phaseNow == VoicePhase.LISTENING)) break
@@ -1222,62 +1326,46 @@ voiceLevel.value = 0f
                 val micLevel = (micRaw / 32_767f).coerceIn(0f, 1f)
 
                 if (phaseNow == VoicePhase.SPEAKING) {
-                    // Two barge-in gates run in parallel:
-                    //   1. "outshouts reply" — mic > player * margin + floor. Fast (BARGE_TRIGGER_MS).
-                    //      Catches normal voices on a quiet phone speaker.
-                    //   2. "soft barge" — mic sustains above absolute floor for longer. Catches the
-                    //      case where the speaker is loud and the user's voice can't outshout it
-                    //      after echo cancellation (the previously broken case).
                     val micOutshoutsReply = recorderLive &&
                         micLevel > maxOf(playerLevel * BARGE_MIC_MARGIN + BARGE_MIC_FLOOR, BARGE_MIC_MIN)
                     val micSustainedSoft = recorderLive && micLevel >= BARGE_SOFT_MIN
-                    val activity = when {
-                        micOutshoutsReply -> bargeDetector.observe(micRaw, now)
-                        micSustainedSoft -> softBargeDetector.observe(micRaw, now)
-                        else -> null
+                    val hardMs = hardRun.observe(micOutshoutsReply, now)
+                    val softMs = softRun.observe(micSustainedSoft, now)
+                    voiceLevel.value = maxOf(playerLevel, if (micSustainedSoft) sqrt(micLevel) else 0f)
+                    // Duck the reply as soon as the user starts talking: they hear they were
+                    // noticed and keep going, and the quieter speaker leaks less echo into the
+                    // mic while the barge-in confirms. Re-applied every poll because each new
+                    // sentence starts a fresh player at full volume.
+                    val userTalking = hardMs >= BARGE_DUCK_MS || softMs >= BARGE_SOFT_DUCK_MS
+                    if (userTalking || ducked) {
+                        container.voicePlayer.setVolume(if (userTalking) BARGE_DUCK_VOLUME else 1f)
+                        ducked = userTalking
                     }
-                    voiceLevel.value = maxOf(playerLevel, activity?.level ?: 0f)
-                    val hardTrigger = activity != null && activity.hasSpeech &&
-                        activity.voicedDurationMs >= VoiceConfig.BARGE_TRIGGER_MS
-                    val softTrigger = micSustainedSoft &&
-                        activity != null && activity.hasSpeech &&
-                        activity.voicedDurationMs >= BARGE_SOFT_TRIGGER_MS
-                    if (!bargeArmed && (hardTrigger || softTrigger)) {
+                    if (!bargeArmed && (hardMs >= VoiceConfig.BARGE_TRIGGER_MS || softMs >= BARGE_SOFT_TRIGGER_MS)) {
                         bargeArmed = true
-                        val voicedMs = activity?.voicedDurationMs ?: 0L
-                        fadePlayerOut()
-                        container.voicePlayer.setVolume(0f)
-                        container.voicePlayer.stop()
+                        val onsetAt = softRun.onsetAtMs ?: hardRun.onsetAtMs ?: now
+                        // Hand the session to listening before stopping anything: the reply's
+                        // cleanup can run inside the cancel() below, and it must already see that
+                        // the stop is intentional and the mic now belongs to the user.
                         intentionalVoiceCancel = true
+                        voicePhase.value = VoicePhase.LISTENING
+                        // The utterance started at the barge onset, so silence detection treats
+                        // the barge and the user's continuation as one turn.
+                        voiceStartedAt = onsetAt
+                        voiceEndDetector.reset(onsetAt)
+                        voiceEndDetector.seedSpeech(now, now - onsetAt)
+                        fadePlayerOut(from = if (ducked) BARGE_DUCK_VOLUME else 1f)
+                        container.voicePlayer.stop()
                         voicePipelineJob?.cancel()
                         voicePipelineJob = null
-
-                        // KEEP the monitor file: it contains the user's cut-off speech up to this
-                        // point. Discarding it (the old behaviour) meant STT never heard the words
-                        // that triggered the barge. We rename it so a subsequent stop() doesn't
-                        // delete it, and we re-use it as the start of the new LISTENING clip.
-                        val bargeFile = container.voiceRecorder.stop()
-                        val bargeStartAt = now - voicedMs
-                        // Start a fresh recorder so additional speech appends to a new clip,
-                        // then concatenate the barge prefix + new clip when the user finishes.
-                        val newClip = container.newVoiceFile()
-                        val prefixLength = bargeFile?.length() ?: 0L
-                        if (container.voiceRecorder.start().isFailure) {
-                            bargeFile?.delete()
-                            voicePhase.value = VoicePhase.IDLE
-                            error.value = "The microphone could not restart after interruption."
-                            break
-                        }
-                        pendingBargePrefix = bargeFile
-                        pendingBargePrefixLength = prefixLength
-                        voiceStartedAt = bargeStartAt
-                        // Seed the end-of-speech detector with the barge-spoken time so silence
-                        // detection treats the barge and the user's continuation as one utterance.
-                        voiceEndDetector.reset(voiceStartedAt)
-                        voiceEndDetector.seedSpeech(now, voicedMs)
-                        softBargeDetector.reset(now)
-                        bargeDetector.reset(now)
-                        voicePhase.value = VoicePhase.LISTENING
+                        // The model may still be writing the reply the user just talked over.
+                        abandonVoiceTurn()
+                        // Keep recording. Reopening the mic here used to drop the words spoken
+                        // while it restarted, which is why a lead-in "uhh" was needed. Mark where
+                        // the user's speech began instead, with a pre-roll for a soft first sound.
+                        val keepMs = SystemClock.elapsedRealtime() - onsetAt + BARGE_PREROLL_MS
+                        bargeTrimBytes = (container.voiceRecorder.capturedBytes() - keepMs * VOICE_BYTES_PER_MS)
+                            .coerceAtLeast(0L)
                     }
                 } else {
                     val activity = voiceEndDetector.observe(micRaw, now)
@@ -1286,16 +1374,17 @@ voiceLevel.value = 0f
                         stopVoiceRecording(automatic = true)
                         break
                     }
+                    updateSpeculativeStt(activity, now)
                 }
                 delay(VOICE_POLL_MS)
             }
         }
     }
 
-    /** Smoothly lowers the TTS volume so the user's voice wins the channel. */
-    private suspend fun fadePlayerOut() {
+    /** Smoothly lowers the TTS volume from [from] to silence so the user's voice wins the channel. */
+    private suspend fun fadePlayerOut(from: Float = 1f) {
         repeat(4) { step ->
-            container.voicePlayer.setVolume(1f - (step + 1) / 4f)
+            container.voicePlayer.setVolume(from * (1f - (step + 1) / 4f))
             delay(12)
         }
         container.voicePlayer.setVolume(0f)
@@ -1319,8 +1408,9 @@ voiceLevel.value = 0f
         }
     }
 
+    /** Plays one sentence's Fish PCM stream as it downloads, falling back to an MP3 render. */
     private suspend fun playFishStreamAwait(
-        segment: String,
+        audio: ReplyAudio.Stream,
         settings: SettingsState,
         fishVoiceId: String?,
         onStarted: () -> Unit
@@ -1328,13 +1418,7 @@ voiceLevel.value = 0f
         var started = false
         try {
             container.voicePlayer.playPcm(
-                chunks = container.synthesizeVoiceStream(
-                    text = segment,
-                    speed = settings.fishSpeed.toDouble(),
-                    fishModel = settings.fishModel,
-                    fishVoiceId = fishVoiceId,
-                    emotions = settings.voiceEmotions
-                ),
+                chunks = audio.pcm.consumeAsFlow(),
                 onStarted = {
                     started = true
                     onStarted()
@@ -1349,7 +1433,7 @@ voiceLevel.value = 0f
             val clip = container.newVoiceFile()
             try {
                 container.synthesizeVoice(
-                    text = segment,
+                    text = audio.text,
                     destination = clip,
                     speed = settings.fishSpeed.toDouble(),
                     provider = TtsProvider.FISH,
@@ -1452,6 +1536,9 @@ voiceLevel.value = 0f
         voiceJob?.cancel()
         voicePipelineJob?.cancel()
         voicePipelineJob = null
+        voiceFillerJob?.cancel()
+        voiceFillerJob = null
+        cancelSpeculativeStt()
         speakMessageJob?.cancel()
         speakMessageJob = null
         container.voiceRecorder.cancel()
@@ -1481,12 +1568,24 @@ voiceLevel.value = 0f
         const val BARGE_MIC_MIN = 0.05f
 
         /**
-         * Soft barge-in: when the speaker is loud and the user can't outshout it, accept any
-         * sustained voice above [BARGE_SOFT_MIN] for [BARGE_SOFT_TRIGGER_MS]. The longer window
-         * is the "noise floor" defence — a single TV syllable won't arm; a sentence will.
+         * Soft barge-in: when the speaker is loud and the user can't outshout it, accept voice
+         * above [BARGE_SOFT_MIN] held for [BARGE_SOFT_TRIGGER_MS] as one unbroken run
+         * ([SpeechRunTracker]). The old 700 ms was summed over the whole reply, so scattered
+         * echo could add up while real speech still waited; a continuous run rejects the
+         * scattered noise, which allows a shorter window. A TV syllable won't arm; a phrase will.
          */
         const val BARGE_SOFT_MIN = 0.04f
-        const val BARGE_SOFT_TRIGGER_MS = 700L
+        const val BARGE_SOFT_TRIGGER_MS = 550L
+
+        /** Run lengths (outshouting / soft) after which the reply ducks while a barge-in confirms. */
+        const val BARGE_DUCK_MS = 90L
+        const val BARGE_SOFT_DUCK_MS = 240L
+
+        /** Reply volume while ducked under the user's voice. */
+        const val BARGE_DUCK_VOLUME = 0.35f
+
+        /** Audio kept from before the detected start of a barge-in, so a soft first sound survives. */
+        const val BARGE_PREROLL_MS = 500L
     }
 
     fun setMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setMemoryEnabled(value) }

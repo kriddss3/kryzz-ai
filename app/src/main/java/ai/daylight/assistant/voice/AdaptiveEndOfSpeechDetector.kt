@@ -69,6 +69,9 @@ internal class AdaptiveEndOfSpeechDetector(
         voicedDurationMs = 0L
     }
 
+    /** How long the user has been quiet since the last voiced sample; 0 before any speech. */
+    fun silenceMs(nowMs: Long): Long = lastVoiceAtMs?.let { (nowMs - it).coerceAtLeast(0L) } ?: 0L
+
     /** Seeds a recording that already contains the speech used to trigger barge-in. */
     fun seedSpeech(nowMs: Long, confirmedSpeechMs: Long) {
         if (startedAtMs == null) reset(nowMs - confirmedSpeechMs.coerceAtLeast(0L))

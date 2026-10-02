@@ -88,6 +88,40 @@ class VoiceAudioTest {
         assertThat(file.readBytes()).isEqualTo(before)
     }
 
+    @Test fun snapshotWavCopiesTheLiveRecordingAndSkipsTheBargePrefix() {
+        val source = tmp.newFile("live.wav")
+        val pcm = ByteArray(3_200) { (it % 7).toByte() }
+        // Header sizes are still zero while the recorder is writing.
+        source.writeBytes(wavHeader(0) + pcm)
+        val dest = File(tmp.root, "early.wav")
+        snapshotWav(source, dest, skipPcmBytes = 1_001)
+        val out = dest.readBytes()
+        assertThat(leInt(out, 40)).isEqualTo(2_200)
+        assertThat(leInt(out, 4)).isEqualTo(36 + 2_200)
+        assertThat(out.copyOfRange(WAV_HEADER_BYTES, out.size)).isEqualTo(pcm.copyOfRange(1_000, 3_200))
+        // The live recording itself is untouched.
+        assertThat(source.length()).isEqualTo((WAV_HEADER_BYTES + pcm.size).toLong())
+    }
+
+    @Test fun dropWavPrefixKeepsTheFrameAlignedTail() {
+        val file = tmp.newFile("barge.wav")
+        val pcm = ByteArray(1_000) { it.toByte() }
+        file.writeBytes(wavHeader(pcm.size) + pcm)
+        dropWavPrefix(file, 601)
+        val out = file.readBytes()
+        assertThat(leInt(out, 40)).isEqualTo(400)
+        assertThat(out.copyOfRange(WAV_HEADER_BYTES, out.size)).isEqualTo(pcm.copyOfRange(600, 1_000))
+    }
+
+    @Test fun dropWavPrefixLongerThanTheClipLeavesAnEmptyWav() {
+        val file = tmp.newFile("short.wav")
+        file.writeBytes(wavHeader(640) + ByteArray(640))
+        dropWavPrefix(file, 5_000)
+        val out = file.readBytes()
+        assertThat(out).hasLength(WAV_HEADER_BYTES)
+        assertThat(leInt(out, 40)).isEqualTo(0)
+    }
+
     private fun leInt(bytes: ByteArray, offset: Int): Int =
         (bytes[offset].toInt() and 0xFF) or
             ((bytes[offset + 1].toInt() and 0xFF) shl 8) or

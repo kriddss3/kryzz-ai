@@ -133,6 +133,18 @@ class AdaptiveEndOfSpeechDetectorTest {
         assertThat(ended.stopReason).isEqualTo(VoiceStopReason.END_OF_SPEECH)
     }
 
+    @Test
+    fun silenceMsCountsFromTheLastVoicedSample() {
+        val detector = AdaptiveEndOfSpeechDetector()
+        detector.reset(0L)
+        assertThat(detector.silenceMs(100L)).isEqualTo(0L)
+        feed(detector, 0L, 300L, 50L, 100)
+        feed(detector, 350L, 750L, 50L, 3_000)
+        detector.observe(100, 800L)
+
+        assertThat(detector.silenceMs(1_000L)).isEqualTo(250L)
+    }
+
     private fun feed(
         detector: AdaptiveEndOfSpeechDetector,
         startMs: Long,

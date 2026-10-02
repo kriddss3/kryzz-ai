@@ -5,9 +5,10 @@ import org.junit.Test
 
 class VoiceConfigTest {
     @Test fun defaultsPinTheAgreedLowLatencyPipeline() {
-        // Default switched to Grok STT in v5.1.3 (~100 ms faster than Whisper-large on the same
-        // /audio/transcriptions endpoint); users on the previous default keep their saved choice.
-        assertThat(VoiceConfig.DEFAULT_STT_MODEL).isEqualTo("x-ai/grok-stt-1.0")
+        // Whisper large-v3-turbo is the default again, for transcription quality; early
+        // transcription during the closing silence hides its extra latency over Grok STT.
+        assertThat(VoiceConfig.DEFAULT_STT_MODEL).isEqualTo("openai/whisper-large-v3-turbo")
+        assertThat(VoiceSttModels.options.first().id).isEqualTo(VoiceConfig.DEFAULT_STT_MODEL)
         assertThat(VoiceConfig.DEFAULT_STT_LANGUAGE).isEqualTo("en")
         // 5.6.3: DeepSeek V4 Flash was dropped from the voice reply list; the default brain is
         // now Gemini 2.5 Flash Lite.
@@ -42,6 +43,9 @@ class VoiceConfigTest {
         assertThat(VoiceConfig.SPEECH_CONFIRM_MS).isLessThan(VoiceConfig.MIN_SPEECH_MS)
         // Barge-in triggers on sustained speech faster than the end-of-utterance silence.
         assertThat(VoiceConfig.BARGE_TRIGGER_MS).isLessThan(VoiceConfig.SILENCE_STOP_MS)
+        // Early transcription starts after confirmed speech and well inside the silence window.
+        assertThat(VoiceConfig.SPECULATIVE_STT_SILENCE_MS).isAtLeast(150L)
+        assertThat(VoiceConfig.SPECULATIVE_STT_SILENCE_MS).isLessThan(VoiceConfig.SILENCE_STOP_MS - 200L)
     }
 
     @Test fun curatedVoicePresetsAreUniqueAndWellFormed() {

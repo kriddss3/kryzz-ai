@@ -20,17 +20,17 @@ enum class VoicePhase {
 /** Fixed wiring for the voice chat mode: STT and TTS engines, timing and the spoken-style prompt. */
 object VoiceConfig {
     /**
-     * Speech-to-text default. Grok STT 1.0 via OpenRouter runs ~100 ms faster than the
-     * Whisper-large-v3-turbo default it replaced, and stays on the same `/audio/transcriptions`
-     * endpoint so the existing request shape still works. Users on a previous default keep
-     * their saved choice — DataStore migration only affects fresh installs.
+     * Speech-to-text default: Whisper large-v3-turbo (Groq via OpenRouter), chosen for
+     * transcription quality. Grok STT was the default only for being ~100 ms faster; early
+     * transcription during the closing silence ([SPECULATIVE_STT_SILENCE_MS]) now hides more
+     * than that. A choice saved in Settings is kept; only installs still on the default move.
      */
-    const val DEFAULT_STT_MODEL = "x-ai/grok-stt-1.0"
+    const val DEFAULT_STT_MODEL = "openai/whisper-large-v3-turbo"
 
     /** ISO-639-1 hint so Groq / Grok skips language detection. Empty string = auto-detect. */
     const val DEFAULT_STT_LANGUAGE = "en"
 
-    /** Whisper large-v3-turbo via OpenRouter, kept as a fallback option. */
+    /** Whisper large-v3-turbo via OpenRouter (Groq-hosted). */
     const val WHISPER_STT_MODEL = "openai/whisper-large-v3-turbo"
 
     /** Grok STT 1.0 through OpenRouter POST /api/v1/audio/transcriptions. */
@@ -69,7 +69,17 @@ object VoiceConfig {
     /** Trailing silence after confirmed speech that ends the recording automatically. */
     const val SILENCE_STOP_MS = 520L
 
-    /** Sustained speech (while Kryzz is talking) that counts as the user talking over the reply. */
+    /**
+     * Silence after confirmed speech at which transcription starts early, while the
+     * [SILENCE_STOP_MS] window is still running. If the user keeps talking the early
+     * transcript is thrown away; otherwise it is ready (or nearly) when the turn ends.
+     */
+    const val SPECULATIVE_STT_SILENCE_MS = 220L
+
+    /**
+     * Continuous speech, louder than the reply's echo, that counts as the user talking over
+     * Kryzz. Measured as one unbroken run (see [SpeechRunTracker]), not summed across the reply.
+     */
     const val BARGE_TRIGGER_MS = 200L
 
     /** Minimum accumulated voiced audio before silence is allowed to auto-stop. */
@@ -188,30 +198,6 @@ object VoiceReplyModels {
 
 /** One selectable voice from the Fish Audio library, identified by its public model ID. */
 data class FishVoice(val name: String, val referenceId: String)
-
-/**
- * Splits a spoken answer into playback segments for pipelined TTS.
- *
- * The first sentence becomes its own segment so playback can start after a single
- * sentence of synthesis; the remainder is balanced into at most [maxSegments] - 1
- * chunks to keep the number of TTS requests small. Short replies stay a single clip.
- */
-internal fun String.toVoiceSegments(maxSegments: Int = 3): List<String> {
-    val text = trim()
-    if (text.isBlank()) return emptyList()
-    val sentences = text.split(Regex("(?<=[.!?…])\\s+")).map { it.trim() }.filter { it.isNotBlank() }
-    if (sentences.size <= 1) return listOf(text)
-    val segments = mutableListOf(sentences.first())
-    var index = 1
-    while (index < sentences.size) {
-        val remaining = sentences.size - index
-        val chunkCount = (maxSegments - segments.size).coerceAtLeast(1)
-        val perChunk = (remaining + chunkCount - 1) / chunkCount
-        segments += sentences.subList(index, (index + perChunk).coerceAtMost(sentences.size)).joinToString(" ")
-        index += perChunk
-    }
-    return segments
-}
 
 /** One selectable Fish Audio TTS engine version. */
 data class FishEngine(val id: String, val name: String, val detail: String)
@@ -346,8 +332,8 @@ data class VoiceSttModel(val id: String, val name: String, val detail: String)
 object VoiceSttModels {
     val options = listOf(
         // The default now lives first so Settings shows the same model that ships by default.
-        VoiceSttModel(VoiceConfig.DEFAULT_STT_MODEL, "Grok STT", "via OpenRouter (default)"),
-        VoiceSttModel(VoiceConfig.WHISPER_STT_MODEL, "Whisper large-v3-turbo", "Groq via OpenRouter"),
+        VoiceSttModel(VoiceConfig.WHISPER_STT_MODEL, "Whisper large-v3-turbo", "Groq via OpenRouter (default)"),
+        VoiceSttModel(VoiceConfig.GROK_STT_MODEL, "Grok STT", "xAI via OpenRouter"),
         VoiceSttModel(VoiceConfig.NEMOTRON_STT_MODEL, "Nemotron 3.5 ASR", "NVIDIA via OpenRouter · streaming")
     )
     val ids = options.map { it.id }.toSet()

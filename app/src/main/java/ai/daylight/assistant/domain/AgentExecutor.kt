@@ -77,10 +77,12 @@ import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -155,7 +157,8 @@ class AgentExecutor(
         mode: AssistantMode = AssistantMode.CHAT,
         capability: AgentCapability = AgentCapability.AUTO,
         attachments: List<ChatAttachment> = emptyList(),
-        voiceMode: Boolean = false
+        voiceMode: Boolean = false,
+        onVoiceText: VoiceReplyListener? = null
     ): String? {
         val clean = text.trim()
         require(clean.isNotEmpty())
@@ -182,7 +185,7 @@ class AgentExecutor(
             toolActivity.tryEmit(ToolActivity(conversationId, TOOL_MEMORY_SAVE, started = true))
         }
         return when {
-            voiceMode -> generateReply(conversationId, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true)
+            voiceMode -> generateReply(conversationId, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true, onVoiceText = onVoiceText)
             savedMode == AssistantMode.AGENT && capability == AgentCapability.IMAGE -> { generateImage(conversationId, clean); null }
             savedMode == AssistantMode.AGENT && capability == AgentCapability.VIDEO -> { generateVideo(conversationId, clean); null }
             savedMode == AssistantMode.AGENT && capability == AgentCapability.AUDIO -> { generateAudio(conversationId, clean); null }
@@ -194,7 +197,8 @@ class AgentExecutor(
         conversationId: String,
         requestedMode: AssistantMode? = null,
         requestedCapability: AgentCapability? = null,
-        voiceMode: Boolean = false
+        voiceMode: Boolean = false,
+        onVoiceText: VoiceReplyListener? = null
     ): String? {
         val settings = preferences.state.first()
         val provider = if (voiceMode) ChatProvider.OPENROUTER else settings.chatProvider
@@ -556,6 +560,9 @@ class AgentExecutor(
                     }
                     val visible = ToolCallXml.scrubToolBlocks(value.scrubThinkTags())
                     activeText = visible
+                    // Voice: hand the text to speech before the database write, so the first
+                    // sentence can start rendering while the rest still streams.
+                    if (voiceMode) onVoiceText?.onText(messageId, visible, done = false)
                     dao.updateMessageContent(messageId, visible, MessageStatus.STREAMING.name)
                 }
                 // Keep tools on the first validation retry (drop only a rejected
@@ -668,6 +675,7 @@ class AgentExecutor(
                             finalText = reviewDraft(messageId, activeText)
                         }
                         if (stoppedByCostCap) finalText += "\n\n" + AgentTurnPolicy.costCapNote(costCapUsd)
+                        if (voiceMode) onVoiceText?.onText(messageId, finalText, done = true)
                         val totalGenerationTimeMs = (SystemClock.elapsedRealtime() - generationStartedAt).coerceAtLeast(0L)
                         dao.finishMessage(
                             messageId, finalText, MessageStatus.COMPLETE.name, json.encodeToString(citations),
@@ -1145,7 +1153,10 @@ class AgentExecutor(
                 }
             }
         } catch (cancelled: CancellationException) {
-            activeId?.let { dao.updateMessageContent(it, activeText, MessageStatus.CANCELLED.name) }
+            // NonCancellable: this coroutine is already cancelled, so a plain suspend write would
+            // throw at once and leave the bubble stuck as streaming (common when a voice reply is
+            // interrupted while the model is still writing).
+            activeId?.let { withContext(NonCancellable) { dao.updateMessageContent(it, activeText, MessageStatus.CANCELLED.name) } }
             throw cancelled
         } catch (error: Throwable) {
             val friendly = (error as? AssistantApiException)?.message ?: "Something went wrong. Check your connection and try again."
@@ -2404,6 +2415,15 @@ internal fun shouldRetryEmptyResponse(
  * same detail as its start so the chat removes the matching chip.
  */
 data class ToolActivity(val conversationId: String, val toolName: String, val started: Boolean, val detail: String? = null)
+
+/**
+ * Receives a voice reply's visible text while the model streams it, so speech can start on
+ * the first sentence. [round] changes when the agent drops a round's text for a tool round;
+ * [done] marks the final answer of the turn, delivered once.
+ */
+fun interface VoiceReplyListener {
+    fun onText(round: String, text: String, done: Boolean)
+}
 
 /**
  * An agent `ask_user` call waiting on the UI. The chat screen renders [question] as an

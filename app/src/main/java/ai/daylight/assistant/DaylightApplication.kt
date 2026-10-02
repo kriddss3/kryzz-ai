@@ -47,6 +47,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 class DaylightApplication : Application() {
@@ -137,8 +138,11 @@ class AppContainer(private val application: Application) {
         }
     }
 
-    /** Fresh temp file for a TTS clip; the caller owns deletion after playback. */
-    fun newVoiceFile(): File = File(application.cacheDir, "kryzz-reply-${System.currentTimeMillis()}.mp3")
+    /**
+     * Fresh temp file for a TTS clip; the caller owns deletion after playback. Unique even when
+     * two sentences start rendering in the same millisecond.
+     */
+    fun newVoiceFile(): File = File.createTempFile("kryzz-reply-", ".mp3", application.cacheDir)
 
     /** Cached spoken rendering of a chat message, kept so replaying it needs no new TTS call. */
     fun voiceCacheFile(messageId: String): File =
@@ -201,19 +205,30 @@ class AppContainer(private val application: Application) {
         openRouter.warmConnection(key)
     }
 
+    /**
+     * Warms the hosts a voice turn talks to while the user is still speaking: OpenRouter for
+     * transcription and the reply, and Fish Audio when it renders the spoken answer.
+     */
+    suspend fun warmVoiceConnections() {
+        warmOpenRouter()
+        val provider = TtsProvider.from(preferences.state.first().ttsProvider)
+        if (provider == TtsProvider.FISH && credentials.hasFishKey()) fish.warmConnection()
+    }
+
     suspend fun transcribeVoice(file: File, sttModel: String): String {
         val model = coerceVoiceSttModel(sttModel)
         val key = credentials.openRouterKey() ?: throw AssistantApiException(
             ErrorKind.INVALID_KEY,
             "Add an OpenRouter API key in Settings before using voice chat."
         )
-        val prepared = runCatching { trimWavSilence(file) }.getOrDefault(file)
+        // File work stays off the main thread; voice turns call this from the UI scope.
+        val prepared = withContext(Dispatchers.IO) { runCatching { trimWavSilence(file) }.getOrDefault(file) }
         val prompt = STT_PROMPT_HINTS
         return if (model == VoiceConfig.NEMOTRON_STT_MODEL) {
             // Streaming path: split into 4 s chunks, transcribe each in parallel, concatenate.
             // The last chunk is allowed to be shorter. Worst case is a per-chunk timeout —
             // we still get a best-effort concatenation back instead of a hard failure.
-            val chunks = ai.daylight.assistant.voice.splitWavChunks(prepared)
+            val chunks = withContext(Dispatchers.IO) { ai.daylight.assistant.voice.splitWavChunks(prepared) }
             try {
                 openRouter.transcribeChunked(
                     key = key,

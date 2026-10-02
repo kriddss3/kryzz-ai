@@ -888,8 +888,8 @@ fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                 )
             }
             SettingsGroup(
-                title = "Music production",
-                description = "OpenRouter audio generation model used when the Music agent capability is selected."
+                title = "Speech to text",
+                description = "Which model transcribes what you say in voice chat and dictation. Voice chat starts transcribing during the pause at the end of your sentence, which hides most of the transcription time."
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
