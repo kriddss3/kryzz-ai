@@ -888,6 +888,18 @@ fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
                 )
             }
             SettingsGroup(
+                title = "Listening sounds",
+                description = "While you talk for a while, Kryzz drops a short \"mm-hmm\" or \"yeah\" in your pauses, like a person on a call, and waits a moment longer so you can carry on."
+            ) {
+                SettingSwitch(
+                    title = "Say \"mm-hmm\" while I talk",
+                    subtitle = "Rendered once in the reply voice and kept on this phone. Never sent to the transcriber.",
+                    checked = settings.voiceBackchannels,
+                    onChecked = vm::setVoiceBackchannels,
+                    modifier = Modifier.testTag("voice_backchannels_toggle")
+                )
+            }
+            SettingsGroup(
                 title = "Speech to text",
                 description = "Which model transcribes what you say in voice chat and dictation. Voice chat starts transcribing during the pause at the end of your sentence, which hides most of the transcription time."
             ) {

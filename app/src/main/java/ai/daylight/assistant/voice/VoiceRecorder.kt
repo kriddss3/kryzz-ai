@@ -31,12 +31,19 @@ class VoiceRecorder(private val context: Context) {
      * the session stays open without barge-in or auto-stop firing.
      */
     @Volatile var muted: Boolean = false
+    /**
+     * While Kryzz plays a short listening sound, the file gets silence so the transcriber never
+     * hears it, but [level] still reports the real microphone. The caller can then tell the
+     * user carrying on over the sound from its echo, and unmask at once.
+     */
+    @Volatile var masked: Boolean = false
     private val peak = AtomicInteger(0)
     private val bytesCaptured = AtomicLong(0)
 
     fun start(): Result<Unit> = runCatching {
         stopInternal()
         muted = false
+        masked = false
         val file = File(context.cacheDir, "kryzz-voice-${System.currentTimeMillis()}.wav")
         FileOutputStream(file).use { it.write(wavHeader(0)) }
         output = file
@@ -122,7 +129,7 @@ class VoiceRecorder(private val context: Context) {
                         out.write(silent, 0, read)
                         peak.set(0)
                     } else {
-                        out.write(buf, 0, read)
+                        out.write(if (masked) silent else buf, 0, read)
                         val samplePeak = pcmPeakAmplitude(buf, read)
                         peak.accumulateAndGet(samplePeak, ::maxOf)
                     }

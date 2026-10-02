@@ -37,6 +37,20 @@ class VoicePlayer(private val context: Context) {
         file: File,
         onStarted: () -> Unit = {},
         onComplete: (Throwable?) -> Unit
+    ) = start(file, 1f, onStarted, onComplete)
+
+    /**
+     * Plays a short cue, such as a listening "mm-hmm", at [volume]. The volume is set before
+     * playback starts; MediaPlayer rejects it while still preparing.
+     */
+    fun playCue(file: File, volume: Float, onComplete: (Throwable?) -> Unit = {}) =
+        start(file, volume.coerceIn(0f, 1f), {}, onComplete)
+
+    private fun start(
+        file: File,
+        volume: Float,
+        onStarted: () -> Unit,
+        onComplete: (Throwable?) -> Unit
     ) {
         stop()
         completion = onComplete
@@ -63,6 +77,7 @@ class VoicePlayer(private val context: Context) {
                     if (player === prepared) {
                         try {
                             attachLevelCapture(prepared.audioSessionId)
+                            if (volume < 1f) prepared.setVolume(volume, volume)
                             prepared.start()
                             onStarted()
                         } catch (t: Throwable) {

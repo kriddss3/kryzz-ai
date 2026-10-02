@@ -95,6 +95,12 @@ object VoiceConfig {
     const val SPEECH_THRESHOLD = 800
 
     /**
+     * Short listening sounds Kryzz drops into the user's pauses while they talk for a while.
+     * Rendered once in the reply voice and kept on disk (see BackchannelPolicy for timing).
+     */
+    val BACKCHANNEL_PHRASES = listOf("Mm-hmm.", "Mhm.", "Yeah.", "Right.")
+
+    /**
      * Spoken-style instruction for voice chat. Kept short and example-first so small
      * models (Granite 8B and similar) actually emit Fish tags instead of ignoring a long list.
      */

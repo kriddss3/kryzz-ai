@@ -95,7 +95,8 @@ data class SettingsState(
     val fishCustomVoices: List<FishCustomVoice> = emptyList(),
     val fishSpeed: Float = 1f,
     val voiceEmotions: Boolean = true,
-    val voiceFishStreaming: Boolean = true
+    val voiceFishStreaming: Boolean = true,
+    val voiceBackchannels: Boolean = true
 )
 
 class AppPreferences(private val context: Context) {
@@ -153,6 +154,7 @@ class AppPreferences(private val context: Context) {
         val fishSpeed = floatPreferencesKey("fish_speed")
         val voiceEmotions = booleanPreferencesKey("voice_emotions")
         val voiceFishStreaming = booleanPreferencesKey("voice_fish_streaming")
+        val voiceBackchannels = booleanPreferencesKey("voice_backchannels")
     }
 
     val state: Flow<SettingsState> = context.dataStore.data
@@ -219,7 +221,8 @@ class AppPreferences(private val context: Context) {
                 fishCustomVoices = decodeFishCustomVoices(p[Keys.fishCustomVoices]),
                 fishSpeed = (p[Keys.fishSpeed] ?: 1f).coerceIn(0.5f, 2f),
                 voiceEmotions = p[Keys.voiceEmotions] ?: true,
-                voiceFishStreaming = p[Keys.voiceFishStreaming] ?: true
+                voiceFishStreaming = p[Keys.voiceFishStreaming] ?: true,
+                voiceBackchannels = p[Keys.voiceBackchannels] ?: true
             )
         }
 
@@ -422,6 +425,7 @@ class AppPreferences(private val context: Context) {
     suspend fun setFishSpeed(value: Float) = context.dataStore.edit { it[Keys.fishSpeed] = value.coerceIn(0.5f, 2f) }
     suspend fun setVoiceEmotions(value: Boolean) = context.dataStore.edit { it[Keys.voiceEmotions] = value }
     suspend fun setVoiceFishStreaming(value: Boolean) = context.dataStore.edit { it[Keys.voiceFishStreaming] = value }
+    suspend fun setVoiceBackchannels(value: Boolean) = context.dataStore.edit { it[Keys.voiceBackchannels] = value }
     suspend fun clear() = context.dataStore.edit { it.clear() }
 
     private companion object {

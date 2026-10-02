@@ -14,6 +14,7 @@ import ai.daylight.assistant.data.LocationProvider
 import ai.daylight.assistant.data.local.AssistantDatabase
 import ai.daylight.assistant.data.GeneratedOutputStore
 import ai.daylight.assistant.data.preferences.AppPreferences
+import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.data.SkillRepository
 import ai.daylight.assistant.data.MemoryRepository
 import ai.daylight.assistant.data.remote.OpenRouterClient
@@ -41,6 +42,7 @@ import ai.daylight.assistant.voice.STT_PROMPT_HINTS
 import ai.daylight.assistant.voice.forFishSpeech
 import ai.daylight.assistant.voice.withFishEmotionTags
 import java.io.File
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -199,6 +201,60 @@ class AppContainer(private val application: Application) {
         model = fishModel
     )
 
+    /**
+     * The listening sounds ("Mm-hmm", "Yeah") in the current reply voice. Each is rendered
+     * once per voice setup and kept in app storage, so playing one mid-sentence costs no
+     * network time; a voice change renders a fresh set and drops the old one. [beforeRender]
+     * runs before each render, so the caller can hold it until a quiet moment. Returns the
+     * clips that are ready, or none when the reply voice is not set up.
+     */
+    suspend fun backchannelClips(
+        settings: SettingsState,
+        beforeRender: suspend () -> Unit = {}
+    ): List<File> = withContext(Dispatchers.IO) {
+        val provider = TtsProvider.from(settings.ttsProvider)
+        val credentialed = when (provider) {
+            TtsProvider.FISH -> credentials.hasFishKey() && settings.fishVoiceId.isNotBlank()
+            TtsProvider.OPENROUTER -> credentials.hasOpenRouterKey()
+        }
+        if (!credentialed) return@withContext emptyList()
+        val voiceKey = listOf(
+            provider.name, settings.fishModel, settings.fishVoiceId,
+            settings.openRouterTtsModel, settings.openRouterTtsVoice, settings.fishSpeed
+        ).joinToString("|").hashCode().toUInt().toString(16)
+        val root = File(application.filesDir, "voice-backchannel")
+        val dir = File(root, voiceKey)
+        root.listFiles()?.filter { it.name != voiceKey }?.forEach { it.deleteRecursively() }
+        dir.mkdirs()
+        VoiceConfig.BACKCHANNEL_PHRASES.mapIndexedNotNull { index, phrase ->
+            val clip = File(dir, "$index.mp3")
+            if (clip.isFile && clip.length() > 0L) return@mapIndexedNotNull clip
+            // Render to a side file so a half-written clip is never mistaken for a finished one.
+            val partial = File(dir, "$index.part")
+            try {
+                beforeRender()
+                synthesizeVoice(
+                    text = phrase,
+                    destination = partial,
+                    speed = settings.fishSpeed.toDouble(),
+                    provider = provider,
+                    fishModel = settings.fishModel,
+                    fishVoiceId = settings.fishVoiceId.ifBlank { null },
+                    openRouterModel = settings.openRouterTtsModel,
+                    openRouterVoice = settings.openRouterTtsVoice,
+                    emotions = false
+                )
+                if (partial.length() > 0L && partial.renameTo(clip)) clip else null
+            } catch (cancelled: CancellationException) {
+                partial.delete()
+                throw cancelled
+            } catch (_: Throwable) {
+                partial.delete()
+                null
+            }
+        }
+    }
+
     /** Fire-and-forget TLS/HTTP warm-up so the first STT POST does not pay DNS + handshake. */
     fun warmOpenRouter() {
         val key = credentials.openRouterKey() ?: return
@@ -263,5 +319,6 @@ class AppContainer(private val application: Application) {
         attachments.clear()
         memories.clearAll()
         File(application.filesDir, "voice-cache").deleteRecursively()
+        File(application.filesDir, "voice-backchannel").deleteRecursively()
     }
 }

@@ -50,6 +50,8 @@ import ai.daylight.assistant.voice.AdaptiveEndOfSpeechDetector
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoicePhase
 import ai.daylight.assistant.voice.SpeechRunTracker
+import ai.daylight.assistant.voice.BackchannelPolicy
+import ai.daylight.assistant.voice.VoiceStopReason
 import ai.daylight.assistant.voice.SpokenReplySegmenter
 import ai.daylight.assistant.voice.VOICE_BYTES_PER_MS
 import ai.daylight.assistant.voice.VoiceActivitySample
@@ -664,6 +666,19 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     /** Transcript started during the closing silence of the current utterance, if any. */
     private var speculativeStt: Deferred<String>? = null
 
+    // Listening sounds: a short "mm-hmm" in the user's pauses while they talk for a while.
+    private val backchannelPolicy = BackchannelPolicy()
+    private var backchannelClips: List<File> = emptyList()
+    private var backchannelsEnabled = false
+    private var backchannelJob: Job? = null
+    private var lastBackchannelClip: File? = null
+    /** When the current listening sound started; 0 while none plays. */
+    private var backchannelStartedAt = 0L
+    private var backchannelLastPlayingAt = 0L
+    private var backchannelHeard = false
+    /** End of speech is held until then, so the user can carry on after a listening sound. */
+    private var backchannelHoldUntil = 0L
+
     // ── Per-message read aloud (Fish Audio, cached per message) ──────────────
     /** Message whose cached/generated audio is currently playing, if any. */
     val speakingMessageId = MutableStateFlow<String?>(null)
@@ -681,6 +696,10 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         voiceLevel.value = 0f
         cancelSpeculativeStt()
         bargeTrimBytes = 0L
+        endBackchannel()
+        backchannelHoldUntil = 0L
+        backchannelPolicy.reset()
+        prepareBackchannels()
         voiceStartedAt = SystemClock.elapsedRealtime()
         voiceEndDetector.reset(voiceStartedAt)
         // Speech-to-text, the reply model and the TTS host all get their TLS session while the
@@ -704,17 +723,92 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
                     voiceEndDetector.observe(0, now)
                     voiceLevel.value = 0f
                 } else {
-                    val activity = voiceEndDetector.observe(level, now)
+                    val activity = voiceEndDetector.observe(heardOverBackchannel(level, now), now)
                     voiceLevel.value = activity.level
-                    if (activity.stopReason != null) {
+                    val stop = activity.stopReason
+                    // After a listening sound the user gets a moment longer to carry on.
+                    val held = stop == VoiceStopReason.END_OF_SPEECH && now < backchannelHoldUntil
+                    if (stop != null && !held) {
                         stopVoiceRecording(automatic = true)
                         return@launch
                     }
                     updateSpeculativeStt(activity, now)
+                    maybeBackchannel(activity, now)
                 }
                 delay(VOICE_POLL_MS)
             }
         }
+    }
+
+    /** Loads the listening sounds for the current reply voice, rendering any that are missing. */
+    private fun prepareBackchannels() {
+        if (backchannelJob?.isActive == true) return
+        backchannelJob = viewModelScope.launch {
+            val settings = container.preferences.state.first()
+            backchannelsEnabled = settings.voiceBackchannels
+            if (!settings.voiceBackchannels) return@launch
+            backchannelClips = runCatching {
+                // Render only while the user is talking, so these requests never compete with
+                // a reply's own text-to-speech.
+                container.backchannelClips(settings) { voicePhase.first { it == VoicePhase.LISTENING } }
+            }.getOrDefault(backchannelClips)
+        }
+    }
+
+    /** Plays a short "mm-hmm" in a pause once the user has talked for a while (see [BackchannelPolicy]). */
+    private fun maybeBackchannel(activity: VoiceActivitySample, now: Long) {
+        if (!backchannelsEnabled || backchannelStartedAt != 0L || activity.isVoiceActive) return
+        if (backchannelClips.isEmpty()) return
+        if (!backchannelPolicy.shouldSpeak(activity.voicedDurationMs, voiceEndDetector.silenceMs(now))) return
+        // Never the same sound twice in a row.
+        val clip = backchannelClips.filter { it != lastBackchannelClip && it.isFile }.randomOrNull()
+            ?: backchannelClips.firstOrNull { it.isFile }
+            ?: return
+        lastBackchannelClip = clip
+        // The transcriber must not hear Kryzz's own "mm-hmm": the recording gets silence while
+        // it plays, and heardOverBackchannel lets the user's voice back in the moment they talk.
+        container.voiceRecorder.masked = true
+        backchannelStartedAt = now
+        backchannelLastPlayingAt = now
+        backchannelHeard = false
+        backchannelHoldUntil = now + BACKCHANNEL_HOLD_MS
+        container.voicePlayer.playCue(clip, BACKCHANNEL_VOLUME)
+    }
+
+    /**
+     * The mic level the end-of-speech detector should see. While a listening sound plays the
+     * mic hears it too, so only a voice that outshouts it counts as the user; anything else is
+     * the silence it really is. If the user carries on, the sound stops at once and their
+     * words go to the recording again.
+     */
+    private fun heardOverBackchannel(raw: Int, now: Long): Int {
+        if (backchannelStartedAt == 0L) return raw
+        val playing = container.voicePlayer.isPlaying()
+        if (playing) {
+            backchannelHeard = true
+            backchannelLastPlayingAt = now
+        }
+        // A short grace covers MP3 preparation before it plays and the echo tail after it ends.
+        val grace = if (backchannelHeard) BACKCHANNEL_TAIL_MS else BACKCHANNEL_PREPARE_MS
+        if ((!playing && now - backchannelLastPlayingAt >= grace) || now - backchannelStartedAt >= BACKCHANNEL_MAX_MS) {
+            endBackchannel(stopPlayback = playing)
+            return raw
+        }
+        val micLevel = (raw / 32_767f).coerceIn(0f, 1f)
+        val userTalking = micLevel > maxOf(container.voicePlayer.level() * BARGE_MIC_MARGIN + BARGE_MIC_FLOOR, BARGE_MIC_MIN)
+        if (userTalking) {
+            endBackchannel(stopPlayback = true)
+            return raw
+        }
+        return 0
+    }
+
+    /** Unmasks the recording. Only call [stopPlayback] while listening, when nothing else can be playing. */
+    private fun endBackchannel(stopPlayback: Boolean = false) {
+        if (backchannelStartedAt == 0L) return
+        backchannelStartedAt = 0L
+        container.voiceRecorder.masked = false
+        if (stopPlayback) container.voicePlayer.stop()
     }
 
     /** Bubble tap: end listening / skip the current step, depending on the phase. */
@@ -758,6 +852,9 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         if (voicePhase.value != VoicePhase.LISTENING) return
         voiceJob?.cancel()
         voiceJob = null
+        // A listening sound still playing as the turn ends just finishes; the reply follows.
+        endBackchannel()
+        backchannelHoldUntil = 0L
         val file = container.voiceRecorder.stop()
         // After a barge-in the reply-time audio before the user spoke is dropped before upload;
         // judge the clip by what will actually be sent.
@@ -875,6 +972,7 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         voicePipelineJob = null
         cancelSpeculativeStt()
         bargeTrimBytes = 0L
+        endBackchannel(stopPlayback = voicePhase.value == VoicePhase.LISTENING)
         voiceMicMuted.value = false
         when (voicePhase.value) {
             VoicePhase.LISTENING -> container.voiceRecorder.cancel()
@@ -1586,6 +1684,24 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
 
         /** Audio kept from before the detected start of a barge-in, so a soft first sound survives. */
         const val BARGE_PREROLL_MS = 500L
+
+        /** Volume of a listening sound, so it sits under the conversation. */
+        const val BACKCHANNEL_VOLUME = 0.7f
+
+        /**
+         * End of speech is held this long after a listening sound starts. The sound invites the
+         * user to go on; without the hold the turn would end while it is still playing.
+         */
+        const val BACKCHANNEL_HOLD_MS = 750L
+
+        /** Time a listening sound may take to start (MP3 prepare) before it is given up. */
+        const val BACKCHANNEL_PREPARE_MS = 300L
+
+        /** Echo tail after a listening sound ends while the recording stays masked. */
+        const val BACKCHANNEL_TAIL_MS = 150L
+
+        /** Safety cap on one listening sound. */
+        const val BACKCHANNEL_MAX_MS = 2_000L
     }
 
     fun setMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setMemoryEnabled(value) }
@@ -1832,6 +1948,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setFishSpeed(value: Float) = viewModelScope.launch { container.preferences.setFishSpeed(value) }
     fun setVoiceEmotions(value: Boolean) = viewModelScope.launch { container.preferences.setVoiceEmotions(value) }
     fun setVoiceFishStreaming(value: Boolean) = viewModelScope.launch { container.preferences.setVoiceFishStreaming(value) }
+    fun setVoiceBackchannels(value: Boolean) = viewModelScope.launch { container.preferences.setVoiceBackchannels(value) }
 
     fun testVoice() = viewModelScope.launch {
         val current = settings.value
