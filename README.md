@@ -26,13 +26,13 @@
 
 ## Install in 60 seconds
 
-1. **Download** `kryzz-ai-5.11.0-debug.apk` (about 82 MB) from the [latest release](https://github.com/kriddss3/kryzz-ai/releases/latest).
+1. **Download** `kryzz-ai-5.11.0-release.apk` (about 19 MB) from the [latest release](https://github.com/kriddss3/kryzz-ai/releases/latest).
 2. **Allow it to install.** Android 9+: *Settings → Apps → Special access → Install unknown apps*, then allow your browser or file manager.
 3. **Open Kryzz AI**, paste an [OpenRouter key](https://openrouter.ai/keys), test it in the onboarding screen, and start talking to it.
 
-Prefer automatic updates? Add `https://github.com/kriddss3/kryzz-ai` to [Obtainium](https://github.com/ImranR98/Obtainium) and it will notify you when a new release lands.
+Prefer automatic updates? Add `https://github.com/kriddss3/kryzz-ai` to [Obtainium](https://github.com/ImranR98/Obtainium), set its APK filter to `release`, and it will notify you when a new release lands.
 
-> The APK is a **debug-signed build** meant for evaluation and sideloading. Details and caveats are [below](#download-details).
+> The release APK is signed with a release key (certificate SHA-256 in [Download details](#download-details)). If you already run a v1.0 or v1.1 **debug** build and want to upgrade in place, use the debug APK instead. The two builds are separate apps and do not share data.
 
 ---
 
@@ -118,7 +118,7 @@ See [`CHANGELOG.md`](./CHANGELOG.md). This drop's notes: [`RELEASE_NOTES_5.11.0.
 
 **Is it on the Play Store?** No. It is distributed as a GitHub release, and Obtainium can handle updates.
 
-**Why a debug APK?** Debug builds are signed with the standard Android debug key, which is fine for evaluation and sideloading and lets v1.0, v1.1, and v1.1.2 upgrade in place. If you want a long-term install on a daily driver, [build your own signed release](#release-signing).
+**Release or debug APK?** Take the release APK for a new install: it is smaller and signed with a release key. The debug APK exists so that people who already installed v1.0 or v1.1 can upgrade in place. The two have different package names (`ai.daylight.assistant` and `ai.daylight.assistant.debug`), install side by side, and do not share data. You can also [build and sign your own](#release-signing).
 
 **Where is my data?** On your device, in a Room database and DataStore. Conversation backups never include credentials. See [Privacy](#privacy-in-one-breath).
 
@@ -128,23 +128,22 @@ See [`CHANGELOG.md`](./CHANGELOG.md). This drop's notes: [`RELEASE_NOTES_5.11.0.
 
 ## Download details
 
-A pre-built debug APK for the source in this repository is published as a **GitHub Release**:
+Both APKs for the source in this repository are published on the **GitHub Release** page:
 
-👉 **[`v1.1.2` release page →](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1.2)** — download `kryzz-ai-5.11.0-debug.apk` (debug-signed).
+👉 **[`v1.1.2` release page →](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1.2)**
 
-A copy of the same APK is also committed in this repo at:
+| File | Package | Signing | Use it when |
+| --- | --- | --- | --- |
+| `kryzz-ai-5.11.0-release.apk` (about 19 MB) | `ai.daylight.assistant` | Release key | New installs (recommended) |
+| `kryzz-ai-5.11.0-debug.apk` (about 82 MB) | `ai.daylight.assistant.debug` | Android debug key | Upgrading in place over a v1.0 or v1.1 debug build |
 
-```
-work-assets/releases/kryzz-ai-5.11.0-debug.apk
-```
+Release signing certificate SHA-256: `5922776bff28cda04b1b8a3bd71d815b420bc9e3b73890e78b3bfcde3c7c91e3`. Check a download with `apksigner verify --print-certs kryzz-ai-5.11.0-release.apk`. File checksums are on the release page.
 
-Debug-signed with the Android Studio default key, package `ai.daylight.assistant.debug`.
+A copy of the debug APK is also committed in this repo at `work-assets/releases/kryzz-ai-5.11.0-debug.apk`.
 
 Previous public builds stay up: [`v1.1`](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1) (`kryzz-ai-5.7.2-debug.apk`) and [`kryzz-AI-v1-(debug)`](https://github.com/kriddss3/kryzz-ai/releases/tag/kryzz-AI-v1-(debug)) (`kryzz-ai-5.1.15-debug.apk`).
 
-> This is a debug build meant for evaluation and sideloading. For long-term installs on a daily-driver device, build your own signed release APK from this source.
->
-> The debug package id is `ai.daylight.assistant.debug`. versionCode 84 upgrades in place over the v1.1 and v1.0 debug APKs. It will **not** replace a separately signed `ai.daylight.assistant` release install.
+> versionCode 84 upgrades in place over the v1.1 and v1.0 **debug** APKs when you use the debug file. The release APK is a separate app and will not replace them.
 
 ---
 
