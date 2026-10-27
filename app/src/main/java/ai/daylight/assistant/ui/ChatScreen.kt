@@ -224,11 +224,14 @@ import ai.daylight.assistant.domain.SwarmStatus
 import ai.daylight.assistant.domain.WorkLog
 import ai.daylight.assistant.domain.WorkStep
 import ai.daylight.assistant.domain.WorkStepKind
+import ai.daylight.assistant.ui.dot.DotColors
+import ai.daylight.assistant.ui.dot.DotColorsLight
+import ai.daylight.assistant.ui.dot.DataMonoFamily
+import ai.daylight.assistant.ui.dot.SansFamily
 import ai.daylight.assistant.ui.theme.LocalGlassOpacity
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import ai.daylight.assistant.ui.agent.BotMood
 import ai.daylight.assistant.ui.agent.BotSize
-import ai.daylight.assistant.ui.agent.KryzzBot
 import ai.daylight.assistant.ui.agent.KryzzMascot
 import ai.daylight.assistant.ui.agent.MascotGif
 import ai.daylight.assistant.ui.agent.MascotState
@@ -243,10 +246,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal fun agentPrimaryColor(darkBackground: Boolean): Color =
-    if (darkBackground) Color(0xFFF4F4F1) else Color(0xFF1A1A1D)
+    if (darkBackground) DotColors.TextPrimary else DotColorsLight.TextPrimary
 
 internal fun agentOnPrimaryColor(darkBackground: Boolean): Color =
-    if (darkBackground) Color(0xFF050506) else Color.White
+    if (darkBackground) DotColors.Bg else DotColorsLight.Surface
 
 internal fun agentBotMood(
     mode: AssistantMode,
@@ -475,8 +478,8 @@ fun requestVoice() {
         baseColors.copy(
             primary = agentPrimaryColor(darkBackground),
             onPrimary = agentOnPrimaryColor(darkBackground),
-            primaryContainer = if (darkBackground) Color(0xFF25262A) else Color(0xFFE7E6E2),
-            onPrimaryContainer = if (darkBackground) Color(0xFFF4F4F1) else Color(0xFF1B1B1E)
+            primaryContainer = if (darkBackground) DotColors.SurfaceHigh else DotColorsLight.SurfaceRaised,
+            onPrimaryContainer = if (darkBackground) DotColors.TextPrimary else DotColorsLight.TextPrimary
         )
     } else baseColors
 
@@ -1267,7 +1270,7 @@ onRemoveAttachment: (String) -> Unit,
             shape = RoundedCornerShape(26.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = (LocalGlassOpacity.current + 0.16f).coerceAtMost(0.96f)),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.64f)),
-            shadowElevation = 10.dp
+            shadowElevation = 0.dp
         ) {
             Column(Modifier.padding(start = 6.dp, end = 7.dp, top = 4.dp, bottom = 6.dp)) {
                 if (mode == AssistantMode.AGENT) {
@@ -1438,7 +1441,7 @@ private fun QuestionCard(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f),
         contentColor = MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f)),
-        shadowElevation = 6.dp,
+        shadowElevation = 0.dp,
         tonalElevation = 2.dp
     ) {
         Column(
@@ -1688,7 +1691,7 @@ private fun MessageItem(
                 color = MaterialTheme.colorScheme.primaryContainer,
                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 tonalElevation = 2.dp,
-                shadowElevation = 3.dp
+                shadowElevation = 0.dp
             ) {
                 Box(Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) { messageContent() }
             }
@@ -1727,7 +1730,7 @@ private fun MessageItem(
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
-                        shadowElevation = 1.dp
+                        shadowElevation = 0.dp
                     ) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Surface(
@@ -2007,7 +2010,7 @@ private fun GeneratedOutputCard(output: GeneratedOutput, onSave: (GeneratedOutpu
             IconButton(onClick = { onSave(output) }) { Icon(Icons.Outlined.Download, "Save output") }
         }
         output.content?.lineSequence()?.take(3)?.joinToString("\n")?.takeIf(String::isNotBlank)?.let {
-            Text(it, Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = if (output.kind == OutputKind.DOCUMENT || output.kind == OutputKind.PDF) FontFamily.SansSerif else FontFamily.Monospace)
+            Text(it, Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = if (output.kind == OutputKind.DOCUMENT || output.kind == OutputKind.PDF) SansFamily else DataMonoFamily)
         }
     }
 }
@@ -2033,7 +2036,7 @@ private fun CitationCard(index: Int, citation: Citation) {
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.68f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -2118,7 +2121,7 @@ private fun CodeBlock(language: String, content: String) {
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.64f))
             Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(14.dp)) {
-                Text(content, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                Text(content, fontFamily = DataMonoFamily, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -2148,7 +2151,7 @@ private fun annotatedMarkdown(input: String, linkColor: Color): AnnotatedString 
                 append(match.groupValues[1]); pop(); pop()
             }
             match.groupValues[3].isNotEmpty() -> { pushStyle(SpanStyle(fontWeight = FontWeight.Bold)); append(match.groupValues[3]); pop() }
-            else -> { pushStyle(SpanStyle(fontFamily = FontFamily.Monospace)); append(match.groupValues[4]); pop() }
+            else -> { pushStyle(SpanStyle(fontFamily = DataMonoFamily)); append(match.groupValues[4]); pop() }
         }
         cursor = match.range.last + 1
     }
@@ -2398,7 +2401,7 @@ private fun VoiceChatOverlay(
                     shape = CircleShape,
                     color = bubbleColor,
                     contentColor = onBubble,
-                    shadowElevation = 24.dp
+                    shadowElevation = 0.dp
                 ) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         when (phase) {

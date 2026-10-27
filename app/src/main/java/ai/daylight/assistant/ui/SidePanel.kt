@@ -119,6 +119,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.daylight.assistant.ui.dot.DotColors
 import ai.daylight.assistant.BuildConfig
 import ai.daylight.assistant.data.local.ConversationFolderEntity
 import ai.daylight.assistant.data.local.ConversationSummary
@@ -558,7 +559,8 @@ fun KryzzLibraryPanel(
         color = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = 20.dp
+        shadowElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
@@ -949,10 +951,10 @@ private fun GalacticAboutDialog(onDismiss: () -> Unit) {
                         onClick = {}
                     ),
                 shape = RoundedCornerShape(30.dp),
-                color = Color(0xFF08090B),
-                contentColor = Color(0xFFF4F4F1),
+                color = DotColors.BgAlt,
+                contentColor = DotColors.TextPrimary,
                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-                shadowElevation = 28.dp
+                shadowElevation = 0.dp
             ) {
                 Box {
                     GalacticAboutStars(orbitProgress, Modifier.matchParentSize())

@@ -307,32 +307,33 @@ private fun LlmCard(model: OpenRouterModel, benchmark: ModelBenchmark?, expanded
     }
 }
 
-internal data class ProviderBrand(val name: String, val monogram: String, val color: Color)
+/** Provider identity: name and monogram only. Marks are monochrome (kit rule: yellow is the only accent). */
+internal data class ProviderBrand(val name: String, val monogram: String)
 
 internal fun providerBrandFor(modelId: String): ProviderBrand {
     val key = modelId.substringBefore('/').trim().lowercase()
     return when (key) {
-        "openai" -> ProviderBrand("OpenAI", "OA", Color(0xFF087F63))
-        "anthropic" -> ProviderBrand("Anthropic", "AN", Color(0xFFA94F35))
-        "google", "google-ai" -> ProviderBrand("Google", "G", Color(0xFF3367D6))
-        "meta-llama", "meta" -> ProviderBrand("Meta", "M", Color(0xFF1769E0))
-        "mistralai", "mistral" -> ProviderBrand("Mistral AI", "MI", Color(0xFFD95520))
-        "qwen", "alibaba" -> ProviderBrand("Qwen", "QW", Color(0xFF514BC7))
-        "deepseek" -> ProviderBrand("DeepSeek", "DS", Color(0xFF3456D1))
-        "x-ai", "xai" -> ProviderBrand("xAI", "xAI", Color(0xFF34383F))
-        "microsoft" -> ProviderBrand("Microsoft", "MS", Color(0xFF006F9E))
-        "amazon", "amazon-nova" -> ProviderBrand("Amazon", "AWS", Color(0xFFF09A16))
-        "cohere" -> ProviderBrand("Cohere", "CO", Color(0xFF31574D))
-        "nvidia" -> ProviderBrand("NVIDIA", "NV", Color(0xFF4D7F00))
-        "perplexity" -> ProviderBrand("Perplexity", "PX", Color(0xFF137B88))
-        "nousresearch", "nous-research" -> ProviderBrand("Nous Research", "NR", Color(0xFF7141B1))
-        "moonshotai", "moonshot" -> ProviderBrand("Moonshot AI", "KS", Color(0xFF273047))
-        "minimax" -> ProviderBrand("MiniMax", "MM", Color(0xFFC23D47))
-        "z-ai", "zhipu" -> ProviderBrand("Z.ai", "Z", Color(0xFF2868C7))
-        "tencent" -> ProviderBrand("Tencent", "TC", Color(0xFF0052D9))
-        "baidu" -> ProviderBrand("Baidu", "BD", Color(0xFF2932E1))
-        "iflytek" -> ProviderBrand("iFlytek", "IF", Color(0xFF1A73E8))
-        "bytedance", "byteplus", "doubao" -> ProviderBrand("Doubao", "DB", Color(0xFF3B82F6))
+        "openai" -> ProviderBrand("OpenAI", "OA")
+        "anthropic" -> ProviderBrand("Anthropic", "AN")
+        "google", "google-ai" -> ProviderBrand("Google", "G")
+        "meta-llama", "meta" -> ProviderBrand("Meta", "M")
+        "mistralai", "mistral" -> ProviderBrand("Mistral AI", "MI")
+        "qwen", "alibaba" -> ProviderBrand("Qwen", "QW")
+        "deepseek" -> ProviderBrand("DeepSeek", "DS")
+        "x-ai", "xai" -> ProviderBrand("xAI", "xAI")
+        "microsoft" -> ProviderBrand("Microsoft", "MS")
+        "amazon", "amazon-nova" -> ProviderBrand("Amazon", "AWS")
+        "cohere" -> ProviderBrand("Cohere", "CO")
+        "nvidia" -> ProviderBrand("NVIDIA", "NV")
+        "perplexity" -> ProviderBrand("Perplexity", "PX")
+        "nousresearch", "nous-research" -> ProviderBrand("Nous Research", "NR")
+        "moonshotai", "moonshot" -> ProviderBrand("Moonshot AI", "KS")
+        "minimax" -> ProviderBrand("MiniMax", "MM")
+        "z-ai", "zhipu" -> ProviderBrand("Z.ai", "Z")
+        "tencent" -> ProviderBrand("Tencent", "TC")
+        "baidu" -> ProviderBrand("Baidu", "BD")
+        "iflytek" -> ProviderBrand("iFlytek", "IF")
+        "bytedance", "byteplus", "doubao" -> ProviderBrand("Doubao", "DB")
         else -> {
             val name = key
                 .split('-', '_')
@@ -344,40 +345,31 @@ internal fun providerBrandFor(modelId: String): ProviderBrand {
                 .take(2)
                 .joinToString("")
                 .ifBlank { "AI" }
-            ProviderBrand(name, monogram, Color(0xFF525866))
+            ProviderBrand(name, monogram)
         }
     }
 }
 
 @Composable
 internal fun ProviderMark(brand: ProviderBrand, modifier: Modifier = Modifier) {
-    val foreground = providerMarkForeground(brand.color)
     Surface(
         modifier = modifier
             .size(40.dp)
             .clearAndSetSemantics { contentDescription = "${brand.name} provider" },
         shape = RoundedCornerShape(12.dp),
-        color = brand.color,
-        contentColor = foreground,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f))
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
                 brand.monogram,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
             )
         }
     }
-}
-
-/** Selects whichever monochrome foreground has the stronger WCAG contrast ratio. */
-internal fun providerMarkForeground(background: Color): Color {
-    val luminance = background.luminance().toDouble()
-    val blackContrast = (luminance + 0.05) / 0.05
-    val whiteContrast = 1.05 / (luminance + 0.05)
-    return if (blackContrast >= whiteContrast) Color.Black else Color.White
 }
 
 @Composable

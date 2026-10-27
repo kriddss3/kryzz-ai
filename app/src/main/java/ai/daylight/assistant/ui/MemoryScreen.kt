@@ -413,7 +413,7 @@ private fun AddMemoryDialog(
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp,
-                shadowElevation = 12.dp
+                shadowElevation = 0.dp
             ) {
                 Column(Modifier.fillMaxSize()) {
                     Row(

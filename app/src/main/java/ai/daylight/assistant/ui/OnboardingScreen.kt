@@ -58,7 +58,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
@@ -95,7 +94,6 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit) {
             .fillMaxSize()
             .background(scheme.background)
     ) {
-        OnboardingSignalBackdrop()
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -305,45 +303,6 @@ private fun LocationChoice(enabled: Boolean, onEnabled: (Boolean) -> Unit) {
             Switch(
                 checked = enabled,
                 onCheckedChange = onEnabled
-            )
-        }
-    }
-}
-
-@Composable
-private fun OnboardingSignalBackdrop() {
-    val scheme = MaterialTheme.colorScheme
-    val dark = scheme.background.luminance() < 0.45f
-    Canvas(Modifier.fillMaxSize()) {
-        val radius = size.minDimension * 0.66f
-        val center = Offset(size.width * 0.84f, size.height * 0.08f)
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    scheme.primary.copy(alpha = if (dark) 0.09f else 0.05f),
-                    scheme.secondary.copy(alpha = if (dark) 0.025f else 0.012f),
-                    Color.Transparent
-                ),
-                center = center,
-                radius = radius
-            ),
-            center = center,
-            radius = radius
-        )
-        drawLine(
-            color = scheme.primary.copy(alpha = if (dark) 0.08f else 0.04f),
-            start = Offset(size.width * 0.05f, size.height * 0.18f),
-            end = Offset(size.width * 0.95f, size.height * 0.12f),
-            strokeWidth = 1.dp.toPx()
-        )
-        repeat(4) { index ->
-            drawCircle(
-                color = scheme.secondary.copy(alpha = if (dark) 0.14f else 0.08f),
-                radius = 1.5.dp.toPx(),
-                center = Offset(
-                    size.width * (0.18f + index * 0.21f),
-                    size.height * (0.16f - index * 0.014f)
-                )
             )
         }
     }

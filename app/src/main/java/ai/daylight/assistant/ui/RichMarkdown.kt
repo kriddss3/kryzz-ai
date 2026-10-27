@@ -32,6 +32,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import ai.daylight.assistant.ui.dot.DataMonoFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -268,7 +269,7 @@ private fun RichInlineText(
 ) {
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
-    val annotated = remember(text, linkColor) { richAnnotatedMarkdown(text, linkColor) }
+    val annotated = remember(text, linkColor) { richAnnotatedMarkdown(text, linkColor, DataMonoFamily) }
     ClickableText(
         text = annotated,
         modifier = modifier,
@@ -283,7 +284,11 @@ private fun openAnnotatedUrl(context: Context, text: AnnotatedString, offset: In
     }
 }
 
-internal fun richAnnotatedMarkdown(input: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
+internal fun richAnnotatedMarkdown(
+    input: String,
+    linkColor: Color,
+    codeFontFamily: FontFamily = FontFamily.Monospace
+): AnnotatedString = buildAnnotatedString {
     val token = Regex(
         "\\[([^]]+)]\\((https?://[^)]+)\\)|\\*\\*([^*]+)\\*\\*|__([^_]+)__|~~([^~]+)~~|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|`([^`]+)`"
     )
@@ -313,7 +318,7 @@ internal fun richAnnotatedMarkdown(input: String, linkColor: Color): AnnotatedSt
             else -> {
                 pushStyle(
                     SpanStyle(
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = codeFontFamily,
                         background = linkColor.copy(alpha = 0.10f)
                     )
                 )

@@ -4,9 +4,9 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
-        <item name="android:windowBackground">#050506</item>
+        <item name="android:windowBackground">#040404</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:colorAccent">#F4F4F1</item>
+        <item name="android:colorAccent">#FFC700</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
