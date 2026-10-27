@@ -54,9 +54,18 @@ object InkLines {
         return InkLine.sanitize(first).takeIf { it.isNotEmpty() }
     }
 
-    fun talk(generating: Boolean, latestActivity: String? = null): InkLine = when {
-        !generating -> InkLine("TALK READY")
-        else -> InkLine("TALK ${activityVerb(latestActivity) ?: "THINKING"}", live = true)
+    /**
+     * Talk's line. While a page is being read and the source readout knows the count, it
+     * reads like the mockup: "TALK READING 3 OF 5" ([step] of [of]).
+     */
+    fun talk(generating: Boolean, latestActivity: String? = null, step: Int = 0, of: Int = 0): InkLine {
+        if (!generating) return InkLine("TALK READY")
+        val verb = activityVerb(latestActivity) ?: "THINKING"
+        return if (verb == "READING" && of > 0) {
+            InkLine("TALK READING ${step.coerceIn(1, of)} OF $of", live = true)
+        } else {
+            InkLine("TALK $verb", live = true)
+        }
     }
 
     fun run(generating: Boolean, doneSteps: Int = 0, totalSteps: Int = 0, latestActivity: String? = null): InkLine = when {

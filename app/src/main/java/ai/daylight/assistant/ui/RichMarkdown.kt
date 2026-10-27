@@ -23,6 +23,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,8 +32,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import ai.daylight.assistant.ui.dot.DataMonoFamily
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.talk.citationSuperscriptStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -260,6 +264,24 @@ private fun TableRow(cells: List<String>, columnCount: Int, contentColor: Color,
     }
 }
 
+/**
+ * Talk provides the current answer's citation URLs here, so "[1]" in the answer renders as
+ * a yellow superscript that opens source 1. Empty (the default) keeps "[1]" as plain text,
+ * which is how every other screen still renders it.
+ */
+val LocalCitationUrls = staticCompositionLocalOf<List<String>> { emptyList() }
+
+/** Appended to a streaming answer by Talk; drawn as the yellow block caret. */
+val STREAMING_CARET: String = Char(0xE000).toString()
+
+private val CITATION_MARK = Regex("\\[(\\d{1,3}(?:\\s*,\\s*\\d{1,3})*)](?!\\()")
+
+/** The citation numbers an answer actually uses, e.g. "x [1], y [2, 4]" -> {1, 2, 4}. */
+internal fun citedNumbers(markdown: String): Set<Int> =
+    CITATION_MARK.findAll(markdown)
+        .flatMap { match -> match.groupValues[1].split(',').mapNotNull { it.trim().toIntOrNull() } }
+        .toSet()
+
 @Composable
 private fun RichInlineText(
     text: String,
@@ -269,7 +291,11 @@ private fun RichInlineText(
 ) {
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
-    val annotated = remember(text, linkColor) { richAnnotatedMarkdown(text, linkColor, DataMonoFamily) }
+    val citationUrls = LocalCitationUrls.current
+    val accent = DotTheme.c.accent
+    val annotated = remember(text, linkColor, citationUrls, accent) {
+        richAnnotatedMarkdown(text, linkColor, DataMonoFamily, citationUrls, accent)
+    }
     ClickableText(
         text = annotated,
         modifier = modifier,
@@ -287,14 +313,35 @@ private fun openAnnotatedUrl(context: Context, text: AnnotatedString, offset: In
 internal fun richAnnotatedMarkdown(
     input: String,
     linkColor: Color,
-    codeFontFamily: FontFamily = FontFamily.Monospace
+    codeFontFamily: FontFamily = FontFamily.Monospace,
+    citationUrls: List<String> = emptyList(),
+    accent: Color = linkColor
 ): AnnotatedString = buildAnnotatedString {
     val token = Regex(
-        "\\[([^]]+)]\\((https?://[^)]+)\\)|\\*\\*([^*]+)\\*\\*|__([^_]+)__|~~([^~]+)~~|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|`([^`]+)`"
+        "\\[([^]]+)]\\((https?://[^)]+)\\)|\\*\\*([^*]+)\\*\\*|__([^_]+)__|~~([^~]+)~~|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|`([^`]+)`|" +
+            CITATION_MARK.pattern
     )
+    fun appendPlain(text: String) {
+        // Talk's streaming caret: a short yellow block where the text currently ends.
+        val parts = text.split(STREAMING_CARET)
+        parts.forEachIndexed { index, part ->
+            append(part)
+            if (index < parts.lastIndex) {
+                append("\u00A0")
+                withStyle(SpanStyle(background = accent)) { append("\u00A0\u00A0") }
+            }
+        }
+    }
+    fun convertsToCitation(match: MatchResult): Boolean {
+        if (match.groupValues[8].isEmpty() || citationUrls.isEmpty()) return false
+        val numbers = match.groupValues[8].split(',').mapNotNull { it.trim().toIntOrNull() }
+        return numbers.isNotEmpty() && numbers.all { it in 1..citationUrls.size }
+    }
     var cursor = 0
     token.findAll(input).forEach { match ->
-        append(input.substring(cursor, match.range.first))
+        val before = input.substring(cursor, match.range.first)
+        // "lowercase [1]," reads as "lowercase¹,": the numeral sits right against the word.
+        appendPlain(if (convertsToCitation(match)) before.removeSuffix(" ") else before)
         when {
             match.groupValues[1].isNotEmpty() -> {
                 pushStringAnnotation("URL", match.groupValues[2])
@@ -315,7 +362,7 @@ internal fun richAnnotatedMarkdown(
             match.groupValues[6].isNotEmpty() -> {
                 pushStyle(SpanStyle(fontStyle = FontStyle.Italic)); append(match.groupValues[6]); pop()
             }
-            else -> {
+            match.groupValues[7].isNotEmpty() -> {
                 pushStyle(
                     SpanStyle(
                         fontFamily = codeFontFamily,
@@ -325,8 +372,23 @@ internal fun richAnnotatedMarkdown(
                 append(match.groupValues[7])
                 pop()
             }
+            else -> {
+                // "[1]" or "[1, 3]": yellow superscript numerals that open their source.
+                // Without citations (or with a number out of range) it stays plain text.
+                if (!convertsToCitation(match)) {
+                    appendPlain(match.value)
+                } else {
+                    val numbers = match.groupValues[8].split(',').map { it.trim().toInt() }
+                    numbers.forEachIndexed { index, number ->
+                        if (index > 0) withStyle(citationSuperscriptStyle(accent)) { append(",") }
+                        pushStringAnnotation("URL", citationUrls[number - 1])
+                        withStyle(citationSuperscriptStyle(accent)) { append(number.toString()) }
+                        pop()
+                    }
+                }
+            }
         }
         cursor = match.range.last + 1
     }
-    append(input.substring(cursor))
+    appendPlain(input.substring(cursor))
 }

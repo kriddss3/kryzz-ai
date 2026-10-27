@@ -93,6 +93,8 @@ import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
 import ai.daylight.assistant.domain.availableReasoningEfforts
+import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.DotSheetHandle
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlinx.coroutines.delay
 
@@ -169,10 +171,12 @@ internal fun KryzzChatAiControlsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        // Kit sheet: surface, 32dp top radius, the small borderStrong handle.
+        shape = DotRadius.Sheet,
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
-        dragHandle = null
+        dragHandle = { DotSheetHandle() }
     ) {
         Box(Modifier.fillMaxWidth()) {
             Column(

@@ -553,6 +553,7 @@ fun AppNavigation(
                 },
                 onComposerFocusChanged = {},
                 onArmShown = { arm -> recordArmConversation(arm, id) },
+                onWebSearch = { enabled -> scope.launch { container.preferences.setSearchEnabled(enabled) } },
                 rootNavVisible = false
             )
         }

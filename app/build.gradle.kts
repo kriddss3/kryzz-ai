@@ -21,8 +21,8 @@ android {
 //      PDF renders through PdfDocument with system fonts for full Unicode, with the old
 //      writer as fallback), a work log under each agent answer built from the stored tool
 //      rows, and live activity chips that show the query, page or place of each call
-        versionCode = 86
-        versionName = "5.12.1"
+        versionCode = 87
+        versionName = "5.12.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

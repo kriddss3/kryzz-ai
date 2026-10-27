@@ -53,6 +53,17 @@ class InkLineTest {
         assertThat(InkLines.talk(true, "").text).isEqualTo("TALK THINKING")
     }
 
+    @Test fun talkReadingCountsLikeTheMockup() {
+        assertThat(InkLines.talk(true, "Reading: fontsource.org/x", step = 3, of = 5))
+            .isEqualTo(InkLine("TALK READING 3 OF 5", live = true))
+        // Without a count, or for other verbs, the plain verb is shown.
+        assertThat(InkLines.talk(true, "Reading: fontsource.org/x").text).isEqualTo("TALK READING")
+        assertThat(InkLines.talk(true, "Searching: fonts", step = 1, of = 5).text).isEqualTo("TALK SEARCHING")
+        // The step never runs past the total.
+        assertThat(InkLines.talk(true, "Reading: x.com", step = 9, of = 5).text).isEqualTo("TALK READING 5 OF 5")
+        assertThat(InkLines.talk(false, "Reading: x.com", step = 3, of = 5).text).isEqualTo("TALK READY")
+    }
+
     @Test fun runLines() {
         assertThat(InkLines.run(generating = false)).isEqualTo(InkLine("RUN READY"))
         assertThat(InkLines.run(generating = true)).isEqualTo(InkLine("RUN THINKING", live = true))

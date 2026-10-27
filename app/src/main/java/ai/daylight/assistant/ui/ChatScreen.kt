@@ -226,6 +226,14 @@ import androidx.compose.ui.res.painterResource
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotColors
 import ai.daylight.assistant.ui.shell.Arm
+import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.talk.FollowUpAction
+import ai.daylight.assistant.ui.talk.FollowUpQueue
+import ai.daylight.assistant.ui.talk.ReplyLine
+import ai.daylight.assistant.ui.talk.SourceReadoutBuilder
+import ai.daylight.assistant.ui.talk.TalkCallbacks
+import ai.daylight.assistant.ui.talk.TalkOptionsSheet
+import ai.daylight.assistant.ui.talk.TalkPane
 import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStripEffect
 import ai.daylight.assistant.ui.dot.DotColorsLight
@@ -307,6 +315,7 @@ fun ChatScreen(
     onNewChat: (AssistantMode) -> Unit = {},
     onComposerFocusChanged: (Boolean) -> Unit = {},
     onArmShown: (Arm) -> Unit = {},
+    onWebSearch: (Boolean) -> Unit = {},
     rootNavVisible: Boolean = true
 ) {
     val messages by vm.messages.collectAsStateWithLifecycle()
@@ -494,9 +503,65 @@ fun requestVoice() {
             totalSteps = conversationPlan?.steps?.size ?: 0,
             latestActivity = activities.lastOrNull()
         )
-        else -> InkLines.talk(generating, activities.lastOrNull())
+        else -> {
+            // "TALK READING 3 OF 5": the same counts the source readout shows.
+            val lastAnswer = messages.lastOrNull()?.takeIf { it.role == "ASSISTANT" }
+            val readout = lastAnswer?.let {
+                SourceReadoutBuilder.build(
+                    citations = repository.citations(it),
+                    workLog = workLogs[it.id],
+                    activities = if (generating) activities else emptyList(),
+                    streaming = generating
+                )
+            }
+            InkLines.talk(
+                generating = generating,
+                latestActivity = activities.lastOrNull(),
+                step = readout?.let { it.done + 1 } ?: 0,
+                of = readout?.total ?: 0
+            )
+        }
     }
     InkStripEffect(inkLine, arm = shownArm)
+
+    // Talk: "Queue a follow-up" while a reply streams. One slot, held here in the UI and
+    // sent when the reply finishes normally (FollowUpQueue decides; the VM is unchanged).
+    var followUp by remember(vm.conversationId) { mutableStateOf(FollowUpQueue()) }
+    var stopRequested by remember(vm.conversationId) { mutableStateOf(false) }
+    var sawGenerating by remember(vm.conversationId) { mutableStateOf(false) }
+    LaunchedEffect(generating) {
+        if (generating) {
+            sawGenerating = true
+            stopRequested = false
+            return@LaunchedEffect
+        }
+        if (!sawGenerating) return@LaunchedEffect
+        sawGenerating = false
+        val (next, action) = followUp.onGenerationEnded(
+            stoppedByUser = stopRequested,
+            failed = vm.error.value != null,
+            editing = vm.editingFrom.value != null
+        )
+        followUp = next
+        stopRequested = false
+        when (action) {
+            is FollowUpAction.Send -> {
+                val draft = vm.composer.value
+                vm.updateComposer(action.text)
+                vm.send()
+                if (draft.isNotBlank()) vm.updateComposer(draft)
+            }
+            is FollowUpAction.Restore -> vm.updateComposer(FollowUpQueue.mergeIntoDraft(action.text, vm.composer.value))
+            FollowUpAction.None -> Unit
+        }
+    }
+    var showTalkOptions by remember(vm.conversationId) { mutableStateOf(false) }
+    fun launchImagePicker() = pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    fun launchCamera() {
+        cameraFile.value = File(context.cacheDir, "kryzz-camera-${System.currentTimeMillis()}.jpg")
+        captureImage.launch(FileProvider.getUriForFile(context, "${context.packageName}.files", cameraFile.value!!))
+    }
+    fun launchFilePicker() = pickAttachments.launch(arrayOf("*/*"))
     val baseColors = MaterialTheme.colorScheme
     val darkBackground = baseColors.background.luminance() < 0.45f
     val modeColors = if (currentMode == AssistantMode.AGENT) {
@@ -513,7 +578,9 @@ fun requestVoice() {
                 Scaffold(
                     containerColor = Color.Transparent,
                     topBar = {
-                ChatHeader(
+                        // Talk has no top bar (kit chat-b): the departure board starts right
+                        // under the ink strip. Run keeps its header until phase C3.
+                        if (currentMode == AssistantMode.AGENT) ChatHeader(
                             title = title,
                             modelId = activeModelId,
                             mode = currentMode,
@@ -525,7 +592,38 @@ fun requestVoice() {
                         )
                     },
                     bottomBar = {
-                        Composer(
+                        if (currentMode == AssistantMode.CHAT) ReplyLine(
+                            value = composer,
+                            onValueChange = vm::updateComposer,
+                            generating = generating,
+                            editing = editing != null,
+                            queued = followUp.text,
+                            attachments = pendingAttachments,
+                            dictating = dictating,
+                            dictationLevel = dictationLevel,
+                            verticalPadding = settings.chatDensity.composerVerticalPadding(),
+                            onSend = vm::send,
+                            onQueue = {
+                                followUp = followUp.add(composer)
+                                vm.updateComposer("")
+                            },
+                            onStop = {
+                                stopRequested = true
+                                vm.stop()
+                            },
+                            onDictation = ::requestDictation,
+                            onOptions = {
+                                keyboard?.hide()
+                                showTalkOptions = true
+                            },
+                            onCancelEdit = vm::cancelEditing,
+                            onUnqueue = {
+                                vm.updateComposer(FollowUpQueue.mergeIntoDraft(followUp.text.orEmpty(), composer))
+                                followUp = followUp.clear()
+                            },
+                            onRemoveAttachment = vm::removeAttachment,
+                            onFocusChanged = onComposerFocusChanged
+                        ) else Composer(
                             value = composer,
                             density = settings.chatDensity,
                             onValue = vm::updateComposer,
@@ -568,7 +666,32 @@ onRemoveAttachment = vm::removeAttachment,
                         userScrollEnabled = false
                     ) { page ->
                         val mode = AssistantMode.entries[page]
-                        ChatPane(
+                        if (mode == AssistantMode.CHAT) TalkPane(
+                            conversationId = vm.conversationId,
+                            messages = messages,
+                            generating = generating,
+                            error = error,
+                            activities = activities,
+                            workLogs = workLogs,
+                            citations = repository::citations,
+                            outputs = repository::outputs,
+                            attachments = repository::attachments,
+                            speakingMessageId = speakingMessageId,
+                            synthesizingMessageId = synthesizingMessageId,
+                            callbacks = TalkCallbacks(
+                                onOpenLibrary = onOpenLibrary,
+                                onEdit = vm::startEditing,
+                                onRegenerate = vm::regenerate,
+                                onSpeak = vm::speakMessage,
+                                onShowUsage = { usageMessage = it },
+                                onSaveOutput = {
+                                    pendingOutput = it
+                                    saveOutput.launch(it.fileName)
+                                },
+                                onOpenOutput = { openOutput(context, it) },
+                                onQuestionAnswer = vm::sendQuestionAnswer
+                            )
+                        ) else ChatPane(
                             mode = mode,
                             density = settings.chatDensity,
                             messages = messages,
@@ -630,6 +753,29 @@ onRemoveAttachment = vm::removeAttachment,
                         onMemoryEnabled = vm::setMemoryEnabled,
                         onAgentSwarmEnabled = vm::setAgentSwarmEnabled,
                         onOpenModels = { onModels(activePurpose) }
+                    )
+                }
+                if (showTalkOptions) {
+                    TalkOptionsSheet(
+                        modeLocked = modeLocked,
+                        webSearch = settings.searchEnabled,
+                        modelLabel = activeModelId.compactModel(),
+                        onRun = {
+                            showTalkOptions = false
+                            requestMode(AssistantMode.AGENT)
+                        },
+                        onWebSearch = onWebSearch,
+                        onModel = {
+                            showTalkOptions = false
+                            showAiControls = true
+                        },
+                        onPickImage = { showTalkOptions = false; launchImagePicker() },
+                        onPickCamera = { showTalkOptions = false; launchCamera() },
+                        onPickFile = { showTalkOptions = false; launchFilePicker() },
+                        onVoice = { showTalkOptions = false; requestVoice() },
+                        onChats = { showTalkOptions = false; onOpenLibrary() },
+                        onNewChat = { showTalkOptions = false; onNewChat(AssistantMode.CHAT) },
+                        onDismiss = { showTalkOptions = false }
                     )
                 }
                 if (showCapabilityPicker) {
@@ -1472,7 +1618,7 @@ onRemoveAttachment: (String) -> Unit,
  * tappable options (A, B, C …), and a free-text box for a custom answer.
  */
 @Composable
-private fun QuestionCard(
+internal fun QuestionCard(
     question: InlineQuestion,
     onAnswer: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -2020,7 +2166,7 @@ private fun ThinkingIndicator() {
 }
 
 @Composable
-private fun GeneratedOutputCard(output: GeneratedOutput, onSave: (GeneratedOutput) -> Unit, onOpen: (GeneratedOutput) -> Unit) {
+internal fun GeneratedOutputCard(output: GeneratedOutput, onSave: (GeneratedOutput) -> Unit, onOpen: (GeneratedOutput) -> Unit) {
     val icon = when (output.kind) {
         OutputKind.DOCUMENT -> Icons.Outlined.Description
         OutputKind.SPREADSHEET -> Icons.Outlined.TableChart
@@ -2136,23 +2282,24 @@ fun MarkdownText(
 @Composable
 private fun CodeBlock(language: String, content: String) {
     val context = LocalContext.current
+    // Kit code card: surface with a 1dp border, radius 16, Geist Mono, mono caption header.
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f),
-        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column {
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Outlined.Code, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Icon(painterResource(R.drawable.ic_kz_code), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     language.ifBlank { "Code" }.uppercase(),
                     Modifier.weight(1f).padding(start = 8.dp),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = DotType.Label,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 IconButton(
@@ -2165,9 +2312,9 @@ private fun CodeBlock(language: String, content: String) {
                     Icon(Icons.Outlined.ContentCopy, "Copy code", Modifier.size(17.dp))
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.64f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(14.dp)) {
-                Text(content, fontFamily = DataMonoFamily, style = MaterialTheme.typography.bodySmall)
+                Text(content, style = DotType.Code, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
