@@ -31,7 +31,6 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Person
@@ -94,6 +93,9 @@ import ai.daylight.assistant.voice.FishVoices
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoiceReplyModels
 import ai.daylight.assistant.voice.VoiceSttModels
+import ai.daylight.assistant.ui.shell.Arm
+import ai.daylight.assistant.ui.shell.InkLines
+import ai.daylight.assistant.ui.shell.InkStripEffect
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -106,23 +108,23 @@ fun SettingsHomeScreen(
     onOpen: (String) -> Unit,
     onChat: () -> Unit = onChats,
     onOpenLibrary: () -> Unit = onChats,
-    memoryCount: Int = 0
+    memoryCount: Int = 0,
+    agentQuality: AgentQuality = AgentQuality.DEFAULT
 ) {
     var advancedExpanded by remember { mutableStateOf(false) }
+    // Tune arm: the strip shows the current thinking mode, e.g. TUNE BALANCED.
+    InkStripEffect(InkLines.tune(agentQuality), arm = Arm.TUNE)
 
     Scaffold(
         modifier = Modifier,
         containerColor = Color.Transparent,
         topBar = {
+            // No menu button: the arm rail navigates, and the chat library opens with a
+            // left-edge swipe.
             TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onOpenLibrary, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.Menu, "Open menu")
-                    }
-                },
                 title = { Text("Settings", style = MaterialTheme.typography.titleLarge) },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalGlassOpacity.current),
+                    containerColor = Color.Transparent,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 )

@@ -78,7 +78,6 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -92,7 +91,6 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Photo
@@ -166,7 +164,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -224,7 +221,13 @@ import ai.daylight.assistant.domain.SwarmStatus
 import ai.daylight.assistant.domain.WorkLog
 import ai.daylight.assistant.domain.WorkStep
 import ai.daylight.assistant.domain.WorkStepKind
+import androidx.annotation.DrawableRes
+import androidx.compose.ui.res.painterResource
+import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotColors
+import ai.daylight.assistant.ui.shell.Arm
+import ai.daylight.assistant.ui.shell.InkLines
+import ai.daylight.assistant.ui.shell.InkStripEffect
 import ai.daylight.assistant.ui.dot.DotColorsLight
 import ai.daylight.assistant.ui.dot.DataMonoFamily
 import ai.daylight.assistant.ui.dot.SansFamily
@@ -303,6 +306,7 @@ fun ChatScreen(
     onStartAgent: () -> Boolean = { false },
     onNewChat: (AssistantMode) -> Unit = {},
     onComposerFocusChanged: (Boolean) -> Unit = {},
+    onArmShown: (Arm) -> Unit = {},
     rootNavVisible: Boolean = true
 ) {
     val messages by vm.messages.collectAsStateWithLifecycle()
@@ -472,6 +476,27 @@ fun requestVoice() {
             AgentModelChoice.knownToLackTools(activeModelId, models)
     )
     val activeReasoning = settings.modelReasoning[activeModelId] ?: ReasoningEffort.AUTO
+    // Eight Arms: this one screen is Talk, Run or Voice. Tell the rail which, and put the
+    // matching line on the ink strip.
+    val voiceSearching by vm.voiceSearching.collectAsStateWithLifecycle()
+    val shownArm = when {
+        voicePhase != VoicePhase.IDLE -> Arm.VOICE
+        currentMode == AssistantMode.AGENT -> Arm.RUN
+        else -> Arm.TALK
+    }
+    LaunchedEffect(shownArm) { onArmShown(shownArm) }
+    val conversationPlan = agentPlan?.takeIf { it.conversationId == vm.conversationId }
+    val inkLine = when (shownArm) {
+        Arm.VOICE -> InkLines.voice(voicePhase, voiceSearching)
+        Arm.RUN -> InkLines.run(
+            generating = generating,
+            doneSteps = conversationPlan?.doneCount ?: 0,
+            totalSteps = conversationPlan?.steps?.size ?: 0,
+            latestActivity = activities.lastOrNull()
+        )
+        else -> InkLines.talk(generating, activities.lastOrNull())
+    }
+    InkStripEffect(inkLine, arm = shownArm)
     val baseColors = MaterialTheme.colorScheme
     val darkBackground = baseColors.background.luminance() < 0.45f
     val modeColors = if (currentMode == AssistantMode.AGENT) {
@@ -665,48 +690,43 @@ private fun ChatHeader(
 ) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalGlassOpacity.current),
+            // No band: the ink strip above already separates the header from the status bar.
+            containerColor = Color.Transparent,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
             actionIconContentColor = MaterialTheme.colorScheme.onSurface
         ),
-        navigationIcon = {
-            // Conversation navigation lives in the left side panel.
-            IconButton(onClick = onOpenLibrary, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.Menu, "Open menu")
-            }
-        },
         title = {
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable(onClick = onModelClick)
-                    .padding(horizontal = 4.dp),
+                Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(9.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                KryzzWordmark(
-                    Modifier.size(width = 70.dp, height = 22.dp),
-                    contentDescription = null
-                )
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        modelId.compactModel(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                // There is no menu button: tapping the chat title opens the chat library
+                // (the left-edge swipe still works too).
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(onClickLabel = "Open chat library", onClick = onOpenLibrary)
+                        .padding(horizontal = 4.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
                         title,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Text(
+                        "CHATS",
+                        maxLines = 1,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                ModelPill(modelId = modelId, onClick = onModelClick)
             }
         },
 actions = {
@@ -735,6 +755,32 @@ actions = {
     )
 }
 
+/** The active model, as a small outlined pill. Opens the AI controls sheet. */
+@Composable
+private fun ModelPill(modelId: String, onClick: () -> Unit) {
+    val label = modelId.compactModel()
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .heightIn(min = 36.dp)
+            .widthIn(max = 132.dp)
+            .semantics { contentDescription = "Model $label, AI controls" },
+        shape = RoundedCornerShape(percent = 50),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
+    }
+}
+
 @Composable
 private fun ModeSwitcher(
     current: AssistantMode,
@@ -749,13 +795,13 @@ private fun ModeSwitcher(
         Row(Modifier.padding(3.dp), verticalAlignment = Alignment.CenterVertically) {
             ModeSwitcherSegment(
                 label = "Chat",
-                icon = Icons.Outlined.ChatBubbleOutline,
+                icon = R.drawable.ic_kz_chat,
                 selected = current == AssistantMode.CHAT,
                 onClick = { onSwitch(AssistantMode.CHAT) }
             )
             ModeSwitcherSegment(
                 label = "Agent",
-                icon = Icons.Outlined.AutoAwesome,
+                icon = R.drawable.ic_kz_agent,
                 selected = current == AssistantMode.AGENT,
                 onClick = { onSwitch(AssistantMode.AGENT) }
             )
@@ -766,7 +812,7 @@ private fun ModeSwitcher(
 @Composable
 private fun ModeSwitcherSegment(
     label: String,
-    icon: ImageVector,
+    @DrawableRes icon: Int,
     selected: Boolean,
     onClick: () -> Unit
 ) {
@@ -789,7 +835,7 @@ private fun ModeSwitcherSegment(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Icon(icon, null, Modifier.size(15.dp))
+            Icon(painterResource(icon), null, Modifier.size(15.dp))
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall,
@@ -823,7 +869,7 @@ private fun NewChatButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            Icon(Icons.Filled.Add, null, Modifier.size(16.dp))
+            Icon(painterResource(R.drawable.ic_kz_chat_new), null, Modifier.size(16.dp))
             Text(
                 "New chat",
                 style = MaterialTheme.typography.labelMedium,
