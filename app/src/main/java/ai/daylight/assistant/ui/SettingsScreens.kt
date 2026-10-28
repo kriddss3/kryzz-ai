@@ -3,54 +3,28 @@ package ai.daylight.assistant.ui
 import androidx.biometric.BiometricManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.DeleteForever
-import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,34 +35,61 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import ai.daylight.assistant.domain.AgentQuality
-import ai.daylight.assistant.domain.AgentTurnPolicy
+import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.AssistantPreset
 import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.ChatProvider
-import ai.daylight.assistant.domain.ThemeMode
-import ai.daylight.assistant.ui.theme.LocalGlassOpacity
+import ai.daylight.assistant.ui.dot.DotButtonStyle
+import ai.daylight.assistant.ui.dot.DotConfirmDialog
+import ai.daylight.assistant.ui.dot.DotField
+import ai.daylight.assistant.ui.dot.DotIconButton
+import ai.daylight.assistant.ui.dot.DotNotice
+import ai.daylight.assistant.ui.dot.DotPill
+import ai.daylight.assistant.ui.dot.DotPillButton
+import ai.daylight.assistant.ui.dot.DotTag
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.effects.DotMatrixText
+import ai.daylight.assistant.ui.home.HomeBoard
+import ai.daylight.assistant.ui.talk.DotSheet
+import ai.daylight.assistant.ui.talk.OptionRow
+import ai.daylight.assistant.ui.talk.SheetLabel
+import ai.daylight.assistant.ui.tune.DotSegments
+import ai.daylight.assistant.ui.tune.SegmentOption
+import ai.daylight.assistant.ui.tune.ThemeSegments
+import ai.daylight.assistant.ui.tune.ThinkingModeTiles
+import ai.daylight.assistant.ui.tune.TuneActions
+import ai.daylight.assistant.ui.tune.TuneChoiceRow
+import ai.daylight.assistant.ui.tune.TuneDetail
+import ai.daylight.assistant.ui.tune.TuneModel
+import ai.daylight.assistant.ui.tune.TunePage
+import ai.daylight.assistant.ui.tune.TuneParagraph
+import ai.daylight.assistant.ui.tune.TuneRow
+import ai.daylight.assistant.ui.tune.TuneScreen
+import ai.daylight.assistant.ui.tune.TuneSection
+import ai.daylight.assistant.ui.tune.TuneSlider
+import ai.daylight.assistant.ui.tune.TuneState
+import ai.daylight.assistant.ui.tune.TuneSubpageModel
+import ai.daylight.assistant.ui.tune.TuneTrailing
 import ai.daylight.assistant.voice.FishEngines
 import ai.daylight.assistant.voice.FishVoices
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoiceReplyModels
 import ai.daylight.assistant.voice.VoiceSttModels
-import ai.daylight.assistant.ui.tune.TuneActions
-import ai.daylight.assistant.ui.tune.TuneScreen
-import ai.daylight.assistant.ui.tune.TuneState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
-import kotlin.math.roundToInt
 
 /**
  * The Tune arm (kit settings.png), drawn by [TuneScreen]. It is stateless: [TuneRoute] passes
@@ -226,675 +227,484 @@ fun TuneRoute(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** Text and motion: theme, chat density, text size, animations and the dot background. */
 @Composable
 fun AppearanceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    var fontScale by remember(settings.fontScale) { mutableStateOf(settings.fontScale) }
+    val stops = TuneSubpageModel.FONT_SCALE_STOPS
+    var scaleIndex by remember(settings.fontScale) { mutableIntStateOf(TuneSubpageModel.nearest(stops, settings.fontScale)) }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = { BackBar("Appearance", onBack) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            SettingsGroup(title = "Theme") {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ThemeMode.entries.forEach { mode ->
-                        FilterChip(
-                            selected = mode == settings.themeMode,
-                            onClick = { vm.setTheme(mode) },
-                            label = { Text(mode.displayName()) },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
-                    }
-                }
-            }
+    TunePage("Appearance", onBack) {
+        TuneSection("Theme")
+        ThemeSegments(settings.themeMode, vm::setTheme)
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(
-                title = "Background",
-                description = "The focused Kryzz visual identity, tuned for legibility in light and dark themes."
-            ) {
-                SettingsInfoRow(
-                    icon = Icons.Outlined.Palette,
-                    title = "Obsidian Constellation",
-                    subtitle = "Ink-black depth, restrained stars, and quiet constellation lines"
-                )
-            }
+        TuneSection("Chat density")
+        DotSegments(
+            options = ChatDensity.entries.map {
+                SegmentOption(it.displayName(), tag = "chat_density_${it.name.lowercase(Locale.US)}")
+            },
+            selected = ChatDensity.entries.indexOf(settings.chatDensity).coerceAtLeast(0),
+            onSelect = { vm.setChatDensity(ChatDensity.entries[it]) }
+        )
+        TuneDetail("Spacing between messages and around the reply line. Text size stays the same.", Modifier.padding(top = 8.dp))
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(
-                title = "Chat density",
-                description = "Adjust message spacing and composer padding without changing text size."
-            ) {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ChatDensity.entries.forEach { density ->
-                        FilterChip(
-                            selected = density == settings.chatDensity,
-                            onClick = { vm.setChatDensity(density) },
-                            label = { Text(density.displayName()) },
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("chat_density_${density.name.lowercase()}")
-                        )
-                    }
-                }
-            }
+        val scale = stops[scaleIndex]
+        TuneSlider(
+            title = "Text size",
+            value = TuneSubpageModel.percent(scale),
+            spoken = "${TuneSubpageModel.percent(scale)} text size",
+            index = scaleIndex,
+            count = stops.size,
+            onIndexChange = { scaleIndex = it },
+            onFinished = { vm.setFontScale(stops[scaleIndex]) },
+            caption = "Scales text across Kryzz AI and keeps spacing phone-safe."
+        )
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(title = "Motion") {
-                SettingSwitch(
-                    title = "Animations",
-                    subtitle = "Use short transitions and subtle signal motion. Disable for a still interface.",
-                    checked = settings.animationsEnabled,
-                    onChecked = vm::setAnimationsEnabled,
-                    modifier = Modifier.testTag("animations_toggle")
-                )
-            }
-
-            SettingsGroup(title = "Text size") {
-                SliderSetting(
-                    title = "Font size · ${(fontScale * 100).roundToInt()}%",
-                    subtitle = "Scales text throughout Kryzz AI while preserving phone-safe spacing.",
-                    value = fontScale,
-                    onValueChange = { fontScale = it },
-                    onValueChangeFinished = { vm.setFontScale(fontScale) },
-                    valueRange = 0.85f..1.35f,
-                    steps = 9
-                )
-            }
-        }
+        TuneSection("Motion and background")
+        TuneRow(
+            R.drawable.ic_kz_bolt, "Animations",
+            if (settings.animationsEnabled) "Short transitions and LED motion" else "Everything stays still",
+            TuneTrailing.Switch(settings.animationsEnabled, vm::setAnimationsEnabled),
+            modifier = Modifier.testTag("animations_toggle")
+        )
+        TuneRow(
+            R.drawable.ic_kz_grid, "Dot background", "Talk, Run and Home",
+            TuneTrailing.Switch(settings.dotBackground, vm::setDotBackground)
+        )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** The four keys Kryzz can hold. Each is tested with one small call before it is saved. */
+private enum class KeyProvider(val id: String, val label: String, val detail: String) {
+    OPENROUTER("openrouter", "OpenRouter", "Chat, image, video, audio and speech models."),
+    MINIMAX("minimax", "MiniMax", "Chat, image, video and audio from MiniMax."),
+    PARALLEL("parallel", "Parallel Search", "Web search for Run and research."),
+    FISH("fish", "Fish Audio", "The voice of spoken replies."),
+}
+
+/**
+ * Keys (kit §8 KeyEditor): the chat provider, then one row per key. A stored key shows as
+ * dots and its last four characters with an ENCRYPTED tag; the key itself never leaves the
+ * Keystore. Opening a row shows the field for a new key with an eye toggle.
+ */
 @Composable
 fun ApiSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val tails by vm.keyTails.collectAsStateWithLifecycle()
     val open by vm.openRouterKey.collectAsStateWithLifecycle()
     val parallel by vm.parallelKey.collectAsStateWithLifecycle()
     val minimax by vm.minimaxKey.collectAsStateWithLifecycle()
+    val fish by vm.fishKey.collectAsStateWithLifecycle()
     val openState by vm.openRouterCheck.collectAsStateWithLifecycle()
     val parallelState by vm.parallelCheck.collectAsStateWithLifecycle()
     val minimaxState by vm.minimaxCheck.collectAsStateWithLifecycle()
-    val fish by vm.fishKey.collectAsStateWithLifecycle()
     val fishState by vm.fishCheck.collectAsStateWithLifecycle()
+    // Re-read the key endings on entry and after every check (a saved key changes them).
+    LaunchedEffect(openState, parallelState, minimaxState, fishState) { vm.refreshKeyTails() }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = { BackBar("API setup", onBack) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            ProviderNotice()
-
-            SettingsGroup(
-                title = "Chat provider",
-                description = "Controls which provider supplies chat, agent, research, and media model choices."
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ChatProvider.entries.forEach { provider ->
-                            FilterChip(
-                                selected = settings.chatProvider == provider,
-                                onClick = { vm.setChatProvider(provider) },
-                                label = { Text(provider.label) },
-                                modifier = Modifier.heightIn(min = 48.dp)
-                            )
-                        }
-                    }
-                    Text(
-                        "Changing provider refreshes the catalog and resets unavailable model selections to valid choices.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            val apiProviders = remember {
-                listOf(
-                    ApiProviderEntry("openrouter", "OpenRouter", "LLM, image, video, audio, and TTS routing"),
-                    ApiProviderEntry("minimax", "MiniMax", "Image, video, and audio generation"),
-                    ApiProviderEntry("parallel", "Parallel Search", "Web search for research agent"),
-                    ApiProviderEntry("fish", "Fish Audio", "Voice synthesis for spoken replies")
-                )
-            }
-            var selectedProvider by rememberSaveable { mutableStateOf("openrouter") }
-            var providerMenuExpanded by remember { mutableStateOf(false) }
-            val selected = apiProviders.first { it.id == selectedProvider }
-            LaunchedEffect(settings.chatProvider) {
-                if (selectedProvider == "openrouter" || selectedProvider == "minimax") {
-                    selectedProvider = settings.chatProvider.name.lowercase()
-                }
-            }
-
-            SettingsGroup(title = "Provider") {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    ExposedDropdownMenuBox(
-                        expanded = providerMenuExpanded,
-                        onExpandedChange = { providerMenuExpanded = it },
-                        modifier = Modifier.fillMaxWidth().testTag("api_provider_picker")
-                    ) {
-                        OutlinedTextField(
-                            value = selected.label,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Select provider") },
-                            supportingText = { Text(selected.detail) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerMenuExpanded) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor(),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = providerMenuExpanded,
-                            onDismissRequest = { providerMenuExpanded = false }
-                        ) {
-                            apiProviders.forEach { provider ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column(Modifier.padding(end = 8.dp)) {
-                                            Text(provider.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(
-                                                provider.detail,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    },
-                                    leadingIcon = if (provider.id == selectedProvider) {
-                                        { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
-                                    } else null,
-                                    onClick = {
-                                        selectedProvider = provider.id
-                                        providerMenuExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            when (selectedProvider) {
-                "openrouter" -> KeyEditor(
-                    title = "OpenRouter",
-                    state = if (vm.hasOpenRouter()) "A key is stored securely" else "No key stored",
-                    value = open,
-                    onValue = { vm.openRouterKey.value = it },
-                    check = openState,
-                    onTest = vm::saveAndTestOpenRouter
-                )
-                "minimax" -> KeyEditor(
-                    title = "MiniMax",
-                    state = if (vm.hasMinimax()) "A key is stored securely" else "No key stored",
-                    value = minimax,
-                    onValue = { vm.minimaxKey.value = it },
-                    check = minimaxState,
-                    onTest = vm::saveAndTestMiniMax
-                )
-                "parallel" -> KeyEditor(
-                    title = "Parallel Search",
-                    state = if (vm.hasParallel()) "A key is stored securely" else "No key stored",
-                    value = parallel,
-                    onValue = { vm.parallelKey.value = it },
-                    check = parallelState,
-                    onTest = vm::saveAndTestParallel
-                )
-                "fish" -> KeyEditor(
-                    title = "Fish Audio",
-                    state = if (vm.hasFish()) "A key is stored securely" else "No key stored",
-                    value = fish,
-                    onValue = { vm.fishKey.value = it },
-                    check = fishState,
-                    onTest = vm::saveAndTestFish
-                )
-            }
-            SettingsGroup(title = "Credential privacy") {
-                Text(
-                    text = "Testing a provider performs one small API call. Credentials are encrypted on-device, excluded from backup, and never sent to the other provider.",
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+    var expanded by rememberSaveable { mutableStateOf(KeyProvider.OPENROUTER.id) }
+    LaunchedEffect(settings.chatProvider) {
+        if (expanded == KeyProvider.OPENROUTER.id || expanded == KeyProvider.MINIMAX.id) {
+            expanded = settings.chatProvider.name.lowercase(Locale.US)
         }
     }
-}
 
-private data class ApiProviderEntry(val id: String, val label: String, val detail: String)
+    TunePage("Keys", onBack) {
+        DotNotice(
+            "Chat requests go to your chosen provider (OpenRouter or MiniMax) and the model's own provider. Web search goes separately to Parallel. Voice chat always uses OpenRouter. Check each provider's terms.",
+            Modifier.padding(bottom = 24.dp),
+            icon = R.drawable.ic_kz_shield
+        )
+        TuneSection("Chat provider")
+        DotSegments(
+            options = ChatProvider.entries.map { SegmentOption(it.label) },
+            selected = ChatProvider.entries.indexOf(settings.chatProvider).coerceAtLeast(0),
+            onSelect = { vm.setChatProvider(ChatProvider.entries[it]) }
+        )
+        TuneDetail(
+            "Who answers in Talk and Run. Switching refreshes the model catalog and resets models the new provider lacks.",
+            Modifier.padding(top = 8.dp)
+        )
+        Spacer(Modifier.height(28.dp))
+
+        TuneSection("Keys")
+        KeyProvider.entries.forEach { provider ->
+            val stored = when (provider) {
+                KeyProvider.OPENROUTER -> vm.hasOpenRouter()
+                KeyProvider.MINIMAX -> vm.hasMinimax()
+                KeyProvider.PARALLEL -> vm.hasParallel()
+                KeyProvider.FISH -> vm.hasFish()
+            }
+            val tail = when (provider) {
+                KeyProvider.OPENROUTER -> tails.openRouterTail
+                KeyProvider.MINIMAX -> tails.minimaxTail
+                KeyProvider.PARALLEL -> tails.parallelTail
+                KeyProvider.FISH -> tails.fishTail
+            }
+            KeyEditor(
+                provider = provider,
+                stored = stored,
+                tail = tail,
+                expanded = expanded == provider.id,
+                onToggle = { expanded = if (expanded == provider.id) "" else provider.id },
+                value = when (provider) {
+                    KeyProvider.OPENROUTER -> open
+                    KeyProvider.MINIMAX -> minimax
+                    KeyProvider.PARALLEL -> parallel
+                    KeyProvider.FISH -> fish
+                },
+                onValue = {
+                    when (provider) {
+                        KeyProvider.OPENROUTER -> vm.openRouterKey.value = it
+                        KeyProvider.MINIMAX -> vm.minimaxKey.value = it
+                        KeyProvider.PARALLEL -> vm.parallelKey.value = it
+                        KeyProvider.FISH -> vm.fishKey.value = it
+                    }
+                },
+                check = when (provider) {
+                    KeyProvider.OPENROUTER -> openState
+                    KeyProvider.MINIMAX -> minimaxState
+                    KeyProvider.PARALLEL -> parallelState
+                    KeyProvider.FISH -> fishState
+                },
+                onTest = {
+                    when (provider) {
+                        KeyProvider.OPENROUTER -> vm.saveAndTestOpenRouter()
+                        KeyProvider.MINIMAX -> vm.saveAndTestMiniMax()
+                        KeyProvider.PARALLEL -> vm.saveAndTestParallel()
+                        KeyProvider.FISH -> vm.saveAndTestFish()
+                    }
+                }
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+        DotNotice(
+            "Testing a key makes one small call to that provider. Keys are encrypted with Android Keystore, left out of backups, and never sent to another provider.",
+            icon = R.drawable.ic_kz_lock
+        )
+    }
+}
 
 /** Short spoken expressions used to audition a voice beyond a plain "hello" preview. */
 private val voiceExpressions = listOf("Mmm", "Oh", "Hmm", "Ah", "Wow", "Hmm, okay")
 
 @Composable
 private fun KeyEditor(
-    title: String,
-    state: String,
+    provider: KeyProvider,
+    stored: Boolean,
+    tail: String?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
     value: String,
     onValue: (String) -> Unit,
     check: CheckState,
     onTest: () -> Unit
 ) {
-    SettingsGroup(title = title, description = state) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValue,
-                label = { Text("New API key") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    autoCorrectEnabled = false,
-                    imeAction = ImeAction.Done
-                ),
-                modifier = Modifier.fillMaxWidth()
+    val c = DotTheme.c
+    TuneRow(
+        R.drawable.ic_kz_key,
+        provider.label,
+        TuneSubpageModel.keyRowCaption(stored, tail),
+        TuneTrailing.Expand(expanded),
+        onClick = onToggle
+    )
+    if (!expanded) return
+    var reveal by rememberSaveable(provider) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(start = 34.dp, bottom = 20.dp)) {
+        Text(provider.detail, style = DotType.BodySmall, color = c.textTertiary)
+        Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                TuneSubpageModel.maskedKey(stored, tail) ?: "No key stored",
+                Modifier.weight(1f),
+                style = DotType.Data.copy(fontSize = 15.sp, lineHeight = 20.sp),
+                color = if (stored) c.textPrimary else c.textTertiary
             )
-            CheckLabel(check)
-            Button(
-                onClick = onTest,
-                enabled = value.isNotBlank() && check !is CheckState.Checking,
-                modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)
-            ) {
-                if (check is CheckState.Checking) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("Test & save")
-                }
-            }
+            if (stored) DotTag("Encrypted", icon = R.drawable.ic_kz_lock)
+        }
+        DotField(
+            value = value,
+            onValueChange = onValue,
+            label = if (stored) "Replace key" else "New key",
+            placeholder = "Paste your ${provider.label} key",
+            visualTransformation = if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                autoCorrectEnabled = false,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(onDone = { if (value.isNotBlank() && check !is CheckState.Checking) onTest() }),
+            trailing = {
+                DotIconButton(
+                    if (reveal) R.drawable.ic_kz_eye_off else R.drawable.ic_kz_eye,
+                    if (reveal) "Hide key" else "Show key",
+                    { reveal = !reveal },
+                    tint = c.textSecondary,
+                    iconSize = 20.dp
+                )
+            },
+            fieldModifier = Modifier.testTag("api_key_${provider.id}")
+        )
+        CheckLine(check)
+        Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
+            DotPillButton(
+                "Test and save",
+                onTest,
+                enabled = value.isNotBlank(),
+                busy = check is CheckState.Checking
+            )
         }
     }
 }
 
+/** The result of a key or voice check: white when it worked, red when it failed. */
 @Composable
-private fun CheckLabel(check: CheckState) {
+private fun CheckLine(check: CheckState, modifier: Modifier = Modifier) {
+    val c = DotTheme.c
     val text = when (check) {
         CheckState.Idle -> ""
         CheckState.Checking -> "Checking…"
         is CheckState.Success -> check.message
         is CheckState.Error -> check.message
     }
-    if (text.isNotEmpty()) {
-        Text(
-            text = text,
-            color = if (check is CheckState.Error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.bodySmall
-        )
+    if (text.isEmpty()) return
+    val colour = when (check) {
+        is CheckState.Error -> c.error
+        is CheckState.Success -> c.success
+        else -> c.textTertiary
+    }
+    Row(modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.Top) {
+        when (check) {
+            is CheckState.Error -> R.drawable.ic_kz_warning
+            is CheckState.Success -> R.drawable.ic_kz_check
+            else -> null
+        }?.let {
+            Icon(painterResource(it), null, Modifier.padding(top = 1.dp, end = 8.dp).size(16.dp), tint = colour)
+        }
+        Text(text, style = DotType.BodySmall, color = colour)
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/**
+ * Voice: how voice chat works, the Fish voice and pace with a preview, the engine, emotion
+ * tags and streaming, the transcriber, and the model that writes spoken replies.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
+    val c = DotTheme.c
     val settings by vm.settings.collectAsStateWithLifecycle()
     val voiceTest by vm.voiceTest.collectAsStateWithLifecycle()
     var voiceId by remember(settings.fishVoiceId) { mutableStateOf(settings.fishVoiceId) }
-    var speed by remember(settings.fishSpeed) { mutableStateOf(settings.fishSpeed) }
+    val speeds = TuneSubpageModel.SPEECH_SPEED_STOPS
+    var speedIndex by remember(settings.fishSpeed) { mutableIntStateOf(TuneSubpageModel.nearest(speeds, settings.fishSpeed)) }
+    var showVoices by rememberSaveable { mutableStateOf(false) }
+    var showEngines by rememberSaveable { mutableStateOf(false) }
+    var showCustomVoice by rememberSaveable { mutableStateOf(false) }
+    var customVoiceName by rememberSaveable { mutableStateOf("") }
+    val selectedPreset = FishVoices.presets.firstOrNull { it.referenceId == settings.fishVoiceId }
+    val selectedSaved = settings.fishCustomVoices.firstOrNull { it.referenceId == settings.fishVoiceId }
+    val customSelected = selectedPreset == null && settings.fishVoiceId.isNotBlank()
+    val voiceName = selectedPreset?.name ?: selectedSaved?.name
+        ?: if (customSelected) "Custom voice" else "Choose a voice"
+    val engine = FishEngines.options.firstOrNull { it.id == settings.fishModel } ?: FishEngines.options.first()
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = { BackBar("Voice chat", onBack) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+    TunePage("Voice", onBack) {
+        DotNotice(
+            "In a chat with nothing typed, the send button becomes a microphone. Tap it, speak, and Kryzz answers out loud; your words and the reply still appear in the chat. The transcriber hears you, the reply model answers, and Fish Audio speaks."
+        )
+        Spacer(Modifier.height(28.dp))
+
+        TuneSection("Voice")
+        TuneRow(
+            R.drawable.ic_kz_user, "Voice", voiceName,
+            onClick = { showVoices = true },
+            modifier = Modifier.testTag("voice_picker")
+        )
+        if (showCustomVoice || customSelected) {
+            Spacer(Modifier.height(12.dp))
+            DotField(
+                value = voiceId,
+                onValueChange = {
+                    voiceId = it
+                    vm.setFishVoiceId(it)
+                },
+                label = "Voice ID",
+                placeholder = "Paste a voice ID from Fish Audio",
+                supporting = "Any voice model ID from the Fish Audio library."
+            )
+            Spacer(Modifier.height(14.dp))
+            DotField(
+                value = customVoiceName,
+                onValueChange = { customVoiceName = it },
+                label = "Voice name",
+                placeholder = "My voice",
+                supporting = "Save it under a name to keep it in the voice list."
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.End) {
+                DotPillButton(
+                    "Save voice",
+                    {
+                        vm.saveFishCustomVoice(customVoiceName, voiceId)
+                        customVoiceName = ""
+                    },
+                    style = DotButtonStyle.Ghost,
+                    enabled = customVoiceName.isNotBlank() && voiceId.isNotBlank()
+                )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        val speed = speeds[speedIndex]
+        TuneSlider(
+            title = "Speaking speed",
+            value = TuneSubpageModel.speed(speed),
+            spoken = TuneSubpageModel.speedSpoken(speed),
+            index = speedIndex,
+            count = speeds.size,
+            onIndexChange = { speedIndex = it },
+            onFinished = { vm.setFishSpeed(speeds[speedIndex]) },
+            caption = "1.0X is the voice's natural pace."
+        )
+        Row(Modifier.fillMaxWidth().padding(top = 16.dp)) {
+            DotPillButton(
+                "Preview voice",
+                vm::testVoice,
+                style = DotButtonStyle.White,
+                busy = voiceTest is CheckState.Checking,
+                icon = R.drawable.ic_kz_play
+            )
+        }
+        CheckLine(voiceTest)
+        Spacer(Modifier.height(20.dp))
+        TuneSection("Try expressions")
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            SettingsGroup(
-                title = "How it works",
-                description = "In a chat with nothing typed, the send button becomes a microphone. Tap it, speak, and Kryzz answers out loud — your words and the reply still appear in the chat as text."
-            ) {
-                Text(
-                    text = "Pipeline: the transcriber you pick hears you · a fast or normal model replies · Fish Audio renders the spoken reply.",
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            voiceExpressions.forEach { line ->
+                DotPill(
+                    line,
+                    selected = false,
+                    onClick = { vm.playExpression(line) },
+                    role = Role.Button,
+                    modifier = Modifier.testTag("voice_expression_${line}")
                 )
             }
+        }
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(
-                title = "Voice",
-                description = "The voice model and pace used for spoken replies."
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    var voiceMenuExpanded by remember { mutableStateOf(false) }
-                    var showCustomVoice by remember { mutableStateOf(false) }
-                    var customVoiceName by remember { mutableStateOf("") }
-                    val selectedPreset = FishVoices.presets.firstOrNull { it.referenceId == settings.fishVoiceId }
-                    val selectedSaved = settings.fishCustomVoices.firstOrNull { it.referenceId == settings.fishVoiceId }
-                    val customSelected = selectedPreset == null && settings.fishVoiceId.isNotBlank()
-                    ExposedDropdownMenuBox(
-                        expanded = voiceMenuExpanded,
-                        onExpandedChange = { voiceMenuExpanded = it },
-                        modifier = Modifier.fillMaxWidth().testTag("voice_picker")
-                    ) {
-                        OutlinedTextField(
-                            value = selectedPreset?.name ?: selectedSaved?.name
-                                ?: if (customSelected) "Custom (${settings.fishVoiceId})" else "",
-                            onValueChange = {},
-                            readOnly = true,
-                            placeholder = { Text("Choose a voice") },
-                            label = { Text("Voice") },
-                            supportingText = { Text("Spoken replies use the voice you pick here.") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = voiceMenuExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor(),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = voiceMenuExpanded,
-                            onDismissRequest = { voiceMenuExpanded = false }
-                        ) {
-                            FishVoices.presets.forEach { voice ->
-                                DropdownMenuItem(
-                                    text = { Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    leadingIcon = if (voice.referenceId == settings.fishVoiceId) {
-                                        { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
-                                    } else null,
-                                    onClick = {
-                                        vm.setFishVoiceId(voice.referenceId)
-                                        voiceMenuExpanded = false
-                                    }
-                                )
-                            }
-                            if (settings.fishCustomVoices.isNotEmpty()) {
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                settings.fishCustomVoices.forEach { voice ->
-                                    DropdownMenuItem(
-                                        text = { Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                        leadingIcon = if (voice.referenceId == settings.fishVoiceId) {
-                                            { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
-                                        } else null,
-                                        trailingIcon = {
-                                            IconButton(
-                                                onClick = { vm.deleteFishCustomVoice(voice.referenceId) },
-                                                modifier = Modifier.size(32.dp)
-                                            ) {
-                                                Icon(Icons.Outlined.DeleteForever, "Delete saved voice", Modifier.size(16.dp))
-                                            }
-                                        },
-                                        onClick = {
-                                            vm.setFishVoiceId(voice.referenceId)
-                                            voiceMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            DropdownMenuItem(
-                                text = { Text("Custom voice ID…") },
-                                onClick = {
-                                    showCustomVoice = true
-                                    voiceMenuExpanded = false
-                                }
-                            )
-                        }
-                    }
-                    if (showCustomVoice || customSelected) {
-                        OutlinedTextField(
-                            value = voiceId,
-                            onValueChange = {
-                                voiceId = it
-                                vm.setFishVoiceId(it)
-                            },
-                            label = { Text("Voice ID") },
-                            placeholder = { Text("Paste here the voice ID from fishaudio") },
-                            supportingText = { Text("Paste any voice model ID from the Fish Audio library.") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = customVoiceName,
-                            onValueChange = { customVoiceName = it },
-                            label = { Text("Voice name") },
-                            supportingText = { Text("Save this voice under a name to keep it in the list above.") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Button(
-                            onClick = {
-                                vm.saveFishCustomVoice(customVoiceName, voiceId)
-                                customVoiceName = ""
-                            },
-                            enabled = customVoiceName.isNotBlank() && voiceId.isNotBlank(),
-                            modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)
-                        ) {
-                            Text("Save voice")
-                        }
-                    }
-                    SliderSetting(
-                        title = "Speaking speed · ${String.format(Locale.US, "%.1f", speed)}×",
-                        subtitle = "Pace of the spoken reply; 1.0 matches the voice's natural speed.",
-                        value = speed,
-                        onValueChange = { speed = it },
-                        onValueChangeFinished = { vm.setFishSpeed(speed) },
-                        valueRange = 0.5f..2f,
-                        steps = 14
-                    )
-                    Button(
-                        onClick = vm::testVoice,
-                        enabled = voiceTest !is CheckState.Checking,
-                        modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)
-                    ) {
-                        if (voiceTest is CheckState.Checking) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text("Preview voice")
-                        }
-                    }
-                    CheckLabel(voiceTest)
-                    // Quick expression previews: audition how the selected voice sounds
-                    // saying the small interjections that make a voice chat feel human, so
-                    // the user doesn't have to wait for a full reply to judge the voice.
-                    Text(
-                        text = "Try expressions",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        voiceExpressions.forEach { line ->
-                            FilterChip(
-                                selected = false,
-                                onClick = { vm.playExpression(line) },
-                                label = { Text(line) },
-                                modifier = Modifier.heightIn(min = 48.dp).testTag("voice_expression_${line}")
-                            )
-                        }
-                    }
-                }
-            }
+        TuneSection("Speech")
+        TuneRow(
+            R.drawable.ic_kz_voice_wave, "Fish Audio engine", "${engine.name}, ${engine.detail}",
+            onClick = { showEngines = true },
+            modifier = Modifier.testTag("fish_model_picker")
+        )
+        TuneRow(
+            R.drawable.ic_kz_quote, "Emotions in replies",
+            detail = "Tags like [happy] or [calm] shape spoken answers. The voice model tags a sentence when a feeling is clear.",
+            trailing = TuneTrailing.Switch(settings.voiceEmotions, vm::setVoiceEmotions),
+            modifier = Modifier.testTag("voice_emotions_toggle")
+        )
+        TuneRow(
+            R.drawable.ic_kz_bolt, "Stream Fish replies",
+            detail = "On: play the reply as Fish makes it. Off: wait for the whole MP3, which is more reliable.",
+            trailing = TuneTrailing.Switch(settings.voiceFishStreaming, vm::setVoiceFishStreaming),
+            modifier = Modifier.testTag("voice_fish_streaming_toggle")
+        )
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(
-                title = "Fish Audio engine",
-                description = "The engine version behind the spoken replies; the current free tier is included."
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    var engineMenuExpanded by remember { mutableStateOf(false) }
-                    val selectedEngine = FishEngines.options.firstOrNull { it.id == settings.fishModel }
-                        ?: FishEngines.options.first()
-                    ExposedDropdownMenuBox(
-                        expanded = engineMenuExpanded,
-                        onExpandedChange = { engineMenuExpanded = it },
-                        modifier = Modifier.fillMaxWidth().testTag("fish_model_picker")
-                    ) {
-                        OutlinedTextField(
-                            value = "${selectedEngine.name} · ${selectedEngine.detail}",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Engine") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = engineMenuExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor(),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = engineMenuExpanded,
-                            onDismissRequest = { engineMenuExpanded = false }
-                        ) {
-                            FishEngines.options.forEach { engine ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column(Modifier.padding(end = 8.dp)) {
-                                            Text(engine.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(
-                                                engine.detail,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    },
-                                    leadingIcon = if (engine.id == settings.fishModel) {
-                                        { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
-                                    } else null,
-                                    onClick = {
-                                        vm.setFishModel(engine.id)
-                                        engineMenuExpanded = false
-                                    }
-                                )
-                            }
-                        }
+        TuneSection("Transcriber")
+        TuneDetail("Which model hears you. All run through OpenRouter.", Modifier.padding(bottom = 10.dp))
+        VoiceSttModels.options.forEach { choice ->
+            TuneChoiceRow(
+                title = choice.name,
+                detail = choice.detail,
+                selected = settings.voiceSttModel == choice.id,
+                onClick = { vm.setVoiceSttModel(choice.id) },
+                modifier = Modifier.testTag(
+                    when (choice.id) {
+                        VoiceConfig.GROK_STT_MODEL -> "stt_grok"
+                        VoiceConfig.NEMOTRON_STT_MODEL -> "stt_nemotron"
+                        else -> "stt_whisper"
                     }
-                }
-            }
-            SettingsGroup(
-                title = "Emotions",
-                description = "Whether spoken replies carry Fish emotion tags. Official tags such as [happy] stay in the spoken text; they are no longer rewritten to [calm]."
-            ) {
-                SettingSwitch(
-                    title = "Emotions in replies",
-                    subtitle = "Tagged speech such as [happy] or [calm] is applied to spoken answers; the voice model is told to tag sentences when a feeling is clear.",
-                    checked = settings.voiceEmotions,
-                    onChecked = vm::setVoiceEmotions,
-                    modifier = Modifier.testTag("voice_emotions_toggle")
                 )
-            }
-            SettingsGroup(
-                title = "Fish streaming",
-                description = "Starts the reply as soon as the first PCM arrives. Turn this off to wait for a complete MP3."
-            ) {
-                SettingSwitch(
-                    title = "Stream Fish replies",
-                    subtitle = "On: play PCM as Fish generates it. Off: wait for the full MP3 (more reliable). Applies only to Fish Audio.",
-                    checked = settings.voiceFishStreaming,
-                    onChecked = vm::setVoiceFishStreaming,
-                    modifier = Modifier.testTag("voice_fish_streaming_toggle")
-                )
-            }
-            SettingsGroup(
-                title = "Music production",
-                description = "OpenRouter audio generation model used when the Music agent capability is selected."
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    VoiceSttModels.options.forEachIndexed { index, choice ->
-                        SelectionSettingRow(
-                            title = choice.name,
-                            subtitle = choice.detail,
-                            selected = settings.voiceSttModel == choice.id,
-                            onClick = { vm.setVoiceSttModel(choice.id) },
-                            modifier = Modifier.testTag(
-                                when (choice.id) {
-                                    VoiceConfig.GROK_STT_MODEL -> "stt_grok"
-                                    VoiceConfig.NEMOTRON_STT_MODEL -> "stt_nemotron"
-                                    else -> "stt_whisper"
-                                }
-                            )
-                        )
-                        if (index != VoiceSttModels.options.lastIndex) SettingsDivider()
-                    }
-                }
-            }
-            SettingsGroup(
-                title = "Reply model",
-                description = "Which model writes the spoken answer. OpenRouter always routes the request to the provider with the lowest latency."
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    VoiceReplyModels.fast.forEach { choice ->
-                        SelectionSettingRow(
-                            title = choice.name,
-                            subtitle = choice.detail,
-                            selected = settings.voiceReplyModel == choice.id,
-                            onClick = { vm.setVoiceReplyModel(choice.id) }
-                        )
-                        SettingsDivider()
-                    }
-                    SelectionSettingRow(
-                        title = "My everyday chat model",
-                        subtitle = "Uses your Default models → Chat choice",
-                        selected = settings.voiceReplyModel.isBlank(),
-                        onClick = { vm.setVoiceReplyModel("") }
-                    )
-                }
-            }
+            )
+        }
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(title = "Privacy note") {
-                Text(
-                    text = "Voice messages are recorded only while the bubble is open, sent to OpenRouter (the transcriber you picked), and deleted from this phone afterwards. Reply audio is generated by Fish Audio and deleted after playback. No recordings are stored in chat history.",
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        TuneSection("Reply model")
+        TuneDetail(
+            "Which model writes the spoken answer. OpenRouter routes it to the fastest provider.",
+            Modifier.padding(bottom = 10.dp)
+        )
+        VoiceReplyModels.fast.forEach { choice ->
+            TuneChoiceRow(
+                title = choice.name,
+                detail = choice.detail,
+                selected = settings.voiceReplyModel == choice.id,
+                onClick = { vm.setVoiceReplyModel(choice.id) }
+            )
+        }
+        TuneChoiceRow(
+            title = "My everyday chat model",
+            detail = "Uses your chat model choice",
+            selected = settings.voiceReplyModel.isBlank(),
+            onClick = { vm.setVoiceReplyModel("") }
+        )
+        Spacer(Modifier.height(28.dp))
+        DotNotice(
+            "Your voice is recorded only while voice chat is open, sent to OpenRouter for the transcriber you picked, then deleted from this phone. Fish Audio makes the reply audio, which is deleted after playback. No recordings are kept in chat history.",
+            icon = R.drawable.ic_kz_shield
+        )
+    }
+
+    if (showVoices) {
+        DotSheet(onDismiss = { showVoices = false }) {
+            SheetLabel("Voice")
+            FishVoices.presets.forEach { voice ->
+                TuneChoiceRow(voice.name, null, voice.referenceId == settings.fishVoiceId, {
+                    vm.setFishVoiceId(voice.referenceId)
+                    showVoices = false
+                })
+            }
+            settings.fishCustomVoices.forEach { voice ->
+                TuneChoiceRow(
+                    voice.name, "Saved voice", voice.referenceId == settings.fishVoiceId,
+                    onClick = {
+                        vm.setFishVoiceId(voice.referenceId)
+                        showVoices = false
+                    },
+                    trailing = {
+                        DotIconButton(
+                            R.drawable.ic_kz_trash, "Delete saved voice ${voice.name}",
+                            { vm.deleteFishCustomVoice(voice.referenceId) },
+                            tint = c.textTertiary, iconSize = 18.dp
+                        )
+                    }
                 )
+            }
+            OptionRow(R.drawable.ic_kz_edit, "Custom voice ID", onClick = {
+                showCustomVoice = true
+                showVoices = false
+            })
+        }
+    }
+    if (showEngines) {
+        DotSheet(onDismiss = { showEngines = false }) {
+            SheetLabel("Fish Audio engine")
+            FishEngines.options.forEach { option ->
+                TuneChoiceRow(option.name, option.detail, option.id == settings.fishModel, {
+                    vm.setFishModel(option.id)
+                    showEngines = false
+                })
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Persona: the preset that shapes Kryzz's system instruction, or your own words. */
 @Composable
 fun PersonaSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -905,53 +715,39 @@ fun PersonaSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         selected = settings.presetId
         custom = settings.customPrompt
     }
+    val changed = selected != settings.presetId || (selected == "custom" && custom != settings.customPrompt)
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = { BackBar("Agent & persona", onBack) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            SettingsGroup(
-                title = "Assistant behavior",
-                description = "Presets change only the system instruction. They never expose credentials or bypass confirmation for external actions."
-            ) {
-                AssistantPreset.all.forEachIndexed { index, preset ->
-                    SelectionSettingRow(
-                        title = preset.title,
-                        subtitle = presetDescription(preset.id),
-                        selected = selected == preset.id,
-                        onClick = { selected = preset.id }
-                    )
-                    if (index != AssistantPreset.all.lastIndex) SettingsDivider()
-                }
-            }
-
-            if (selected == "custom") {
-                SettingsGroup(title = "Custom instructions") {
-                    OutlinedTextField(
-                        value = custom,
-                        onValueChange = { custom = it },
-                        label = { Text("Custom system instruction") },
-                        minLines = 5,
-                        modifier = Modifier.fillMaxWidth().padding(14.dp)
-                    )
-                }
-            }
-
-            Button(
-                onClick = { vm.setPersona(selected, custom) },
-                enabled = selected != "custom" || custom.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            ) {
-                Text("Save persona")
-            }
+    TunePage("Persona", onBack) {
+        TuneSection("How Kryzz answers")
+        TuneDetail(
+            "A preset changes only the system instruction. It never shows your keys or skips a confirmation for outside actions.",
+            Modifier.padding(bottom = 10.dp)
+        )
+        AssistantPreset.all.forEach { preset ->
+            TuneChoiceRow(
+                title = preset.title,
+                detail = presetDescription(preset.id),
+                selected = selected == preset.id,
+                onClick = { selected = preset.id }
+            )
+        }
+        if (selected == "custom") {
+            Spacer(Modifier.height(16.dp))
+            DotField(
+                value = custom,
+                onValueChange = { custom = it },
+                label = "Custom instructions",
+                placeholder = "Tone, priorities, how long answers should be",
+                singleLine = false,
+                minLines = 5
+            )
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.End) {
+            DotPillButton(
+                if (changed) "Save persona" else "Saved",
+                { vm.setPersona(selected, custom) },
+                enabled = changed && (selected != "custom" || custom.isNotBlank())
+            )
         }
     }
 }
@@ -966,452 +762,185 @@ private fun presetDescription(id: String): String? = when (id) {
     else -> null
 }
 
-/** v5.9: cost cap choices in US cents; 0 is Off. */
-private val costCapOptionsCents = listOf(0, 10, 25, 50, 100, 200)
-
-private fun costCapLabel(cents: Int): String =
-    if (cents <= 0) "Off" else "$" + String.format(java.util.Locale.US, "%.2f", cents / 100.0)
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/**
+ * Search and run limits: web search and how much it reads, the thinking mode, the step
+ * budget, the per-run cost cap (the same 24 dots as Tune) and the answer review.
+ */
 @Composable
 fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
+    val c = DotTheme.c
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val charStops = TuneSubpageModel.SEARCH_CHAR_STOPS
+    val budgetStops = TuneSubpageModel.STEP_BUDGET_STOPS
+    var charsIndex by remember(settings.maxSearchChars) {
+        mutableIntStateOf(TuneSubpageModel.nearestInt(charStops, settings.maxSearchChars))
+    }
+    var budgetIndex by remember(settings.stepBudget) {
+        mutableIntStateOf(TuneSubpageModel.nearestInt(budgetStops, settings.stepBudget))
+    }
+    var capIndex by remember(settings.costCapCents) { mutableIntStateOf(TuneModel.capIndex(settings.costCapCents)) }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = { BackBar("Search & tools", onBack) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            SettingsGroup(title = "Web search") {
-                SettingSwitch(
-                    title = "Parallel web search",
-                    subtitle = "Allow the model to request current web information. Search itself does not require confirmation.",
-                    checked = settings.searchEnabled,
-                    onChecked = vm::setSearch
-                )
-            }
+    TunePage("Tools", onBack) {
+        TuneSection("Web search")
+        TuneRow(
+            R.drawable.ic_kz_web, "Parallel web search",
+            detail = "Lets the model look up current information. Searching never needs a confirmation.",
+            trailing = TuneTrailing.Switch(settings.searchEnabled, vm::setSearch)
+        )
+        Spacer(Modifier.height(16.dp))
+        val chars = charStops[charsIndex]
+        TuneSlider(
+            title = "Search context",
+            value = TuneSubpageModel.chars(chars),
+            spoken = "${chars / 1_000} thousand characters",
+            index = charsIndex,
+            count = charStops.size,
+            onIndexChange = { charsIndex = it },
+            onFinished = { vm.setSearchChars(charStops[charsIndex]) },
+            caption = "More context can cover more ground but uses more input tokens.",
+            enabled = settings.searchEnabled
+        )
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(title = "Search context") {
-                SliderSetting(
-                    title = "Maximum context · ${settings.maxSearchChars / 1_000}k characters",
-                    subtitle = "A larger context can improve coverage but consumes more input tokens.",
-                    value = settings.maxSearchChars.toFloat(),
-                    onValueChange = { vm.setSearchChars((it / 1_000).roundToInt() * 1_000) },
-                    valueRange = 2_000f..50_000f,
-                    steps = 47,
-                    enabled = settings.searchEnabled
-                )
-            }
+        TuneSection("Thinking mode")
+        ThinkingModeTiles(settings.agentQuality, vm::setAgentQuality)
+        TuneDetail(
+            settings.agentQuality.summary + " Fast and Max adjust the limits below for Run; a reasoning level you picked for a model always wins.",
+            Modifier.padding(top = 8.dp)
+        )
+        Spacer(Modifier.height(28.dp))
 
-            // v5.10: Agent mode quality preset, also switchable from the Agent composer.
-            SettingsGroup(title = "Agent quality") {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text("Quality preset · ${settings.agentQuality.label}", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        settings.agentQuality.summary + " Fast and Max adjust the limits below for Agent mode; a reasoning level you picked for a model always wins.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    AgentQuality.entries.forEach { quality ->
-                        FilterChip(
-                            selected = quality == settings.agentQuality,
-                            onClick = { vm.setAgentQuality(quality) },
-                            label = { Text(quality.label) },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
-                    }
-                }
-            }
+        val budget = budgetStops[budgetIndex]
+        TuneSlider(
+            title = "Step budget",
+            value = budget.toString(),
+            spoken = "$budget tool rounds",
+            index = budgetIndex,
+            count = budgetStops.size,
+            onIndexChange = { budgetIndex = it },
+            onFinished = { vm.setStepBudget(budgetStops[budgetIndex]) },
+            caption = "Tool rounds one Run turn may take. When they run out, Kryzz answers from what it found."
+        )
+        Spacer(Modifier.height(28.dp))
 
-            SettingsGroup(title = "Agent limits") {
-                SliderSetting(
-                    title = "Step budget · ${settings.stepBudget} tool rounds",
-                    subtitle = "How many rounds of tool use one agent turn may take. When the budget runs out, the agent writes its answer from what it found.",
-                    value = settings.stepBudget.toFloat(),
-                    onValueChange = { vm.setStepBudget(it.roundToInt()) },
-                    valueRange = AgentTurnPolicy.MIN_STEP_BUDGET.toFloat()..AgentTurnPolicy.MAX_STEP_BUDGET.toFloat(),
-                    steps = AgentTurnPolicy.MAX_STEP_BUDGET - AgentTurnPolicy.MIN_STEP_BUDGET - 1
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text("Cost cap per turn", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "Stops tool use once a turn has spent this much and writes the answer. Uses the cost OpenRouter reports; for MiniMax it counts tokens instead.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    costCapOptionsCents.forEach { cents ->
-                        FilterChip(
-                            selected = cents == settings.costCapCents,
-                            onClick = { vm.setCostCapCents(cents) },
-                            label = { Text(costCapLabel(cents)) },
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        )
-                    }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                SettingSwitch(
-                    title = "Review answers before sending",
-                    subtitle = "After research or file work, the agent checks its draft against your request and the sources once, and fixes what it finds.",
-                    checked = settings.reviewAnswers,
-                    onChecked = vm::setReviewAnswers
-                )
-            }
-        }
+        val capCents = TuneModel.capCents(capIndex)
+        TuneSlider(
+            title = "Cost cap per run",
+            value = TuneModel.capValue(capCents),
+            spoken = if (capCents <= 0) "Off" else HomeBoard.capLabel(capCents),
+            index = capIndex,
+            count = TuneModel.CAP_STOPS.size,
+            onIndexChange = { capIndex = it },
+            onFinished = { vm.setCostCapCents(TuneModel.capCents(capIndex)) },
+            caption = "Stops tool use once a turn has spent this much, then answers. Uses the cost OpenRouter reports; MiniMax counts tokens instead."
+        )
+        Spacer(Modifier.height(24.dp))
+        TuneRow(
+            R.drawable.ic_kz_check, "Review answers before sending",
+            detail = "After research or file work, Kryzz checks its draft against your request and the sources once, and fixes what it finds.",
+            trailing = TuneTrailing.Switch(settings.reviewAnswers, vm::setReviewAnswers)
+        )
+        HorizontalDivider(thickness = 1.dp, color = c.surfaceRaised)
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Data and privacy (kit §8): the LOCAL hero, the lock and location switches, what is stored
+ * where, what providers see, and the red Clear all local data row.
+ */
 @Composable
 fun PrivacySettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
+    val c = DotTheme.c
     val settings by vm.settings.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val biometricAvailable = BiometricManager.from(context).canAuthenticate(
-        BiometricManager.Authenticators.BIOMETRIC_WEAK
-    ) == BiometricManager.BIOMETRIC_SUCCESS
+    val biometricAvailable = remember {
+        BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+    }
     var confirmClear by remember { mutableStateOf(false) }
     val locationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> vm.setLocationEnabled(granted) }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = { BackBar("Data, privacy & usage", onBack) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            SettingsGroup(title = "Device security") {
-                SettingSwitch(
-                    title = "Biometric lock",
-                    subtitle = if (biometricAvailable) {
-                        "Require biometric authentication when the app is reopened."
-                    } else {
-                        "No enrolled biometric is available on this device."
-                    },
-                    checked = settings.biometricLock,
-                    onChecked = vm::setBiometric,
-                    enabled = biometricAvailable
-                )
-            }
-
-            SettingsGroup(title = "Location") {
-                SettingSwitch(
-                    title = "Approximate location",
-                    subtitle = if (settings.locationEnabled && settings.locationLabel.isNotBlank()) {
-                        "On · ${settings.locationLabel}. Coarse location gives the assistant regional context."
-                    } else {
-                        "Off by default. Coarse location lets Kryzz answer local questions about your region."
-                    },
-                    checked = settings.locationEnabled,
-                    onChecked = { wanted ->
-                        if (wanted && !vm.hasLocationPermission()) {
-                            locationPermission.launch(android.Manifest.permission.ACCESS_COARSE_LOCATION)
-                        } else {
-                            vm.setLocationEnabled(wanted)
-                        }
-                    }
-                )
-            }
-
-            SettingsGroup(title = "Local-first data") {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "Conversations, reusable skills, citations, token usage, and returned cost are stored in the local Room database. Generated documents, databases, media, and code ZIPs stay in private app storage. Preferences stay in DataStore. API keys are separately encrypted with Android Keystore. Android cloud backup and device transfer are disabled for all app data.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        text = "There is no analytics, advertising identifier, telemetry SDK, or HTTP logging. Conversation exports never include credentials.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-
-            SettingsGroup(title = "Provider usage") {
-                Text(
-                    text = "Token counts and estimated cost appear beneath assistant messages when OpenRouter returns them. To name a new chat, Kryzz also sends up to the first 1,500 characters of its first message through OpenRouter to the low-cost Llama 3.2 1B model using price-first routing; a local title is used if that request is unavailable. Provider dashboards remain the authoritative billing record.",
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-
-            SettingsGroup(title = "Device data") {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { confirmClear = true },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                    ) {
-                        Icon(Icons.Outlined.DeleteForever, contentDescription = null)
-                        Text(" Clear all local data")
-                    }
-                    notice?.let {
-                        Text(
-                            text = it,
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
+    TunePage("Privacy", onBack) {
+        Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 28.dp)) {
+            Icon(painterResource(R.drawable.ic_kz_shield_dot), null, Modifier.size(64.dp), tint = c.textPrimary)
+            Spacer(Modifier.height(18.dp))
+            DotMatrixText("LOCAL", pitch = 4.2.dp, on = c.textPrimary, off = Color.Transparent, contentDescription = "Local")
+            Text(
+                "No telemetry. No analytics. Your keys stay on this device.",
+                Modifier.padding(top = 12.dp),
+                style = DotType.Body,
+                color = c.textSecondary
+            )
         }
+
+        TuneSection("On this phone")
+        TuneRow(
+            R.drawable.ic_kz_lock, "Lock the app", TuneModel.lockCaption(biometricAvailable),
+            TuneTrailing.Switch(settings.biometricLock, vm::setBiometric, enabled = biometricAvailable)
+        )
+        TuneRow(
+            R.drawable.ic_kz_location, "Approximate location",
+            TuneModel.locationCaption(settings.locationEnabled, settings.locationLabel),
+            TuneTrailing.Switch(settings.locationEnabled, { wanted ->
+                if (wanted && !vm.hasLocationPermission()) {
+                    locationPermission.launch(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                } else {
+                    vm.setLocationEnabled(wanted)
+                }
+            }),
+            detail = "Coarse location gives Kryzz your region for local questions. Off by default."
+        )
+        Spacer(Modifier.height(28.dp))
+
+        TuneSection("Where your data lives")
+        TuneParagraph(
+            "Conversations, skills, citations, token counts and returned cost live in the app's local database. Generated documents, databases, media and code ZIPs stay in private app storage, and settings in DataStore. API keys are encrypted separately with Android Keystore. Android cloud backup and device transfer are off for all app data."
+        )
+        TuneParagraph(
+            "There is no analytics, advertising ID, telemetry SDK or HTTP logging. Chat exports never include keys."
+        )
+        Spacer(Modifier.height(12.dp))
+
+        TuneSection("What providers see")
+        TuneParagraph(
+            "Token counts and an estimated cost appear under answers when OpenRouter returns them. To name a new chat, Kryzz sends up to the first 1,500 characters of its first message through OpenRouter to the low-cost Llama 3.2 1B model; if that fails, a local title is used. Your provider's dashboard is the real billing record."
+        )
+        Spacer(Modifier.height(12.dp))
+
+        TuneSection("Device data")
+        HorizontalDivider(thickness = 1.dp, color = c.surfaceRaised)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 52.dp)
+                .clickable(role = Role.Button) { confirmClear = true }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(painterResource(R.drawable.ic_kz_trash), null, Modifier.size(20.dp), tint = c.error)
+            Spacer(Modifier.width(14.dp))
+            Text("Clear all local data", style = DotType.Body.copy(fontSize = 15.sp), color = c.error)
+        }
+        HorizontalDivider(thickness = 1.dp, color = c.surfaceRaised)
+        notice?.let { TuneDetail(it, Modifier.padding(top = 10.dp)) }
     }
 
     if (confirmClear) {
-        AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("Clear all local data?") },
-            text = {
-                Text("This permanently deletes conversations, reusable skills, generated outputs, settings, and both encrypted API credentials from this device.")
+        DotConfirmDialog(
+            title = "Clear all local data?",
+            body = "This permanently deletes conversations, skills, generated files, settings and every stored API key from this phone.",
+            confirm = "Clear everything",
+            destructive = true,
+            onConfirm = {
+                confirmClear = false
+                vm.clearAll()
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmClear = false
-                    vm.clearAll()
-                }) { Text("Clear everything") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClear = false }) { Text("Cancel") }
-            }
+            onDismiss = { confirmClear = false }
         )
     }
 }
 
-@Composable
-private fun SettingsGroup(
-    title: String,
-    description: String? = null,
-    compact: Boolean = false,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp)
-    ) {
-        Text(
-            text = title,
-            modifier = Modifier.padding(start = 4.dp),
-            style = if (compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
-        description?.let {
-            Text(
-                text = it,
-                modifier = Modifier.padding(horizontal = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(if (compact) 16.dp else 20.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = LocalGlassOpacity.current),
-            tonalElevation = 1.dp
-        ) {
-            Column(content = content)
-        }
-    }
-}
-
-@Composable
-private fun SettingsInfoRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp)
-        )
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun SelectionSettingRow(
-    title: String,
-    subtitle: String?,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            subtitle?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SliderSetting(
-    title: String,
-    subtitle: String,
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>,
-    steps: Int,
-    enabled: Boolean = true,
-    onValueChangeFinished: (() -> Unit)? = null
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            enabled = enabled,
-            valueRange = valueRange,
-            steps = steps,
-            onValueChangeFinished = onValueChangeFinished
-        )
-        Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun SettingSwitch(
-    title: String,
-    subtitle: String = "",
-    checked: Boolean,
-    onChecked: (Boolean) -> Unit,
-    enabled: Boolean = true,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Switch,
-                onValueChange = onChecked
-            )
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            if (subtitle.isNotBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-            enabled = enabled
-        )
-    }
-}
-
-@Composable
-private fun SettingsDivider(indented: Boolean = true) {
-    HorizontalDivider(
-        modifier = Modifier.padding(start = if (indented) 52.dp else 0.dp),
-        color = MaterialTheme.colorScheme.outlineVariant
-    )
-}
-
-private fun ThemeMode.displayName(): String = name.lowercase().replaceFirstChar(Char::uppercase)
-
-private fun ChatDensity.displayName(): String = name.lowercase().replaceFirstChar(Char::uppercase)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun BackBar(title: String, onBack: () -> Unit) {
-    TopAppBar(
-        title = { Text(title) },
-        navigationIcon = {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-            }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            navigationIconContentColor = MaterialTheme.colorScheme.onSurface
-        )
-    )
-}
+private fun ChatDensity.displayName(): String = name.lowercase(Locale.US).replaceFirstChar(Char::uppercase)

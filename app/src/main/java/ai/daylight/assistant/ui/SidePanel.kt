@@ -399,6 +399,11 @@ fun KryzzSidePanelHost(
                                         dragging = true
                                     }
                                     if (engaged) {
+                                        // Claim the swipe, so a full-width row under the finger
+                                        // (a Tune row, a board row) does not also take the lift
+                                        // as a tap. Taps check for this on the Final pass, which
+                                        // reaches this parent first.
+                                        ch.consume()
                                         val frameProgress = dragProgress
                                         dragScope.launch {
                                             progress.snapTo(frameProgress)

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kryzz x Nothing-inspired icon. Original artwork. Tint with android:tint / Icon(tint=) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+  <path android:pathData="M5 13a7 7 0 1 0 14 0a7 7 0 1 0 -14 0 M12 13V9.5 M10 3h4 M18.5 6.5l1.5-1.5" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+</vector>

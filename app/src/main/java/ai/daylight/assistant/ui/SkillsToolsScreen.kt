@@ -1,56 +1,26 @@
 package ai.daylight.assistant.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.ManageSearch
-import androidx.compose.material.icons.outlined.Alarm
-import androidx.compose.material.icons.outlined.Calculate
-import androidx.compose.material.icons.outlined.Cloud
-import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.TableChart
-import androidx.compose.material.icons.outlined.Psychology
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,44 +28,61 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.daylight.assistant.R
 import ai.daylight.assistant.data.local.SkillEntity
 import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.domain.StarterSkills
+import ai.daylight.assistant.ui.dot.DotConfirmDialog
+import ai.daylight.assistant.ui.dot.DotIconButton
+import ai.daylight.assistant.ui.dot.DotTag
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.effects.DotToggle
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import ai.daylight.assistant.ui.tune.TuneDetail
+import ai.daylight.assistant.ui.tune.TunePage
+import ai.daylight.assistant.ui.tune.TuneRow
+import ai.daylight.assistant.ui.tune.TuneSection
+import ai.daylight.assistant.ui.tune.TuneTrailing
 
-private data class BuiltInTool(val capability: AgentCapability, val description: String, val icon: ImageVector)
+private data class BuiltInTool(val capability: AgentCapability, val description: String, @DrawableRes val icon: Int)
 
 private val builtInTools = listOf(
-    BuiltInTool(AgentCapability.DEEP_RESEARCH, "Two related search passes with session continuity, source cards, and grounded synthesis.", Icons.AutoMirrored.Outlined.ManageSearch),
-    BuiltInTool(AgentCapability.WIDE_SEARCH, "Scan broadly across several query angles and cite every time-sensitive claim.", Icons.Outlined.Public),
-    BuiltInTool(AgentCapability.SKILL_MAKER, "Create a reusable local instruction skill and enable it for future agent tasks.", Icons.Outlined.Extension),
-    BuiltInTool(AgentCapability.CODE, "Create a complete multi-file full-stack code project as a local ZIP.", Icons.Outlined.Code),
-    BuiltInTool(AgentCapability.DOCUMENT, "Generate a polished document and materialize it as DOCX.", Icons.Outlined.Description),
-    BuiltInTool(AgentCapability.SPREADSHEET, "Generate structured spreadsheet data and materialize it as XLSX.", Icons.Outlined.TableChart),
-    BuiltInTool(AgentCapability.DATABASE, "Design SQL and materialize a usable local SQLite database.", Icons.Outlined.Storage),
-    BuiltInTool(AgentCapability.IMAGE, "Generate images with the separately selected OpenRouter image model.", Icons.Outlined.Image),
-    BuiltInTool(AgentCapability.VIDEO, "Generate a short video with the separately selected video model.", Icons.Outlined.Movie),
-    BuiltInTool(AgentCapability.AUDIO, "Create a downloadable MP3 with the separately selected OpenRouter speech model.", Icons.Outlined.GraphicEq)
+    BuiltInTool(AgentCapability.DEEP_RESEARCH, "Two related search passes with session continuity, source cards, and grounded synthesis.", R.drawable.ic_kz_search),
+    BuiltInTool(AgentCapability.WIDE_SEARCH, "Scan broadly across several query angles and cite every time-sensitive claim.", R.drawable.ic_kz_web),
+    BuiltInTool(AgentCapability.SKILL_MAKER, "Create a reusable local instruction skill and enable it for future agent tasks.", R.drawable.ic_kz_skill),
+    BuiltInTool(AgentCapability.CODE, "Create a complete multi-file full-stack code project as a local ZIP.", R.drawable.ic_kz_code),
+    BuiltInTool(AgentCapability.DOCUMENT, "Generate a polished document and materialize it as DOCX.", R.drawable.ic_kz_file_docx),
+    BuiltInTool(AgentCapability.SPREADSHEET, "Generate structured spreadsheet data and materialize it as XLSX.", R.drawable.ic_kz_file_xlsx),
+    BuiltInTool(AgentCapability.DATABASE, "Design SQL and materialize a usable local SQLite database.", R.drawable.ic_kz_grid),
+    BuiltInTool(AgentCapability.IMAGE, "Generate images with the separately selected OpenRouter image model.", R.drawable.ic_kz_image),
+    BuiltInTool(AgentCapability.VIDEO, "Generate a short video with the separately selected video model.", R.drawable.ic_kz_video),
+    BuiltInTool(AgentCapability.AUDIO, "Create a downloadable MP3 with the separately selected OpenRouter speech model.", R.drawable.ic_kz_voice_wave)
 )
 
-private data class AutoToolInfo(val name: String, val description: String, val icon: ImageVector)
+private data class AutoToolInfo(val name: String, val description: String, @DrawableRes val icon: Int)
 
 private val autoTools = listOf(
-    AutoToolInfo("get_current_time", "Local date, time, weekday, and timezone on this phone.", Icons.Outlined.Schedule),
-    AutoToolInfo("calculate", "Exact arithmetic — no guessing percentages or exponents.", Icons.Outlined.Calculate),
-    AutoToolInfo("get_weather", "Live 3-day forecast via Open-Meteo. No extra API key.", Icons.Outlined.Cloud),
-    AutoToolInfo("fetch_url", "Read a public page the user pasted as a link.", Icons.Outlined.Link),
-    AutoToolInfo("remember_fact / recall_memories", "Save and search durable local memories when Memory is on.", Icons.Outlined.Psychology),
-    AutoToolInfo("schedule_task", "Create a daily or weekly reminder that runs in its own chat.", Icons.Outlined.Alarm)
+    AutoToolInfo("get_current_time", "Local date, time, weekday, and timezone on this phone.", R.drawable.ic_kz_timer),
+    AutoToolInfo("calculate", "Exact arithmetic, no guessing percentages or exponents.", R.drawable.ic_kz_cpu_load),
+    AutoToolInfo("get_weather", "Live 3-day forecast via Open-Meteo. No extra API key.", R.drawable.ic_kz_sun),
+    AutoToolInfo("fetch_url", "Read a public page the user pasted as a link.", R.drawable.ic_kz_link),
+    AutoToolInfo("remember_fact / recall_memories", "Save and search durable local memories when Memory is on.", R.drawable.ic_kz_memory),
+    AutoToolInfo("schedule_task", "Create a daily or weekly reminder that runs in its own chat.", R.drawable.ic_kz_routine)
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Skills: the built-in tools (tap one to start a Run with it), the always-on Auto tools,
+ * and your own skills with a switch, delete, and the instructions unfolded on tap.
+ */
 @Composable
 fun SkillsToolsScreen(
     vm: SkillsToolsViewModel,
@@ -109,63 +96,52 @@ fun SkillsToolsScreen(
     var expanded by remember { mutableStateOf<String?>(null) }
     var pendingDelete by remember { mutableStateOf<SkillEntity?>(null) }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = { Column { Text("Tools & skills"); Text("Capabilities and local instructions", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
-            )
-        }
-    ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    TunePage("Skills", onBack, scrollable = false) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(top = 8.dp, bottom = 28.dp)) {
             item {
-                Text("Built-in tools", style = MaterialTheme.typography.titleLarge)
-                Text("Tap a tool to open a new Agent conversation with it selected.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                TuneSection("Built-in tools")
+                TuneDetail("Tap a tool to start a new Run with it selected.", Modifier.padding(bottom = 10.dp))
             }
             items(builtInTools, key = { it.capability.name }) { tool ->
-                BuiltInToolCard(tool) { onStart(tool.capability) }
+                TuneRow(
+                    tool.icon,
+                    tool.capability.title,
+                    detail = tool.description,
+                    onClick = { onStart(tool.capability) },
+                    modifier = Modifier.semantics { contentDescription = "Start ${tool.capability.title}" }
+                )
             }
             item {
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                Text("Always-on Auto tools", style = MaterialTheme.typography.titleLarge)
-                Text("Auto offers these when they help. Time and calculate are always available; the rest appear when the request matches.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(28.dp))
+                TuneSection("Always-on Auto tools")
+                TuneDetail(
+                    "Auto offers these when they help. Time and calculate are always there; the rest join when a request matches.",
+                    Modifier.padding(bottom = 10.dp)
+                )
             }
             items(autoTools, key = { it.name }) { tool ->
-                AutoToolCard(tool)
+                TuneRow(tool.icon, tool.name, detail = tool.description, trailing = TuneTrailing.None)
             }
             item {
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                Text("Your skills", style = MaterialTheme.typography.titleLarge)
-                Text("Starter skills ship enabled and activate automatically on matching Agent requests. Toggle any off. They never contain or receive API keys.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(28.dp))
+                TuneSection("Your skills")
+                TuneDetail(
+                    "Starter skills ship on and join matching Run requests by themselves. Turn any off. Skills never hold or receive API keys.",
+                    Modifier.padding(bottom = 10.dp)
+                )
             }
             if (skills.isEmpty()) {
                 item {
-                    Surface(
-                        Modifier.fillMaxWidth().clickable { onStart(AgentCapability.SKILL_MAKER) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(Icons.Outlined.Extension, null, tint = MaterialTheme.colorScheme.primary)
-                            Text("Create your first skill", style = MaterialTheme.typography.titleMedium)
-                            Text("Open Skill maker, describe a repeatable workflow, and the agent will save it locally here.", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                    TuneRow(
+                        R.drawable.ic_kz_plus,
+                        "Create your first skill",
+                        detail = "Open Skill maker, describe a repeatable workflow, and Kryzz saves it here.",
+                        onClick = { onStart(AgentCapability.SKILL_MAKER) }
+                    )
                 }
             } else {
                 items(skills, key = { it.id }) { skill ->
-                    SkillCard(
+                    SkillRow(
                         skill = skill,
                         expanded = expanded == skill.id,
                         onExpand = { expanded = if (expanded == skill.id) null else skill.id },
@@ -174,100 +150,86 @@ fun SkillsToolsScreen(
                     )
                 }
             }
+            item { HorizontalDivider(thickness = 1.dp, color = DotTheme.c.surfaceRaised) }
         }
     }
 
     pendingDelete?.let { skill ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete ${skill.name}?") },
-            text = { Text("This removes the local skill from future Agent requests. Conversations are not changed.") },
-            confirmButton = { TextButton(onClick = { vm.delete(skill.id); pendingDelete = null }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } }
+        DotConfirmDialog(
+            title = "Delete ${skill.name}?",
+            body = "Future Run requests stop using this skill. Your conversations stay as they are.",
+            confirm = "Delete",
+            destructive = true,
+            onConfirm = {
+                vm.delete(skill.id)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null }
         )
     }
 }
 
+/** A skill: name (and a STARTER tag), its description, a switch and delete; tap to unfold. */
 @Composable
-private fun BuiltInToolCard(tool: BuiltInTool, onClick: () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f))
-    ) {
-        Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
-                Icon(tool.icon, null, Modifier.padding(10.dp).size(22.dp), tint = MaterialTheme.colorScheme.primary)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(tool.capability.title, style = MaterialTheme.typography.titleSmall)
-                Text(tool.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Icon(Icons.Outlined.PlayArrow, "Start ${tool.capability.title}", tint = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-@Composable
-private fun AutoToolCard(tool: AutoToolInfo) {
-    Card(
-        Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f))
-    ) {
-        Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
-                Icon(tool.icon, null, Modifier.padding(10.dp).size(22.dp), tint = MaterialTheme.colorScheme.secondary)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(tool.name, style = MaterialTheme.typography.titleSmall)
-                Text(tool.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SkillCard(skill: SkillEntity, expanded: Boolean, onExpand: () -> Unit, onEnabled: (Boolean) -> Unit, onDelete: () -> Unit) {
+private fun SkillRow(skill: SkillEntity, expanded: Boolean, onExpand: () -> Unit, onEnabled: (Boolean) -> Unit, onDelete: () -> Unit) {
+    val c = DotTheme.c
     val motionEnabled = LocalKryzzMotionEnabled.current
-    Card(
-        Modifier
-            .fillMaxWidth()
-            .animateContentSize(if (motionEnabled) tween(150) else snap())
-            .clickable(onClick = onExpand),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = if (expanded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.54f) else MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (expanded) 0.90f else 0.48f))
-    ) {
-        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(skill.name, style = MaterialTheme.typography.titleMedium)
-                        if (StarterSkills.isStarterId(skill.id)) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            ) {
-                                Text("Starter", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                            }
+    Column(Modifier.fillMaxWidth().animateContentSize(if (motionEnabled) tween(150) else snap())) {
+        HorizontalDivider(thickness = 1.dp, color = c.surfaceRaised)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClick = onExpand)
+                .semantics { stateDescription = if (expanded) "Instructions shown" else "Instructions hidden" }
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        skill.name,
+                        Modifier.weight(1f, fill = false),
+                        style = DotType.Body.copy(fontSize = 15.sp, lineHeight = 19.sp),
+                        color = if (skill.enabled) c.textPrimary else c.textTertiary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (StarterSkills.isStarterId(skill.id)) DotTag("Starter")
+                }
+                Text(
+                    skill.description,
+                    Modifier.padding(top = 3.dp),
+                    style = DotType.BodySmall,
+                    color = c.textTertiary,
+                    maxLines = if (expanded) 5 else 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Box(
+                Modifier
+                    .size(56.dp, 48.dp)
+                    .toggleable(value = skill.enabled, role = Role.Switch, onValueChange = onEnabled)
+                    .semantics { contentDescription = "Use ${skill.name}" },
+                contentAlignment = Alignment.Center
+            ) {
+                DotToggle(checked = skill.enabled, onChange = null)
+            }
+            DotIconButton(R.drawable.ic_kz_trash, "Delete skill", onDelete, tint = c.textTertiary, iconSize = 18.dp)
+        }
+        if (expanded) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 14.dp, end = 8.dp)) {
+                Text("INSTRUCTIONS", style = DotType.Label, color = c.textSecondary)
+                Text(skill.instructions, Modifier.padding(top = 6.dp), style = DotType.BodySmall, color = c.textPrimary)
+                if (skill.examplePrompts.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("TRY ASKING", style = DotType.Label, color = c.textSecondary)
+                    skill.examplePrompts.lineSequence().filter { it.isNotBlank() }.forEach {
+                        Row(Modifier.padding(top = 6.dp)) {
+                            Text("→", style = DotType.Data, color = c.textTertiary)
+                            Spacer(Modifier.width(8.dp))
+                            Text(it, style = DotType.BodySmall, color = c.textSecondary)
                         }
                     }
-                    Text(skill.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = if (expanded) 5 else 2, overflow = TextOverflow.Ellipsis)
-                }
-                Switch(skill.enabled, onCheckedChange = onEnabled)
-                IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "Delete skill") }
-            }
-            if (expanded) {
-                HorizontalDivider()
-                Text("Instructions", style = MaterialTheme.typography.labelLarge)
-                Text(skill.instructions, style = MaterialTheme.typography.bodySmall)
-                if (skill.examplePrompts.isNotBlank()) {
-                    Text("Try asking", style = MaterialTheme.typography.labelLarge)
-                    skill.examplePrompts.lineSequence().forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
         }

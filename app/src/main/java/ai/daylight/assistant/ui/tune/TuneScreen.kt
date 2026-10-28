@@ -183,21 +183,7 @@ fun TuneScreen(
         Spacer(Modifier.height(24.dp))
 
         TuneSection("Appearance")
-        DotSegments(
-            options = TuneModel.THEME_ORDER.map { mode ->
-                SegmentOption(
-                    TuneModel.themeLabel(mode),
-                    when (mode) {
-                        ThemeMode.DARK -> R.drawable.ic_kz_moon
-                        ThemeMode.LIGHT -> R.drawable.ic_kz_sun
-                        ThemeMode.SYSTEM -> null
-                    }
-                )
-            },
-            selected = TuneModel.THEME_ORDER.indexOf(s.themeMode).coerceAtLeast(0),
-            onSelect = { actions.onTheme(TuneModel.THEME_ORDER[it]) },
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
+        ThemeSegments(s.themeMode, actions.onTheme, Modifier.padding(bottom = 8.dp))
         TuneRow(
             R.drawable.ic_kz_grid, "Dot background", "Talk, Run and Home",
             TuneTrailing.Switch(s.dotBackground, actions.onDotBackground)
@@ -254,4 +240,24 @@ fun TuneScreen(
         }
     }
     if (showAbout) GalacticAboutDialog(onDismiss = { showAbout = false })
+}
+
+/** Dark / Light / Auto, shared by Tune and Text and motion. */
+@Composable
+fun ThemeSegments(mode: ThemeMode, onTheme: (ThemeMode) -> Unit, modifier: Modifier = Modifier) {
+    DotSegments(
+        options = TuneModel.THEME_ORDER.map { option ->
+            SegmentOption(
+                TuneModel.themeLabel(option),
+                when (option) {
+                    ThemeMode.DARK -> R.drawable.ic_kz_moon
+                    ThemeMode.LIGHT -> R.drawable.ic_kz_sun
+                    ThemeMode.SYSTEM -> null
+                }
+            )
+        },
+        selected = TuneModel.THEME_ORDER.indexOf(mode).coerceAtLeast(0),
+        onSelect = { onTheme(TuneModel.THEME_ORDER[it]) },
+        modifier = modifier
+    )
 }

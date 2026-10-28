@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -27,10 +28,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,19 +85,27 @@ sealed interface TuneTrailing {
 
     /** A fact: nothing to tap. */
     data object None : TuneTrailing
+
+    /** Unfolds something under the row: a chevron that points down, or up while open. */
+    data class Expand(val expanded: Boolean) : TuneTrailing
 }
 
 /**
  * A ruled Tune row (kit `.rw`): 1dp top rule, 20dp outline icon, Geist 15 title, an optional
  * mono caption, then a chevron or a switch. At least 52dp tall, so it is a full touch target.
+ * [detail] is a sentence under the caption, for text too long for mono caps. [modifier]
+ * goes on the touch row (test tags).
  */
+@Suppress("ModifierParameter") // callers pass caption and trailing by position, as Tune did first
 @Composable
 fun TuneRow(
-    @DrawableRes icon: Int,
+    @DrawableRes icon: Int?,
     title: String,
     caption: String? = null,
     trailing: TuneTrailing = TuneTrailing.Chevron,
     onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    detail: String? = null,
 ) {
     val c = DotTheme.c
     val haptic = LocalHapticFeedback.current
@@ -107,21 +118,28 @@ fun TuneRow(
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             trailing.onChange(it)
         }
+        is TuneTrailing.Expand -> if (onClick != null) {
+            Modifier
+                .clickable(role = Role.Button, onClick = onClick)
+                .semantics { stateDescription = if (trailing.expanded) "Expanded" else "Collapsed" }
+        } else Modifier
         else -> if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier
     }
     val dim = trailing is TuneTrailing.Switch && !trailing.enabled
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(thickness = 1.dp, color = c.surfaceRaised)
         Row(
-            Modifier
+            modifier
                 .fillMaxWidth()
                 .heightIn(min = 52.dp)
                 .then(action)
                 .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(painterResource(icon), null, Modifier.size(20.dp), tint = if (dim) c.textDisabled else c.textSecondary)
-            Spacer(Modifier.width(14.dp))
+            if (icon != null) {
+                Icon(painterResource(icon), null, Modifier.size(20.dp), tint = if (dim) c.textDisabled else c.textSecondary)
+                Spacer(Modifier.width(14.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
@@ -140,6 +158,9 @@ fun TuneRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                if (!detail.isNullOrBlank()) {
+                    Text(detail, Modifier.padding(top = 2.dp), style = DotType.BodySmall, color = c.textTertiary)
+                }
             }
             when (trailing) {
                 TuneTrailing.Chevron -> {
@@ -150,14 +171,23 @@ fun TuneRow(
                     Spacer(Modifier.width(12.dp))
                     DotToggle(checked = trailing.checked, onChange = null, enabled = trailing.enabled)
                 }
+                is TuneTrailing.Expand -> {
+                    Spacer(Modifier.width(10.dp))
+                    Icon(
+                        painterResource(if (trailing.expanded) R.drawable.ic_kz_chevron_up else R.drawable.ic_kz_chevron_down),
+                        null,
+                        Modifier.size(18.dp),
+                        tint = c.textTertiary
+                    )
+                }
                 TuneTrailing.None -> Unit
             }
         }
     }
 }
 
-/** One option of a [DotSegments] control. */
-data class SegmentOption(val label: String, @DrawableRes val icon: Int? = null)
+/** One option of a [DotSegments] control. [tag] is an optional test tag for the segment. */
+data class SegmentOption(val label: String, @DrawableRes val icon: Int? = null, val tag: String? = null)
 
 /**
  * Kit segmented control (`.seg`): a raised pill track, the chosen segment white with black
@@ -167,13 +197,15 @@ data class SegmentOption(val label: String, @DrawableRes val icon: Int? = null)
 fun DotSegments(options: List<SegmentOption>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
     val c = DotTheme.c
     val haptic = LocalHapticFeedback.current
+    // Each segment fills the whole 48dp track, so it is a full touch target; the white pill
+    // is drawn 3dp inside it.
     Row(
         modifier
             .fillMaxWidth()
             .height(48.dp)
             .background(c.surfaceRaised, DotRadius.Pill)
             .border(1.dp, c.border, DotRadius.Pill)
-            .padding(3.dp)
+            .clip(DotRadius.Pill)
             .selectableGroup()
     ) {
         options.forEachIndexed { index, option ->
@@ -182,13 +214,15 @@ fun DotSegments(options: List<SegmentOption>, selected: Int, onSelect: (Int) -> 
             Box(
                 Modifier
                     .weight(1f)
-                    .height(42.dp)
-                    .clip(DotRadius.Pill)
-                    .background(if (chosen) c.textPrimary else c.surfaceRaised)
+                    .fillMaxHeight()
+                    .then(if (option.tag != null) Modifier.testTag(option.tag) else Modifier)
                     .selectable(selected = chosen, role = Role.RadioButton) {
                         if (!chosen) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onSelect(index)
-                    },
+                    }
+                    .padding(3.dp)
+                    .clip(DotRadius.Pill)
+                    .background(if (chosen) c.textPrimary else c.surfaceRaised),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

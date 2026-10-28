@@ -16,6 +16,8 @@ data class TuneKeys(
     val minimaxTail: String? = null,
     val hasParallel: Boolean = false,
     val hasFish: Boolean = false,
+    val parallelTail: String? = null,
+    val fishTail: String? = null,
 )
 
 /** Tune's words and numbers (kit settings.png). Pure, so it is unit tested. */

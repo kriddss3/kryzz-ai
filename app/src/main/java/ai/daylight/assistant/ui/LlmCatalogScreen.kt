@@ -3,50 +3,30 @@ package ai.daylight.assistant.ui
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ArrowDropDown
-import androidx.compose.material.icons.outlined.Business
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.FilterList
-import androidx.compose.material.icons.outlined.Psychology
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SortByAlpha
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,26 +35,48 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.daylight.assistant.R
 import ai.daylight.assistant.data.remote.ModelBenchmark
 import ai.daylight.assistant.data.remote.OpenRouterModel
+import ai.daylight.assistant.ui.dot.DotField
+import ai.daylight.assistant.ui.dot.DotIconButton
+import ai.daylight.assistant.ui.dot.DotPill
+import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.DotTag
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.effects.DotProgress
+import ai.daylight.assistant.ui.talk.DotSheet
+import ai.daylight.assistant.ui.talk.SheetLabel
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import ai.daylight.assistant.ui.tune.TuneCaption
+import ai.daylight.assistant.ui.tune.TuneChoiceRow
+import ai.daylight.assistant.ui.tune.TuneDetail
+import ai.daylight.assistant.ui.tune.TuneEmpty
+import ai.daylight.assistant.ui.tune.TunePage
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class LlmSort(val label: String) { COMPANY("Company"), INTELLIGENCE("Intelligence index"), ALPHABETICAL("A–Z") }
+private enum class LlmSort(val label: String) { COMPANY("Company"), INTELLIGENCE("Intelligence"), ALPHABETICAL("A–Z") }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The model catalog: every text model the key can use, searchable, sortable by company,
+ * intelligence index or name, and filterable by company. Tap a card to unfold its details.
+ */
 @Composable
 fun LlmCatalogScreen(
     vm: LlmCatalogViewModel,
@@ -109,112 +111,48 @@ fun LlmCatalogScreen(
             }
         }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Model catalog")
-                        Text("${visible.size} of ${models.size} models via ${settings.chatProvider.label}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-                navigationIcon = { IconButton(onClick = onChats) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = vm::refresh) { Icon(Icons.Outlined.Refresh, "Refresh model catalog") } },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
+    TunePage(
+        "Catalog",
+        onChats,
+        scrollable = false,
+        actions = {
+            DotIconButton(R.drawable.ic_kz_retry, "Refresh model catalog", vm::refresh, tint = DotTheme.c.textSecondary)
+        }
+    ) {
+        TuneCaption("${visible.size} of ${models.size} models via ${settings.chatProvider.label}", Modifier.padding(bottom = 10.dp))
+        DotField(
+            value = query,
+            onValueChange = { vm.query.value = it },
+            placeholder = "Search models or companies",
+            leadingIcon = R.drawable.ic_kz_search
+        )
+        LazyRow(
+            Modifier.padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (companies.isNotEmpty()) {
+                item { CompanyFilter(companies, companyFilter) { companyFilter = it } }
+            }
+            items(LlmSort.entries) { option ->
+                DotPill(option.label, selected = sort == option, onClick = { sortName = option.name }, role = Role.Tab)
+            }
+        }
+        benchmarkNotice?.let { TuneDetail(it, Modifier.padding(top = 2.dp)) }
+        if (sort == LlmSort.INTELLIGENCE && benchmarks.isNotEmpty()) {
+            TuneDetail(
+                "Official Artificial Analysis scores via OpenRouter${meta?.asOf?.let { ", as of ${it.take(10)}" }.orEmpty()}.",
+                Modifier.padding(top = 2.dp)
             )
         }
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { vm.query.value = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                placeholder = { Text("Search models or companies") },
-                leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                singleLine = true,
-                shape = RoundedCornerShape(20.dp)
-            )
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(LlmSort.entries) { option ->
-                    val icon = when (option) {
-                        LlmSort.COMPANY -> Icons.Outlined.Business
-                        LlmSort.INTELLIGENCE -> Icons.Outlined.Psychology
-                        LlmSort.ALPHABETICAL -> Icons.Outlined.SortByAlpha
-                    }
-                    FilterChip(
-                        selected = sort == option,
-                        onClick = { sortName = option.name },
-                        label = { Text(option.label) },
-                        leadingIcon = { Icon(icon, null, Modifier.size(17.dp)) }
-                    )
-                }
-            }
-            if (companies.isNotEmpty()) {
-                var companyMenuExpanded by rememberSaveable { mutableStateOf(false) }
-                Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp)) {
-                    OutlinedButton(
-                        onClick = { companyMenuExpanded = true },
-                        modifier = Modifier.testTag("company_filter_button")
-                    ) {
-                        Icon(Icons.Outlined.FilterList, null, Modifier.size(18.dp))
-                        Text(if (companyFilter == null) " Filter: all companies" else " Filter: $companyFilter")
-                        Icon(Icons.Outlined.ArrowDropDown, null, Modifier.size(18.dp))
-                    }
-                    DropdownMenu(
-                        expanded = companyMenuExpanded,
-                        onDismissRequest = { companyMenuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("All companies") },
-                            leadingIcon = if (companyFilter == null) {
-                                { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
-                            } else null,
-                            onClick = {
-                                companyFilter = null
-                                companyMenuExpanded = false
-                            },
-                            modifier = Modifier.testTag("company_filter_all")
-                        )
-                        companies.forEach { company ->
-                            DropdownMenuItem(
-                                text = { Text(company, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                leadingIcon = if (companyFilter == company) {
-                                    { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
-                                } else null,
-                                onClick = {
-                                    companyFilter = company
-                                    companyMenuExpanded = false
-                                },
-                                modifier = Modifier.testTag("company_filter_$company")
-                            )
-                        }
-                    }
-                }
-            }
-            benchmarkNotice?.let { Text(it, Modifier.padding(horizontal = 18.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            if (sort == LlmSort.INTELLIGENCE && benchmarks.isNotEmpty()) {
-                Text(
-                    "Official Artificial Analysis scores via OpenRouter${meta?.asOf?.let { " · as of ${it.take(10)}" }.orEmpty()}",
-                    Modifier.padding(horizontal = 18.dp, vertical = 5.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth().weight(1f)) {
             when {
-                loading && models.isEmpty() -> androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                error != null && models.isEmpty() -> androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) { Text(error.orEmpty(), color = MaterialTheme.colorScheme.error) }
-                visible.isEmpty() -> androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) { Text("No matching models.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                loading && models.isEmpty() -> ModelsLoading()
+                error != null && models.isEmpty() -> ModelsEmpty(error.orEmpty(), onRetry = vm::refresh)
+                visible.isEmpty() -> ModelsEmpty("No model matches that search or filter.")
                 else -> LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(visible, key = { it.id }) { model ->
                         LlmCard(
@@ -232,78 +170,203 @@ fun LlmCatalogScreen(
 
 @Composable
 private fun LlmCard(model: OpenRouterModel, benchmark: ModelBenchmark?, expanded: Boolean, onToggle: () -> Unit) {
+    val c = DotTheme.c
     val motionEnabled = LocalKryzzMotionEnabled.current
     val provider = providerBrandFor(model.id)
-    Card(
-        Modifier
-            .fillMaxWidth()
+    ModelCardFrame(
+        selected = false,
+        onClick = onToggle,
+        modifier = Modifier
             .animateContentSize(if (motionEnabled) tween(170) else snap())
-            .clickable(onClick = onToggle),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (expanded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f) else MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (expanded) 0.92f else 0.42f))
+            .semantics { stateDescription = if (expanded) "Details shown" else "Details hidden" }
     ) {
-        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-                ProviderMark(provider)
-                Column(Modifier.weight(1f)) {
-                    Text(model.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(provider.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                }
-                benchmark?.intelligenceIndex?.let { ScoreBadge("IQ ${it.oneDecimal()}") }
-                Icon(Icons.Outlined.ExpandMore, if (expanded) "Collapse details" else "Expand details", Modifier.size(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ProviderMark(provider)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                ModelName(model.name)
+                Text(provider.name.uppercase(Locale.US), style = DotType.Caption, color = c.textTertiary, maxLines = 1)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                PriceSummary("Input", model.pricing?.prompt.tokenPrice())
-                PriceSummary("Output", model.pricing?.completion.tokenPrice())
-                PriceSummary("Context", model.contextLength.compactTokens())
+            benchmark?.intelligenceIndex?.let { DotTag("IQ ${it.oneDecimal()}", color = c.textPrimary) }
+            Icon(
+                painterResource(if (expanded) R.drawable.ic_kz_chevron_up else R.drawable.ic_kz_chevron_down),
+                if (expanded) "Collapse details" else "Expand details",
+                Modifier.padding(start = 8.dp).size(18.dp),
+                tint = c.textTertiary
+            )
+        }
+        SpecLine(
+            "IN ${model.pricing?.prompt.tokenPrice()}",
+            "OUT ${model.pricing?.completion.tokenPrice()}",
+            "CTX ${model.contextLength.compactTokens()}"
+        )
+        if (expanded) {
+            HorizontalDivider(Modifier.padding(vertical = 4.dp), thickness = 1.dp, color = c.border)
+            if (model.description.isNotBlank()) Text(model.description, style = DotType.BodySmall, color = c.textSecondary)
+            DetailLine("Model ID", model.id)
+            DetailLine("Company", provider.name)
+            model.canonicalSlug?.takeIf { it != model.id }?.let { DetailLine("Permanent slug", it) }
+            model.created?.let { DetailLine("Added", DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it * 1_000))) }
+            model.knowledgeCutoff?.let { DetailLine("Knowledge cutoff", it) }
+            model.expirationDate?.let { DetailLine("Expiration", it) }
+            benchmark?.let {
+                DetailHeading("Benchmarks")
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    it.intelligenceIndex?.let { score -> DotTag("Intelligence ${score.oneDecimal()}") }
+                    it.codingIndex?.let { score -> DotTag("Coding ${score.oneDecimal()}") }
+                    it.agenticIndex?.let { score -> DotTag("Agentic ${score.oneDecimal()}") }
+                }
+                Text("Source: ${it.source ?: "OpenRouter benchmark catalog"}", style = DotType.BodySmall, color = c.textTertiary)
             }
-            if (expanded) {
-                HorizontalDivider()
-                if (model.description.isNotBlank()) Text(model.description, style = MaterialTheme.typography.bodySmall)
-                DetailLine("Model ID", model.id)
-                DetailLine("Company", provider.name)
-                model.canonicalSlug?.takeIf { it != model.id }?.let { DetailLine("Permanent slug", it) }
-                model.created?.let { DetailLine("Added", DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it * 1_000))) }
-                model.knowledgeCutoff?.let { DetailLine("Knowledge cutoff", it) }
-                model.expirationDate?.let { DetailLine("Expiration", it) }
-                benchmark?.let {
-                    Text("Benchmarks", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        it.intelligenceIndex?.let { score -> ScoreBadge("Intelligence ${score.oneDecimal()}") }
-                        it.codingIndex?.let { score -> ScoreBadge("Coding ${score.oneDecimal()}") }
-                        it.agenticIndex?.let { score -> ScoreBadge("Agentic ${score.oneDecimal()}") }
-                    }
-                    Text("Source: ${it.source ?: "OpenRouter benchmark catalog"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("Architecture & capabilities", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                model.architecture?.let { architecture ->
-                    architecture.modality?.let { DetailLine("Modality", it) }
-                    architecture.tokenizer?.let { DetailLine("Tokenizer", it) }
-                    architecture.instructType?.let { DetailLine("Instruction format", it) }
-                    DetailLine("Input", architecture.inputModalities.ifEmpty { listOf("text") }.joinToString())
-                    DetailLine("Output", architecture.outputModalities.ifEmpty { listOf("text") }.joinToString())
-                }
-                if (model.supportedParameters.isNotEmpty()) DetailLine("Parameters", model.supportedParameters.joinToString())
-                model.topProvider?.let { provider ->
-                    provider.maxCompletionTokens?.let { DetailLine("Maximum output", "${it.compactTokens()} tokens") }
-                    provider.isModerated?.let { DetailLine("Provider moderation", if (it) "Yes" else "No") }
-                }
-                Text("Pricing", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                DetailLine("Input tokens", model.pricing?.prompt.tokenPrice())
-                DetailLine("Output tokens", model.pricing?.completion.tokenPrice())
-                model.pricing?.inputCacheRead?.let { DetailLine("Cache read", it.tokenPrice()) }
-                model.pricing?.inputCacheWrite?.let { DetailLine("Cache write", it.tokenPrice()) }
-                model.pricing?.internalReasoning?.let { DetailLine("Internal reasoning", it.tokenPrice()) }
-                model.pricing?.request?.let { DetailLine("Per request", it.unitPrice("request")) }
-                model.pricing?.image?.let { DetailLine("Image", it.unitPrice("image")) }
-                model.pricing?.audio?.let { DetailLine("Audio", it.unitPrice("unit")) }
-                model.pricing?.webSearch?.let { DetailLine("Web search", it.unitPrice("request")) }
+            DetailHeading("Architecture and capabilities")
+            model.architecture?.let { architecture ->
+                architecture.modality?.let { DetailLine("Modality", it) }
+                architecture.tokenizer?.let { DetailLine("Tokenizer", it) }
+                architecture.instructType?.let { DetailLine("Instruction format", it) }
+                DetailLine("Input", architecture.inputModalities.ifEmpty { listOf("text") }.joinToString())
+                DetailLine("Output", architecture.outputModalities.ifEmpty { listOf("text") }.joinToString())
+            }
+            if (model.supportedParameters.isNotEmpty()) DetailLine("Parameters", model.supportedParameters.joinToString())
+            model.topProvider?.let { top ->
+                top.maxCompletionTokens?.let { DetailLine("Maximum output", "${it.compactTokens()} tokens") }
+                top.isModerated?.let { DetailLine("Provider moderation", if (it) "Yes" else "No") }
+            }
+            DetailHeading("Pricing")
+            DetailLine("Input tokens", model.pricing?.prompt.tokenPrice())
+            DetailLine("Output tokens", model.pricing?.completion.tokenPrice())
+            model.pricing?.inputCacheRead?.let { DetailLine("Cache read", it.tokenPrice()) }
+            model.pricing?.inputCacheWrite?.let { DetailLine("Cache write", it.tokenPrice()) }
+            model.pricing?.internalReasoning?.let { DetailLine("Internal reasoning", it.tokenPrice()) }
+            model.pricing?.request?.let { DetailLine("Per request", it.unitPrice("request")) }
+            model.pricing?.image?.let { DetailLine("Image", it.unitPrice("image")) }
+            model.pricing?.audio?.let { DetailLine("Audio", it.unitPrice("unit")) }
+            model.pricing?.webSearch?.let { DetailLine("Web search", it.unitPrice("request")) }
+        }
+    }
+}
+
+/**
+ * Kit model card (§12): surface, 24dp corners, 16dp padding, a 1dp border that turns white
+ * with a check at the top right when the model is the selected one.
+ */
+@Composable
+internal fun ModelCardFrame(
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    role: Role = Role.Button,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val c = DotTheme.c
+    Box(
+        modifier
+            .fillMaxWidth()
+            .clip(DotRadius.Card)
+            .background(c.surface)
+            .border(1.dp, if (selected) c.textPrimary else c.border, DotRadius.Card)
+            .clickable(role = role, onClick = onClick)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+        if (selected) {
+            Icon(
+                painterResource(R.drawable.ic_kz_check), "Selected",
+                Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 14.dp).size(18.dp),
+                tint = c.textPrimary
+            )
+        }
+    }
+}
+
+/** A model's name in a card: Geist 500 16. */
+@Composable
+internal fun ModelName(name: String, modifier: Modifier = Modifier) {
+    Text(
+        name,
+        modifier,
+        style = DotType.Title.copy(fontSize = 16.sp, lineHeight = 21.sp),
+        color = DotTheme.c.textPrimary,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+/** The kit spec row: mono stat pairs joined by dots, `CTX 128K · IN $0.15 · OUT $0.60`. */
+@Composable
+internal fun SpecLine(vararg parts: String) {
+    val text = parts.filter { it.isNotBlank() }.joinToString("  ·  ")
+    if (text.isNotEmpty()) Text(text.uppercase(Locale.US), style = DotType.Data, color = DotTheme.c.textSecondary)
+}
+
+/**
+ * The company filter: a pill naming the current filter that opens a sheet of companies.
+ * The test tags are the ones the old dropdown had.
+ */
+@Composable
+internal fun CompanyFilter(companies: List<String>, selected: String?, onSelect: (String?) -> Unit) {
+    val c = DotTheme.c
+    var open by rememberSaveable { mutableStateOf(false) }
+    Row(
+        Modifier
+            .minimumInteractiveComponentSize()
+            .testTag("company_filter_button")
+            .clip(DotRadius.Pill)
+            .clickable(role = Role.Button, onClickLabel = "Filter by company") { open = true }
+            .height(40.dp)
+            .border(1.dp, if (selected != null) c.textPrimary else c.border, DotRadius.Pill)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        Icon(painterResource(R.drawable.ic_kz_filter), null, Modifier.size(16.dp), tint = c.textSecondary)
+        Text(
+            (selected ?: "All companies").uppercase(Locale.US),
+            Modifier.semantics { contentDescription = "Filter: ${selected ?: "all companies"}" },
+            style = DotType.Label,
+            color = if (selected != null) c.textPrimary else c.textSecondary,
+            maxLines = 1
+        )
+        Icon(painterResource(R.drawable.ic_kz_chevron_down), null, Modifier.size(14.dp), tint = c.textTertiary)
+    }
+    if (open) {
+        DotSheet(onDismiss = { open = false }) {
+            SheetLabel("Company")
+            TuneChoiceRow("All companies", null, selected == null, {
+                onSelect(null)
+                open = false
+            }, Modifier.testTag("company_filter_all"))
+            companies.forEach { company ->
+                TuneChoiceRow(company, null, selected == company, {
+                    onSelect(company)
+                    open = false
+                }, Modifier.testTag("company_filter_$company"))
             }
         }
+    }
+}
+
+/** Indeterminate dots while the catalog loads (no fake percentage). */
+@Composable
+internal fun ModelsLoading() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            DotProgress(progress = null, count = 12)
+            TuneCaption("Loading models", Modifier.padding(top = 12.dp))
+        }
+    }
+}
+
+/** The kit empty state for a model list, with Retry when it can help. */
+@Composable
+internal fun ModelsEmpty(message: String, onRetry: (() -> Unit)? = null) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        TuneEmpty(
+            dotIcon = R.drawable.ic_kz_model_dot,
+            words = "No models",
+            body = message,
+            action = if (onRetry != null) "Retry" else null,
+            onAction = onRetry,
+            actionIcon = R.drawable.ic_kz_retry
+        )
     }
 }
 
@@ -350,48 +413,48 @@ internal fun providerBrandFor(modelId: String): ProviderBrand {
     }
 }
 
+/** A provider's monogram in a 40dp raised tile with a 1dp border, Space Mono bold. */
 @Composable
 internal fun ProviderMark(brand: ProviderBrand, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier
+    val c = DotTheme.c
+    Box(
+        modifier
             .size(40.dp)
+            .background(c.surfaceRaised, RoundedCornerShape(12.dp))
+            .border(1.dp, c.border, RoundedCornerShape(12.dp))
             .clearAndSetSemantics { contentDescription = "${brand.name} provider" },
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        contentAlignment = Alignment.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                brand.monogram,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1
-            )
-        }
+        Text(
+            brand.monogram,
+            style = DotType.Label.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+            color = c.textPrimary,
+            maxLines = 1
+        )
     }
 }
 
 @Composable
-private fun PriceSummary(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.Start) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-@Composable
-private fun ScoreBadge(text: String) {
-    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f), contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
-        Text(text, Modifier.padding(horizontal = 7.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
-    }
+private fun DetailHeading(text: String) {
+    Text(text.uppercase(Locale.US), Modifier.padding(top = 6.dp), style = DotType.Label, color = DotTheme.c.textSecondary)
 }
 
 @Composable
 private fun DetailLine(label: String, value: String) {
+    val c = DotTheme.c
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-        Text(label, Modifier.weight(0.34f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, Modifier.weight(0.66f), style = MaterialTheme.typography.bodySmall)
+        Text(label.uppercase(Locale.US), Modifier.weight(0.36f), style = DotType.Caption.copy(fontSize = 10.sp), color = c.textTertiary)
+        Text(value, Modifier.weight(0.64f), style = DotType.BodySmall, color = c.textPrimary)
+    }
+}
+
+/** A capability label as a mono tag; "Tool calling" gets the tools icon. */
+@Composable
+internal fun CapabilityTag(label: String) {
+    if (label == "Tool calling") {
+        DotTag("Tools", icon = R.drawable.ic_kz_tools)
+    } else {
+        DotTag(label)
     }
 }
 
@@ -414,14 +477,14 @@ internal fun filterCatalog(
 private fun modelBenchmark(model: OpenRouterModel, values: Map<String, ModelBenchmark>): ModelBenchmark? =
     model.canonicalSlug?.let(values::get) ?: values[model.id] ?: values[model.id.substringBefore(':')]
 
-private fun Int?.compactTokens(): String = when {
+internal fun Int?.compactTokens(): String = when {
     this == null -> "Not listed"
     this >= 1_000_000 -> String.format(Locale.US, "%.1fM", this / 1_000_000.0)
     this >= 1_000 -> "${this / 1_000}k"
     else -> toString()
 }
 
-private fun String?.tokenPrice(): String {
+internal fun String?.tokenPrice(): String {
     val perMillion = this?.toDoubleOrNull()?.times(1_000_000) ?: return "Not listed"
     return if (perMillion == 0.0) "Free" else if (perMillion < 0.01) String.format(Locale.US, "$%.4f/M", perMillion) else String.format(Locale.US, "$%.2f/M", perMillion)
 }

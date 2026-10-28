@@ -10,43 +10,24 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TimePickerDefaults
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -56,26 +37,44 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.daylight.assistant.R
 import ai.daylight.assistant.data.CRON_DAY_NAMES
 import ai.daylight.assistant.data.CronRecurrence
 import ai.daylight.assistant.data.CronSchedulePresets
 import ai.daylight.assistant.data.local.ScheduledTaskEntity
-import ai.daylight.assistant.ui.theme.LocalGlassOpacity
+import ai.daylight.assistant.ui.dot.DotButtonStyle
+import ai.daylight.assistant.ui.dot.DotConfirmDialog
+import ai.daylight.assistant.ui.dot.DotDialog
+import ai.daylight.assistant.ui.dot.DotDialogTitle
+import ai.daylight.assistant.ui.dot.DotField
+import ai.daylight.assistant.ui.dot.DotIconButton
+import ai.daylight.assistant.ui.dot.DotPill
+import ai.daylight.assistant.ui.dot.DotPillButton
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.effects.DotToggle
+import ai.daylight.assistant.ui.tune.TuneDetail
+import ai.daylight.assistant.ui.tune.TuneEmpty
+import ai.daylight.assistant.ui.tune.TunePage
+import ai.daylight.assistant.ui.tune.TuneSection
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Routines (cron jobs): each scheduled prompt as a ruled row with its schedule, a switch,
+ * last and next run, Run now and delete. Crew (C9) builds on the same jobs.
+ */
 @Composable
 fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
     val tasks by vm.tasks.collectAsStateWithLifecycle()
@@ -97,97 +96,48 @@ fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = { Text("Cron jobs", style = MaterialTheme.typography.titleLarge) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalGlassOpacity.current),
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+    TunePage("Routines", onBack, scrollable = false) {
+        if (tasks.isEmpty()) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                TuneEmpty(
+                    dotIcon = R.drawable.ic_kz_timer_dot,
+                    words = "No routines",
+                    body = "A routine runs a prompt on a schedule in the background and tells you when each run is done.",
+                    action = "Create a routine",
+                    onAction = { showAddDialog = true },
+                    actionModifier = Modifier.testTag("cron_add_empty")
                 )
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            if (tasks.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Icon(
-                            Icons.Outlined.Schedule,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(44.dp)
-                        )
-                        Text("No cron jobs yet", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Cron jobs run a prompt on a repeating schedule in the background and notify you when each run finishes.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.widthIn(max = 320.dp)
-                        )
-                        FilledTonalButton(
-                            onClick = { showAddDialog = true },
-                            modifier = Modifier.testTag("cron_add_empty")
-                        ) {
-                            Icon(Icons.Outlined.Add, contentDescription = null)
-                            Text(" Create a cron job")
-                        }
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(tasks, key = { it.id }) { task ->
-                        CronTaskRow(
-                            task = task,
-                            onEnabled = {
-                                if (it) ensureNotificationPermission()
-                                vm.setEnabled(task.id, it)
-                            },
-                            onRunNow = { vm.runNow(task.id) },
-                            onDelete = { deleteTask = task }
-                        )
-                    }
-                }
-                OutlinedButton(
-                    onClick = { showAddDialog = true },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("cron_add")
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Text(" New cron job")
-                }
             }
+        } else {
+            TuneDetail("Each routine runs in its own chat and notifies you when a run finishes.", Modifier.padding(top = 4.dp, bottom = 12.dp))
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = 8.dp)
+            ) {
+                items(tasks, key = { it.id }) { task ->
+                    CronTaskRow(
+                        task = task,
+                        onEnabled = {
+                            if (it) ensureNotificationPermission()
+                            vm.setEnabled(task.id, it)
+                        },
+                        onRunNow = { vm.runNow(task.id) },
+                        onDelete = { deleteTask = task }
+                    )
+                }
+                item { HorizontalDivider(thickness = 1.dp, color = DotTheme.c.surfaceRaised) }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 12.dp), horizontalArrangement = Arrangement.End) {
+                DotPillButton(
+                    "New routine",
+                    { showAddDialog = true },
+                    Modifier.testTag("cron_add"),
+                    icon = R.drawable.ic_kz_plus
+                )
+            }
+        }
 
-            notice?.let {
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-            }
-        }
+        notice?.let { TuneDetail(it, Modifier.padding(bottom = 12.dp)) }
     }
 
     if (showAddDialog) {
@@ -203,17 +153,16 @@ fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
     }
 
     deleteTask?.let { task ->
-        AlertDialog(
-            onDismissRequest = { deleteTask = null },
-            title = { Text("Delete “${task.title}”?") },
-            text = { Text("The schedule stops and its dedicated conversation is removed. This cannot be undone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.delete(task.id)
-                    deleteTask = null
-                }) { Text("Delete") }
+        DotConfirmDialog(
+            title = "Delete “${task.title}”?",
+            body = "The schedule stops and its own conversation is removed. This cannot be undone.",
+            confirm = "Delete",
+            destructive = true,
+            onConfirm = {
+                vm.delete(task.id)
+                deleteTask = null
             },
-            dismissButton = { TextButton(onClick = { deleteTask = null }) { Text("Cancel") } }
+            onDismiss = { deleteTask = null }
         )
     }
 }
@@ -225,96 +174,78 @@ private fun CronTaskRow(
     onRunNow: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val lastRunFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
+    val c = DotTheme.c
+    val runFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
     val nextRunAt = remember(task) { CronSchedulePresets.nextRunAt(task) }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = if (task.enabled) {
-            MaterialTheme.colorScheme.surface.copy(alpha = LocalGlassOpacity.current)
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
-        },
-        tonalElevation = 0.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(task.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        CronSchedulePresets.label(task),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = task.enabled,
-                    onCheckedChange = onEnabled,
-                    modifier = Modifier.semantics { contentDescription = "Enable ${task.title}" }
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(thickness = 1.dp, color = c.surfaceRaised)
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    task.title,
+                    style = DotType.Body.copy(fontSize = 15.sp, lineHeight = 19.sp),
+                    color = if (task.enabled) c.textPrimary else c.textTertiary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    CronSchedulePresets.label(task).uppercase(Locale.US),
+                    Modifier.padding(top = 1.dp),
+                    style = DotType.Caption.copy(fontSize = 10.sp, lineHeight = 14.sp),
+                    color = c.textTertiary
                 )
             }
-            Text(
-                task.prompt,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (task.enabled) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                Modifier
+                    .size(56.dp, 48.dp)
+                    .toggleable(value = task.enabled, role = Role.Switch, onValueChange = onEnabled)
+                    .semantics { contentDescription = "Enable ${task.title}" },
+                contentAlignment = Alignment.CenterEnd
             ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                DotToggle(checked = task.enabled, onChange = null)
+            }
+        }
+        Text(
+            task.prompt,
+            Modifier.padding(top = 6.dp, end = 8.dp),
+            style = DotType.BodySmall,
+            color = if (task.enabled) c.textSecondary else c.textTertiary,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    (task.lastRunAt?.let { "Last run ${runFormat.format(Date(it))}" } ?: "Never run").uppercase(Locale.US),
+                    style = DotType.Caption.copy(fontSize = 10.sp),
+                    color = c.textTertiary
+                )
+                if (task.enabled && nextRunAt != null) {
                     Text(
-                        task.lastRunAt?.let { "Last run ${lastRunFormat.format(Date(it))}" } ?: "Never run",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (task.enabled && nextRunAt != null) {
-                        Text(
-                            "Next run ${lastRunFormat.format(Date(nextRunAt))}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-                IconButton(onClick = onRunNow, modifier = Modifier.size(48.dp).testTag("cron_run_now")) {
-                    Icon(
-                        Icons.Outlined.PlayArrow,
-                        contentDescription = "Run ${task.title} now",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.Outlined.Delete,
-                        contentDescription = "Delete ${task.title}",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                        "Next run ${runFormat.format(Date(nextRunAt))}".uppercase(Locale.US),
+                        style = DotType.Caption.copy(fontSize = 10.sp),
+                        color = c.textPrimary
                     )
                 }
             }
+            DotIconButton(
+                R.drawable.ic_kz_play, "Run ${task.title} now", onRunNow,
+                Modifier.testTag("cron_run_now"),
+                iconSize = 18.dp
+            )
+            DotIconButton(R.drawable.ic_kz_trash, "Delete ${task.title}", onDelete, tint = c.textTertiary, iconSize = 18.dp)
         }
     }
 }
 
+/** New routine, in the kit dialog: name, prompt, how often, the time, and (weekly) the days. */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun AddCronTaskDialog(
     onDismiss: () -> Unit,
     onAdd: (String, String, CronRecurrence, Int, Int, Set<Int>) -> Unit
 ) {
+    val c = DotTheme.c
     var title by rememberSaveable { mutableStateOf("") }
     var prompt by rememberSaveable { mutableStateOf("") }
     var recurrenceName by rememberSaveable { mutableStateOf(CronRecurrence.DAILY.name) }
@@ -337,84 +268,93 @@ private fun AddCronTaskDialog(
         daysCsv = next.sorted().joinToString(",")
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("New cron job") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 540.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+    DotDialog(onDismiss = onDismiss, padded = false) {
+        DotDialogTitle("New routine", Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp))
+        Column(
+            Modifier
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            DotField(
+                value = title,
+                onValueChange = { title = it.take(80) },
+                label = "Name",
+                placeholder = "Morning briefing",
+                fieldModifier = Modifier.testTag("cron_task_name")
+            )
+            Spacer(Modifier.height(16.dp))
+            DotField(
+                value = prompt,
+                onValueChange = { prompt = it },
+                label = "Prompt",
+                placeholder = "Summarise today's AI news",
+                singleLine = false,
+                minLines = 3,
+                maxLines = 5,
+                fieldModifier = Modifier.testTag("cron_task_prompt")
+            )
+            Spacer(Modifier.height(20.dp))
+            TuneSection("Runs")
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it.take(80) },
-                    label = { Text("Name") },
-                    placeholder = { Text("Morning briefing") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("cron_task_name"),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
-                    label = { Text("Prompt") },
-                    placeholder = { Text("Summarise today's AI news") },
-                    minLines = 3,
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth().testTag("cron_task_prompt"),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Runs", style = MaterialTheme.typography.titleSmall)
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().selectableGroup(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        CronRecurrence.selectable.forEach { option ->
-                            FilterChip(
-                                selected = recurrence == option,
-                                onClick = {
-                                    recurrenceName = option.name
-                                    if (option == CronRecurrence.WEEKLY) showDaysMenu = true
-                                },
-                                label = { Text(option.label) },
-                                leadingIcon = if (recurrence == option) {
-                                    { Icon(Icons.Outlined.Check, contentDescription = null, Modifier.size(18.dp)) }
-                                } else null,
-                                modifier = Modifier
-                                    .heightIn(min = 48.dp)
-                                    .testTag("cron_recurrence_${option.name.lowercase()}")
-                            )
-                        }
-                    }
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Time of day", style = MaterialTheme.typography.titleSmall)
-                    TimePicker(
-                        state = timeState,
-                        modifier = Modifier.align(Alignment.CenterHorizontally).testTag("cron_time_picker")
+                CronRecurrence.selectable.forEach { option ->
+                    DotPill(
+                        option.label,
+                        selected = recurrence == option,
+                        onClick = {
+                            recurrenceName = option.name
+                            if (option == CronRecurrence.WEEKLY) showDaysMenu = true
+                        },
+                        modifier = Modifier.testTag("cron_recurrence_${option.name.lowercase(Locale.US)}")
                     )
                 }
-                if (recurrence == CronRecurrence.WEEKLY) {
-                    OutlinedButton(
-                        onClick = { showDaysMenu = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .testTag("cron_choose_days")
-                    ) {
-                        Text("Days: ${CronSchedulePresets.weekdayLabel(selectedDays)}")
-                    }
+            }
+            if (recurrence == CronRecurrence.WEEKLY) {
+                Row(Modifier.padding(top = 8.dp)) {
+                    DotPillButton(
+                        "Days: ${CronSchedulePresets.weekdayLabel(selectedDays)}",
+                        { showDaysMenu = true },
+                        Modifier.testTag("cron_choose_days"),
+                        style = DotButtonStyle.Ghost,
+                        icon = R.drawable.ic_kz_calendar
+                    )
                 }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
+            Spacer(Modifier.height(20.dp))
+            TuneSection("Time of day")
+            TimePicker(
+                state = timeState,
+                modifier = Modifier.align(Alignment.CenterHorizontally).testTag("cron_time_picker"),
+                colors = TimePickerDefaults.colors(
+                    clockDialColor = c.surface,
+                    clockDialSelectedContentColor = c.bg,
+                    clockDialUnselectedContentColor = c.textSecondary,
+                    selectorColor = c.textPrimary,
+                    containerColor = c.surfaceRaised,
+                    periodSelectorBorderColor = c.border,
+                    periodSelectorSelectedContainerColor = c.textPrimary,
+                    periodSelectorUnselectedContainerColor = c.surface,
+                    periodSelectorSelectedContentColor = c.bg,
+                    periodSelectorUnselectedContentColor = c.textSecondary,
+                    timeSelectorSelectedContainerColor = c.textPrimary,
+                    timeSelectorUnselectedContainerColor = c.surface,
+                    timeSelectorSelectedContentColor = c.bg,
+                    timeSelectorUnselectedContentColor = c.textPrimary
+                )
+            )
+        }
+        HorizontalDivider(thickness = 1.dp, color = c.border)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+        ) {
+            DotPillButton("Cancel", onDismiss, style = DotButtonStyle.Ghost)
+            DotPillButton(
+                "Schedule",
+                {
                     onAdd(
                         title,
                         prompt,
@@ -424,12 +364,11 @@ private fun AddCronTaskDialog(
                         if (recurrence == CronRecurrence.WEEKLY) selectedDays else emptySet()
                     )
                 },
-                enabled = valid,
-                modifier = Modifier.testTag("cron_task_save")
-            ) { Text("Schedule") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
+                Modifier.testTag("cron_task_save"),
+                enabled = valid
+            )
+        }
+    }
 
     if (showDaysMenu) {
         WeeklyDaysMenu(
@@ -447,45 +386,36 @@ private fun WeeklyDaysMenu(
     onToggle: (Int) -> Unit,
     onDone: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDone,
-        title = { Text("Which days?") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Pick every day this job should run.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+    DotDialog(onDismiss = onDone) {
+        DotDialogTitle("Which days?")
+        Text(
+            "Pick every day this routine should run.",
+            Modifier.padding(top = 8.dp, bottom = 12.dp),
+            style = DotType.Body,
+            color = DotTheme.c.textSecondary
+        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().testTag("cron_weekly_days"),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            CRON_DAY_NAMES.forEachIndexed { index, name ->
+                val isoDay = index + 1
+                DotPill(
+                    name.take(3),
+                    selected = isoDay in selectedDays,
+                    onClick = { onToggle(isoDay) },
+                    toggle = true,
+                    modifier = Modifier.testTag("cron_day_$isoDay")
                 )
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth().testTag("cron_weekly_days"),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CRON_DAY_NAMES.forEachIndexed { index, name ->
-                        val isoDay = index + 1
-                        val selected = isoDay in selectedDays
-                        FilterChip(
-                            selected = selected,
-                            onClick = { onToggle(isoDay) },
-                            label = { Text(name.take(3)) },
-                            leadingIcon = if (selected) {
-                                { Icon(Icons.Outlined.Check, contentDescription = null, Modifier.size(18.dp)) }
-                            } else null,
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("cron_day_$isoDay")
-                        )
-                    }
-                }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = onDone,
-                enabled = selectedDays.isNotEmpty(),
-                modifier = Modifier.testTag("cron_days_done")
-            ) { Text("Done") }
         }
-    )
+        Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.End) {
+            DotPillButton(
+                "Done",
+                onDone,
+                Modifier.testTag("cron_days_done"),
+                enabled = selectedDays.isNotEmpty()
+            )
+        }
+    }
 }

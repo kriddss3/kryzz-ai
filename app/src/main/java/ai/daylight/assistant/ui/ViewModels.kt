@@ -1986,7 +1986,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 openRouterTail = TuneModel.keyTail(runCatching { credentials.openRouterKey() }.getOrNull()),
                 minimaxTail = TuneModel.keyTail(runCatching { credentials.minimaxKey() }.getOrNull()),
                 hasParallel = credentials.hasParallelKey(),
-                hasFish = credentials.hasFishKey()
+                hasFish = credentials.hasFishKey(),
+                parallelTail = TuneModel.keyTail(runCatching { credentials.parallelKey() }.getOrNull()),
+                fishTail = TuneModel.keyTail(runCatching { credentials.fishKey() }.getOrNull())
             )
         }
     }
