@@ -24,6 +24,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -50,6 +51,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -143,7 +145,11 @@ fun RecordingIndicator(elapsedSec: Int, modifier: Modifier = Modifier, color: Co
     }
 }
 
-/* EFFECT 5: voice dot waveform. Columns of stacked dots, lit count = amplitude. */
+/* EFFECT 5: voice dot waveform. Columns of stacked dots, lit count = amplitude.
+ * The newest level is the right-hand column. With [cols] set (the kit's 44 x 15 voice field)
+ * the dots scale to fill the width; otherwise the column count follows [dot] + [gap].
+ * [peakFrom] colours every lit dot at least that many rows from the centre line as a peak;
+ * without it only the end dots of a full-height column are peaks. */
 @Composable
 fun VoiceDotWave(
     levels: List<Float>,
@@ -151,28 +157,80 @@ fun VoiceDotWave(
     rows: Int = 9,
     dot: Dp = 4.dp,
     gap: Dp = 3.dp,
+    cols: Int? = null,
+    peakFrom: Int? = null,
+    on: Color = DotTheme.c.textPrimary,
+    peak: Color = DotTheme.c.accent,
+    off: Color = DotTheme.c.dotOff
+) = VoiceDotWave({ levels }, modifier, rows, dot, gap, cols, peakFrom, on, peak, off)
+
+/** The same wave, reading [levels] while drawing: a fast-changing level only redraws the canvas. */
+@Composable
+fun VoiceDotWave(
+    levels: () -> List<Float>,
+    modifier: Modifier = Modifier,
+    rows: Int = 9,
+    dot: Dp = 4.dp,
+    gap: Dp = 3.dp,
+    cols: Int? = null,
+    peakFrom: Int? = null,
     on: Color = DotTheme.c.textPrimary,
     peak: Color = DotTheme.c.accent,
     off: Color = DotTheme.c.dotOff
 ) {
-    Canvas(modifier.height((dot + gap) * rows - gap).fillMaxWidth()) {
-        val d = dot.toPx(); val g = gap.toPx(); val pitch = d + g
-        val cols = (size.width / pitch).toInt()
-        val mid = rows / 2
-        for (c in 0 until cols) {
-            val lv = levels.getOrElse(levels.size - cols + c) { 0f }.coerceIn(0f, 1f)
-            val half = (lv * (mid + 0.49f)).roundToInt()
+    val sized = if (cols != null) modifier.fillMaxWidth().aspectRatio(cols.toFloat() / rows)
+        else modifier.height((dot + gap) * rows - gap).fillMaxWidth()
+    Canvas(sized) {
+        val pitch: Float
+        val d: Float
+        val inset: Float
+        if (cols != null) {
+            pitch = size.width / cols
+            d = pitch * dot.value / (dot.value + gap.value)
+            inset = pitch / 2
+        } else {
+            d = dot.toPx()
+            pitch = d + gap.toPx()
+            inset = d / 2
+        }
+        val count = cols ?: (size.width / pitch).toInt()
+        val values = levels()
+        val lit = ArrayList<Offset>(count * rows)
+        val peaks = ArrayList<Offset>()
+        val dark = ArrayList<Offset>(count * rows)
+        for (c in 0 until count) {
+            val lv = values.getOrElse(values.size - count + c) { 0f }
             for (r in 0 until rows) {
-                val dist = abs(r - mid)
-                val lit = dist <= half && (half > 0 || dist == 0)
-                val col = when {
-                    !lit -> off
-                    dist == half && half >= mid -> peak
-                    else -> on
+                val o = Offset(c * pitch + inset, r * pitch + inset)
+                when (waveDot(lv, r, rows, peakFrom)) {
+                    WaveDot.OFF -> dark += o
+                    WaveDot.ON -> lit += o
+                    WaveDot.PEAK -> peaks += o
                 }
-                drawCircle(col, d / 2, Offset(c * pitch + d / 2, r * pitch + d / 2))
             }
         }
+        drawPoints(dark, PointMode.Points, off, strokeWidth = d, cap = StrokeCap.Round)
+        drawPoints(lit, PointMode.Points, on, strokeWidth = d, cap = StrokeCap.Round)
+        drawPoints(peaks, PointMode.Points, peak, strokeWidth = d, cap = StrokeCap.Round)
+    }
+}
+
+internal enum class WaveDot { OFF, ON, PEAK }
+
+/**
+ * One dot of [VoiceDotWave]: a column lights [level] of its half-height above and below the
+ * centre row (the centre row always shows). A NaN level reads as silence.
+ */
+internal fun waveDot(level: Float, row: Int, rows: Int, peakFrom: Int?): WaveDot {
+    val mid = rows / 2
+    val lv = if (level.isNaN()) 0f else level.coerceIn(0f, 1f)
+    val half = (lv * (mid + 0.49f)).roundToInt()
+    val dist = abs(row - mid)
+    return when {
+        dist > half -> WaveDot.OFF
+        peakFrom != null -> if (dist >= peakFrom) WaveDot.PEAK else WaveDot.ON
+        dist == half && half >= mid -> WaveDot.PEAK
+        else -> WaveDot.ON
     }
 }
 

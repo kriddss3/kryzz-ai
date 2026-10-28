@@ -76,9 +76,9 @@ object InkLines {
         else -> InkLine("RUN READY")
     }
 
-    fun voice(phase: VoicePhase, searching: Boolean = false): InkLine = when (phase) {
+    fun voice(phase: VoicePhase, searching: Boolean = false, muted: Boolean = false): InkLine = when (phase) {
         VoicePhase.IDLE -> InkLine("VOICE READY")
-        VoicePhase.LISTENING -> InkLine("VOICE LISTENING", live = true)
+        VoicePhase.LISTENING -> InkLine(if (muted) "VOICE MUTED" else "VOICE LISTENING", live = true)
         VoicePhase.PROCESSING -> InkLine(if (searching) "VOICE SEARCHING" else "VOICE THINKING", live = true)
         VoicePhase.SPEAKING -> InkLine("VOICE SPEAKING", live = true)
     }

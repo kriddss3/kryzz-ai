@@ -11,15 +11,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +20,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -47,16 +38,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.RecordVoiceOver
-import androidx.compose.material.icons.outlined.MicNone
-import androidx.compose.material.icons.outlined.MicOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -79,20 +63,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -102,9 +81,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
@@ -160,6 +137,32 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.effects.VoiceDotWave
+import ai.daylight.assistant.ui.voice.VOICE_COMPACT_HEIGHT
+import ai.daylight.assistant.ui.voice.VOICE_WAVE_COLS
+import ai.daylight.assistant.ui.voice.VOICE_WAVE_ROWS
+import ai.daylight.assistant.ui.voice.VOICE_WAVE_ROWS_COMPACT
+import ai.daylight.assistant.ui.voice.VOICE_WAVE_TICK_MS
+import ai.daylight.assistant.ui.voice.VoiceHeader
+import ai.daylight.assistant.ui.voice.VoiceMuteToggle
+import ai.daylight.assistant.ui.voice.VoiceSideButton
+import ai.daylight.assistant.ui.voice.VoiceTranscript
+import ai.daylight.assistant.ui.voice.VoiceWaveHistory
+import ai.daylight.assistant.ui.voice.voiceCoreIcon
+import ai.daylight.assistant.ui.voice.voiceLines
+import ai.daylight.assistant.ui.voice.voiceTurns
+import ai.daylight.assistant.ui.voice.voiceWavePeakFrom
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 
 internal fun agentPrimaryColor(darkBackground: Boolean): Color =
     if (darkBackground) DotColors.TextPrimary else DotColorsLight.TextPrimary
@@ -255,8 +258,13 @@ fun ChatScreen(
     var showAiControls by remember(vm.conversationId) { mutableStateOf(false) }
     var showCapabilityPicker by remember(vm.conversationId) { mutableStateOf(false) }
     val voicePhase by vm.voicePhase.collectAsStateWithLifecycle()
-    val voiceLevel by vm.voiceLevel.collectAsStateWithLifecycle()
+    // The voice level is not collected here: it changes every 30ms, so only the voice
+    // waveform reads it (see VoiceChatOverlay).
     val voiceTranscript by vm.voiceTranscript.collectAsStateWithLifecycle()
+    val voiceMuted by vm.voiceMicMuted.collectAsStateWithLifecycle()
+    // Voice's keyboard button: once the overlay closes, focus the reply line and open the keyboard.
+    val replyFocus = remember { FocusRequester() }
+    var replyFocusRequests by remember { mutableIntStateOf(0) }
     val dictating by vm.dictating.collectAsStateWithLifecycle()
     val dictationLevel by vm.dictationLevel.collectAsStateWithLifecycle()
     val speakingMessageId by vm.speakingMessageId.collectAsStateWithLifecycle()
@@ -288,6 +296,13 @@ fun requestVoice() {
         } else {
             dictationMicPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+    LaunchedEffect(replyFocusRequests) {
+        if (replyFocusRequests == 0) return@LaunchedEffect
+        // Wait a frame so the voice overlay has left and the reply line is laid out again.
+        withFrameNanos { }
+        // No reply line while a run's Stop/Pause bar shows: then there is nothing to focus.
+        if (runCatching { replyFocus.requestFocus() }.isSuccess) keyboard?.show()
     }
     // The "Voice" entry in the chat menu opens a fresh conversation ready to
     // speak: the mic session starts once, on the first composition. This is also
@@ -418,7 +433,7 @@ fun requestVoice() {
     LaunchedEffect(generating) { if (generating && vm.agentPlan.value == null) heldPlan = null }
     val runPlan = conversationPlan ?: heldPlan?.takeIf { it.first == currentRunId }?.second
     val inkLine = when (shownArm) {
-        Arm.VOICE -> InkLines.voice(voicePhase, voiceSearching)
+        Arm.VOICE -> InkLines.voice(voicePhase, voiceSearching, voiceMuted)
         Arm.RUN -> InkLines.run(
             generating = generating,
             doneSteps = runPlan?.doneCount ?: 0,
@@ -557,7 +572,8 @@ fun requestVoice() {
                                 followUp = followUp.clear()
                             },
                             onRemoveAttachment = vm::removeAttachment,
-                            onFocusChanged = onComposerFocusChanged
+                            onFocusChanged = onComposerFocusChanged,
+                            focusRequester = replyFocus
                         ) else if (generating) RunActions(
                             // The agent has no pause, so Pause only says it is not here yet.
                             onPause = { inkStrip?.flash(InkLine("PAUSE NOT YET")) },
@@ -587,6 +603,7 @@ fun requestVoice() {
                             onUnqueue = {},
                             onRemoveAttachment = vm::removeAttachment,
                             onFocusChanged = onComposerFocusChanged,
+                            focusRequester = replyFocus,
                             idlePlaceholder = if (messages.isEmpty()) "Give Kryzz a task" else "Follow up",
                             optionsLabel = "Run options",
                             notes = {
@@ -753,12 +770,18 @@ fun requestVoice() {
                 if (voicePhase != VoicePhase.IDLE) {
                     VoiceChatOverlay(
                         phase = voicePhase,
-                        level = voiceLevel,
+                        levelSource = vm.voiceLevel,
                         transcript = voiceTranscript,
-                        searching = vm.voiceSearching.collectAsStateWithLifecycle().value,
-                        muted = vm.voiceMicMuted.collectAsStateWithLifecycle().value,
+                        messages = messages,
+                        searching = voiceSearching,
+                        muted = voiceMuted,
                         onTap = vm::tapVoiceBubble,
                         onMuteToggle = { vm.setVoiceMuted(!vm.voiceMicMuted.value) },
+                        // Keyboard: leave voice and type on the reply line instead.
+                        onKeyboard = {
+                            vm.cancelVoice()
+                            replyFocusRequests++
+                        },
                         onClose = vm::cancelVoice
                     )
                 }
@@ -964,299 +987,184 @@ private fun SettingsState.modelFor(purpose: ModelPurpose): String = when (purpos
 private fun String.compactModel(): String = substringAfter('/').ifBlank { "Select model" }
 
 /**
- * Full-screen voice chat session: an opaque surface, a live bubble in the centre whose
- * icon and circle grow and shrink with the real audio — the microphone level while the
- * user speaks, the TTS playback level while Kryzz replies — and a quiet fixed state
- * while the answer is prepared. The session stays in voice mode: after a reply the mic
- * re-arms automatically. Tap the bubble to stop listening or skip the reply; use the
- * close button to leave.
+ * Voice (kit voice.png): the squid, VOICE in dot text and a red recording dot with the phase
+ * and a timer; the previous line dim and the current line large; a 44 x 15 LED waveform
+ * fed by the live mic level (or the playback level while Kryzz speaks); the yellow core
+ * button between keyboard and close, and a mute pill under it.
+ *
+ * Turn-taking stays automatic: a turn sends when the user finishes, the mic re-arms after
+ * each reply, and talking over Kryzz interrupts it. The core button keeps the old orb's taps:
+ * send now while listening, cancel while thinking, interrupt while speaking.
  */
 @Composable
 private fun VoiceChatOverlay(
     phase: VoicePhase,
-    level: Float,
+    levelSource: StateFlow<Float>,
     transcript: String,
+    messages: List<MessageEntity>,
     searching: Boolean,
     muted: Boolean,
     onTap: () -> Unit,
     onMuteToggle: () -> Unit,
+    onKeyboard: () -> Unit,
     onClose: () -> Unit
 ) {
     BackHandler(enabled = true, onBack = onClose)
     val motionEnabled = LocalKryzzMotionEnabled.current
-    val baseColors = MaterialTheme.colorScheme
-    val bubbleColor = baseColors.onBackground
-    val onBubble = baseColors.background
+    val c = DotTheme.c
     // Voice chat is hands-free and the user is rarely looking at the phone — the
     // screen must stay awake for the whole session. Toggling the property via a
     // DisposableEffect (rather than FLAG_KEEP_SCREEN_ON on the window) means the
     // assignment is automatically reverted the instant the overlay leaves the tree,
-    // so normal chat immediately goes back to honouring the user's screen timeout.
+    // so normal chatting immediately goes back to honouring the user's screen timeout.
     val view = LocalView.current
     DisposableEffect(view) {
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
     }
 
-    val reactiveLevel = if (motionEnabled) level.coerceIn(0f, 1f) else 0f
-    val baseSize = 132.dp
-    val coreSize: Dp = when (phase) {
-        // The circle breathes with real microphone/playback energy when motion is enabled.
-        VoicePhase.LISTENING -> baseSize + (44.dp * reactiveLevel)
-        VoicePhase.PROCESSING -> 124.dp
-        VoicePhase.SPEAKING -> baseSize + (44.dp * reactiveLevel)
-        VoicePhase.IDLE -> 0.dp
+    // The LED field scrolls left: each tick, the loudest level since the last tick becomes
+    // the newest column. The canvas reads the columns while drawing, so the 30ms level
+    // updates redraw only the waveform, never the whole overlay.
+    val wave = remember { VoiceWaveHistory(VOICE_WAVE_COLS) }
+    val waveLevels = remember { mutableStateOf(emptyList<Float>()) }
+    LaunchedEffect(motionEnabled) {
+        wave.clear()
+        waveLevels.value = emptyList()
+        launch {
+            levelSource.collect { level ->
+                // With motion off the field stays a still, flat line.
+                val reactiveLevel = if (motionEnabled) level.coerceIn(0f, 1f) else 0f
+                wave.offer(reactiveLevel)
+            }
+        }
+        while (motionEnabled) {
+            delay(VOICE_WAVE_TICK_MS)
+            waveLevels.value = wave.tick()
+        }
     }
-    val animatedCore by animateDpAsState(
-        targetValue = coreSize,
-        animationSpec = if (motionEnabled) tween(120) else snap(),
-        label = "voice core"
-    )
-    val orbitalMotion = rememberInfiniteTransition(label = "voice orbital field")
-    val orbitProgress by orbitalMotion.animateFloat(
-        initialValue = 0f,
-        targetValue = if (motionEnabled) 1f else 0f,
-        animationSpec = infiniteRepeatable(tween(12_000), RepeatMode.Restart),
-        label = "voice orbit progress"
-    )
+    val turns = remember(messages) { voiceTurns(messages) }
+    val lines = remember(phase, transcript, muted, turns) { voiceLines(phase, transcript, muted, turns) }
 
-    Box(
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             // Fully opaque: normal chatting is not visible behind the voice session.
-            .background(baseColors.background)
+            .background(MaterialTheme.colorScheme.background)
             .testTag("voice_overlay")
-            .safeDrawingPadding(),
+            .safeDrawingPadding()
             // The voice overlay is a descendant of KryzzSidePanelHost, whose parent Box
             // runs a `pointerInput` for the edge-swipe gesture. That handler only consumes
             // after a real horizontal swipe past slop — it does NOT swallow the down event.
-            // For the same reason we DO NOT swallow the down event here: the close
-            // IconButton (top-right) and the bottom action buttons must receive their
-            // presses. The previous "consume every pointer" overlay ate every click
-            // (5.1.6 buttons-broken bug — see VoiceChatOverlay history). We leave gesture
-            // handling to the side-panel swipe handler and let children receive all events.
-        contentAlignment = Alignment.Center
+            // For the same reason we DO NOT swallow the down event here: the close button
+            // and the other actions must receive their presses. The previous "consume every
+            // pointer" overlay ate every click (5.1.6 buttons-broken bug — see
+            // VoiceChatOverlay history). We leave gesture handling to the side-panel swipe
+            // handler and let children receive all events.
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            repeat(54) { index ->
-                val x = size.width * (((index * 71 + 17) % 101) / 101f)
-                val y = size.height * (((index * 41 + 23) % 103) / 103f)
-                val shimmer = if (motionEnabled) {
-                    0.5f + 0.5f * kotlin.math.sin(
-                        (orbitProgress * 2f * kotlin.math.PI + index * 0.73f).toDouble()
-                    ).toFloat()
-                } else 0.5f
-                drawCircle(
-                    color = baseColors.onBackground.copy(
-                        alpha = 0.035f + (index % 4) * 0.012f + shimmer * 0.035f
-                    ),
-                    radius = (0.55f + (index % 3) * 0.28f).dp.toPx(),
-                    center = Offset(x + shimmer * 1.2.dp.toPx(), y)
+        // Short screens (small phones, landscape): smaller parts, and the column scrolls.
+        val compact = maxHeight < VOICE_COMPACT_HEIGHT
+        val rows = if (compact) VOICE_WAVE_ROWS_COMPACT else VOICE_WAVE_ROWS
+        val ring = if (compact) 96.dp else 128.dp
+        val core = if (compact) 72.dp else 96.dp
+        val side = if (compact) 48.dp else 56.dp
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                .padding(start = 20.dp, end = 12.dp, top = if (compact) 8.dp else 20.dp, bottom = 16.dp)
+        ) {
+            VoiceHeader(phase = phase, searching = searching, muted = muted, compact = compact)
+            if (compact) {
+                VoiceTranscript(
+                    lines,
+                    Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(top = 16.dp, bottom = 16.dp),
+                    maxCurrentLines = 4
+                )
+            } else {
+                // Long replies scroll here rather than push the controls off screen.
+                VoiceTranscript(
+                    lines,
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(top = 28.dp, bottom = 24.dp)
                 )
             }
-        }
-
-        Text(
-            "VOICE SESSION",
-            modifier = Modifier.align(Alignment.TopStart).padding(top = 24.dp, start = 24.dp),
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.8.sp),
-            color = baseColors.onSurfaceVariant
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
-                // Extra bottom padding so the scrollable content clears the bottom
-                // mute toggle (~80.dp from the safe-drawing bottom) without overlapping it.
-                .padding(start = 24.dp, end = 24.dp, top = 64.dp, bottom = 96.dp)
-                .semantics { liveRegion = LiveRegionMode.Polite },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
+            // Yellow peaks only while the user speaks; Kryzz's voice is all white.
+            val peakFrom = voiceWavePeakFrom(phase, muted, rows)
+            VoiceDotWave(
+                levels = { waveLevels.value },
+                rows = rows,
+                cols = VOICE_WAVE_COLS,
+                peakFrom = peakFrom,
+                peak = if (peakFrom != null) c.accent else c.textPrimary,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 288.dp)
-                    .height(288.dp)
-                    .testTag("voice_orbital_field"),
-                contentAlignment = Alignment.Center
+                    .align(Alignment.CenterHorizontally)
+                    .widthIn(max = 420.dp)
+                    .testTag("voice_orbital_field")
+            )
+            if (compact) Spacer(Modifier.height(16.dp)) else Spacer(Modifier.weight(0.6f))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Canvas(Modifier.fillMaxSize()) {
-                    val centre = center
-                    val coreRadius = animatedCore.toPx() * 0.5f
-                    val innerOrbit = coreRadius + 22.dp.toPx()
-                    val outerOrbit = coreRadius + 48.dp.toPx()
-                    drawCircle(
-                        color = bubbleColor.copy(alpha = 0.035f + reactiveLevel * 0.055f),
-                        radius = coreRadius + 12.dp.toPx(),
-                        center = centre
-                    )
-                    drawCircle(
-                        color = baseColors.onBackground.copy(alpha = 0.13f),
-                        radius = innerOrbit,
-                        center = centre,
-                        style = Stroke(width = 0.8.dp.toPx())
-                    )
-                    drawCircle(
-                        color = baseColors.onBackground.copy(alpha = 0.06f),
-                        radius = outerOrbit,
-                        center = centre,
-                        style = Stroke(width = 0.65.dp.toPx())
-                    )
-                    repeat(18) { index ->
-                        val direction = if (index % 2 == 0) 1f else -0.62f
-                        val angle = index * 2.399963f + orbitProgress * 2f * kotlin.math.PI.toFloat() * direction
-                        val wave = kotlin.math.sin(
-                            (orbitProgress * 2f * kotlin.math.PI + index * 0.81f).toDouble()
-                        ).toFloat()
-                        val radius = innerOrbit + (index % 4) * 9.dp.toPx() + wave * 3.dp.toPx()
-                        val particle = Offset(
-                            centre.x + kotlin.math.cos(angle.toDouble()).toFloat() * radius,
-                            centre.y + kotlin.math.sin(angle.toDouble()).toFloat() * radius
-                        )
-                        val bright = index % 6 == 0
-                        drawCircle(
-                            color = baseColors.onBackground.copy(alpha = if (bright) 0.72f else 0.25f + (index % 3) * 0.08f),
-                            radius = if (bright) 2.dp.toPx() else (0.85f + (index % 3) * 0.3f).dp.toPx(),
-                            center = particle
-                        )
-                    }
-                }
-                Surface(
-                    onClick = onTap,
-                    modifier = Modifier
-                        .size(animatedCore)
+                VoiceSideButton(
+                    R.drawable.ic_kz_keyboard,
+                    "Type instead",
+                    onKeyboard,
+                    Modifier.testTag("voice_keyboard_button"),
+                    size = side
+                )
+                // Kit hold button: a yellow ring around a yellow core. A tap sends now,
+                // cancels or interrupts, depending on the phase.
+                Box(
+                    Modifier
+                        .size(ring)
                         .clip(CircleShape)
+                        .border(1.5.dp, c.accent, CircleShape)
+                        .clickable(onClick = onTap)
                         .testTag("voice_primary_action")
-                        .semantics { contentDescription = voiceOverlayDescription(phase) },
-                    shape = CircleShape,
-                    color = bubbleColor,
-                    contentColor = onBubble,
-                    shadowElevation = 0.dp
+                        .semantics {
+                            contentDescription = voiceOverlayDescription(phase)
+                            role = Role.Button
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        when (phase) {
-                            VoicePhase.LISTENING -> Icon(
-                                Icons.Outlined.RecordVoiceOver,
-                                null,
-                                Modifier.size(animatedCore * 0.4f),
-                                tint = onBubble
-                            )
-                            VoicePhase.PROCESSING -> {
-                                val processIcon = if (searching) Icons.Outlined.Public else Icons.Outlined.AutoAwesome
-                                Icon(
-                                    processIcon,
-                                    null,
-                                    Modifier
-                                        .size(animatedCore * 0.36f)
-                                        .graphicsLayer { rotationZ = if (motionEnabled) orbitProgress * 1_440f else 0f },
-                                    tint = onBubble
-                                )
-                            }
-                            VoicePhase.SPEAKING -> Icon(
-                                Icons.AutoMirrored.Outlined.VolumeUp,
-                                null,
-                                Modifier.size(animatedCore * 0.4f),
-                                tint = onBubble
-                            )
-                            VoicePhase.IDLE -> {}
-                        }
+                    Box(Modifier.size(core).background(c.accent, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(
+                            painterResource(voiceCoreIcon(phase, muted)),
+                            null,
+                            Modifier.size(if (compact) 26.dp else 30.dp),
+                            tint = c.onAccent
+                        )
                     }
                 }
+                VoiceSideButton(
+                    R.drawable.ic_kz_close,
+                    "End voice chat",
+                    onClose,
+                    Modifier.testTag("voice_close_button"),
+                    size = side
+                )
             }
-
-            Spacer(Modifier.height(26.dp))
-            if (transcript.isNotBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = baseColors.surfaceVariant.copy(alpha = 0.7f),
-                    contentColor = baseColors.onSurface,
-                    modifier = Modifier.widthIn(max = 320.dp)
-                ) {
-                    Text(
-                        transcript,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-            }
+            Spacer(Modifier.height(14.dp))
+            VoiceMuteToggle(
+                muted = muted,
+                onToggle = onMuteToggle,
+                modifier = Modifier.align(Alignment.CenterHorizontally).testTag("voice_mute_toggle")
+            )
+            Spacer(Modifier.height(12.dp))
             Text(
-                text = if (searching) "Checking online" else voicePhaseTitle(phase),
-                style = MaterialTheme.typography.headlineSmall,
-                color = baseColors.onSurface,
+                (if (searching && phase == VoicePhase.PROCESSING) "Searching the web, tap stop to cancel"
+                    else voicePhaseHint(phase, muted)).uppercase(Locale.US),
+                Modifier.fillMaxWidth(),
+                style = DotType.Caption,
+                color = c.textTertiary,
                 textAlign = TextAlign.Center
             )
-            Text(
-                text = if (searching) "Searching the web for fresh facts"
-                    else voicePhaseHint(phase, muted),
-                modifier = Modifier.padding(top = 7.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = baseColors.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-        }
-
-        // Mute toggle. Promoted to its own row, pinned to the very bottom of the screen
-        // (lowered by an extra 24.dp so it sits in the natural thumb-reach zone on tall
-        // phones) and always visible while the session is active — including PROCESSING,
-        // where the user previously had no recourse when they wanted to cut the mic before
-        // the next reply. The button is large (72.dp), shows a visible "Mute"/"Unmute"
-        // label, and is visually inverted (error-tinted) when active so the muted state is
-        // unmissable.
-        if (phase != VoicePhase.IDLE) {
-            Surface(
-                onClick = onMuteToggle,
-                shape = RoundedCornerShape(36.dp),
-                color = if (muted) baseColors.errorContainer
-                    else baseColors.surfaceVariant.copy(alpha = 0.7f),
-                contentColor = if (muted) baseColors.onErrorContainer
-                    else baseColors.onSurface,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp)
-                    .height(56.dp)
-                    .widthIn(min = 180.dp)
-                    .testTag("voice_mute_toggle")
-                    .semantics {
-                        contentDescription = if (muted) "Unmute microphone" else "Mute microphone"
-                    }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(
-                        imageVector = if (muted) Icons.Outlined.MicOff else Icons.Outlined.MicNone,
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = if (muted) "Unmute" else "Mute",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-        // Close (quit) button. Drawn AFTER the Column and the Mute Surface so it stacks
-        // on top of them in the z-order. The Column has fillMaxHeight() and would otherwise
-        // sit on top of the close button area at top-right, silently blocking taps.
-        IconButton(
-            onClick = onClose,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 8.dp, end = 8.dp)
-                .size(52.dp)
-                .testTag("voice_close_button")
-        ) {
-            Icon(Icons.Outlined.Close, contentDescription = "End voice chat")
         }
     }
 }
@@ -1268,10 +1176,11 @@ internal fun voicePhaseTitle(phase: VoicePhase): String = when (phase) {
     VoicePhase.IDLE -> ""
 }
 
+/** The caption under the voice controls (shown in capitals). Turn-taking is automatic, so there is no "release to send". */
 internal fun voicePhaseHint(phase: VoicePhase, muted: Boolean = false): String = when (phase) {
-    VoicePhase.LISTENING -> if (muted) "Microphone muted · tap the mic to unmute" else "Speak naturally · sends when you finish · tap to send now"
-    VoicePhase.PROCESSING -> "Thinking · searching if needed"
-    VoicePhase.SPEAKING -> if (muted) "Microphone muted · tap the mic to unmute" else "Start speaking to interrupt · or tap the orb"
+    VoicePhase.LISTENING -> if (muted) "Mic muted, tap Unmute to talk" else "It sends when you finish, or tap to send"
+    VoicePhase.PROCESSING -> "Tap stop to cancel"
+    VoicePhase.SPEAKING -> if (muted) "Mic muted, tap stop to skip the reply" else "Start speaking to interrupt, or tap stop"
     VoicePhase.IDLE -> ""
 }
 

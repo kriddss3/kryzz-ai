@@ -83,6 +83,13 @@ class InkLineTest {
         assertThat(InkLines.voice(VoicePhase.SPEAKING).text).isEqualTo("VOICE SPEAKING")
     }
 
+    @Test fun mutedVoiceSaysSoWhileListening() {
+        assertThat(InkLines.voice(VoicePhase.LISTENING, muted = true)).isEqualTo(InkLine("VOICE MUTED", live = true))
+        // Kryzz still talks while the mic is muted.
+        assertThat(InkLines.voice(VoicePhase.SPEAKING, muted = true).text).isEqualTo("VOICE SPEAKING")
+        assertThat(InkLines.voice(VoicePhase.IDLE, muted = true).text).isEqualTo("VOICE READY")
+    }
+
     @Test fun tuneAndNotYetLines() {
         assertThat(InkLines.tune(AgentQuality.BALANCED)).isEqualTo(InkLine("TUNE BALANCED"))
         assertThat(InkLines.tune(AgentQuality.MAX).text).isEqualTo("TUNE MAX")
@@ -95,6 +102,7 @@ class InkLineTest {
             add(InkLines.talk(false)); add(InkLines.talk(true, "Searching: x"))
             add(InkLines.run(true, 1, 3)); add(InkLines.run(false))
             VoicePhase.entries.forEach { add(InkLines.voice(it)) }
+            VoicePhase.entries.forEach { add(InkLines.voice(it, muted = true)) }
             AgentQuality.entries.forEach { add(InkLines.tune(it)) }
             Arm.entries.forEach { add(InkLines.notYet(it)) }
         }

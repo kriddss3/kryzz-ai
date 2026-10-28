@@ -32,6 +32,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -87,6 +89,7 @@ fun ReplyLine(
     onRemoveAttachment: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
     idlePlaceholder: String = "Reply",
     optionsLabel: String = "Talk options",
     notes: @Composable ColumnScope.() -> Unit = {},
@@ -132,6 +135,7 @@ fun ReplyLine(
                     onValueChange = onValueChange,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                         .onFocusChanged { onFocusChanged(it.isFocused) }
                         .semantics { contentDescription = placeholder },
                     textStyle = DotType.Answer.copy(color = c.textPrimary),
