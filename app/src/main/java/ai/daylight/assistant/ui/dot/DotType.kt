@@ -50,6 +50,9 @@ object DotType {
     // Geist
     val Question = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.022).em)
     val Headline = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 22.sp, lineHeight = 26.sp, letterSpacing = (-0.01).em)
+
+    /** Run's goal (agent-run): Geist 500 22/28. */
+    val Goal = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 22.sp, lineHeight = 28.sp, letterSpacing = (-0.015).em)
     val Title = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Medium, fontSize = 17.sp, lineHeight = 22.sp)
     val Answer = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Normal, fontSize = 18.sp, lineHeight = 28.sp)
     val Body = TextStyle(fontFamily = SansFamily, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 22.sp, letterSpacing = 0.006.em)

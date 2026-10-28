@@ -165,7 +165,7 @@ internal fun hasChatDraft(conversationId: String): Boolean = ChatDraftStore.cont
 
 internal fun chatDraftConversationIds(): Set<String> = ChatDraftStore.conversationIds()
 
-private fun toolDisplayLabel(tool: String): String = when (tool) {
+internal fun toolDisplayLabel(tool: String): String = when (tool) {
     "parallel_search" -> "Searching the web"
     "create_artifact" -> "Creating your file"
     "create_skill" -> "Building your skill"

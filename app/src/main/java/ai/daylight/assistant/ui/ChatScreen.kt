@@ -6,42 +6,25 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,103 +39,42 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.AttachFile
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Photo
-import androidx.compose.material.icons.outlined.PhotoCamera
-import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.RecordVoiceOver
-import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.RadioButtonUnchecked
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.SmartToy
-import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.TableChart
-import androidx.compose.material.icons.outlined.InsertDriveFile
-import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MicNone
 import androidx.compose.material.icons.outlined.MicOff
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Build
-import androidx.compose.material.icons.outlined.Calculate
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.Lightbulb
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.WbSunny
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -160,17 +82,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -179,9 +98,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -201,27 +118,13 @@ import ai.daylight.assistant.domain.AgentModelChoice
 import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.domain.AgentPlan
 import ai.daylight.assistant.domain.AssistantMode
-import ai.daylight.assistant.domain.Citation
-import ai.daylight.assistant.domain.ChatAttachment
-import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.ConversationUsage
 import ai.daylight.assistant.domain.GeneratedOutput
-import ai.daylight.assistant.domain.GradientPalette
-import ai.daylight.assistant.domain.InlineQuestion
-import ai.daylight.assistant.domain.InlineQuestionProtocol
-import ai.daylight.assistant.domain.MessageSegment
 import ai.daylight.assistant.domain.MessageStatus
 import ai.daylight.assistant.domain.ModelPurpose
-import ai.daylight.assistant.domain.OutputKind
-import ai.daylight.assistant.domain.PlanStepStatus
 import ai.daylight.assistant.domain.ReasoningEffort
-import ai.daylight.assistant.domain.SubagentState
 import ai.daylight.assistant.domain.SwarmPhase
 import ai.daylight.assistant.domain.SwarmStatus
-import ai.daylight.assistant.domain.WorkLog
-import ai.daylight.assistant.domain.WorkStep
-import ai.daylight.assistant.domain.WorkStepKind
-import androidx.annotation.DrawableRes
 import androidx.compose.ui.res.painterResource
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotColors
@@ -234,26 +137,29 @@ import ai.daylight.assistant.ui.talk.SourceReadoutBuilder
 import ai.daylight.assistant.ui.talk.TalkCallbacks
 import ai.daylight.assistant.ui.talk.TalkOptionsSheet
 import ai.daylight.assistant.ui.talk.TalkPane
+import ai.daylight.assistant.ui.talk.NoteRow
+import ai.daylight.assistant.ui.run.QualitySheet
+import ai.daylight.assistant.ui.run.QuestionCard
+import ai.daylight.assistant.ui.run.RunActions
+import ai.daylight.assistant.ui.run.RunHeader
+import ai.daylight.assistant.ui.run.RunOptionsSheet
+import ai.daylight.assistant.ui.run.RunPane
+import ai.daylight.assistant.ui.run.WorkChips
+import ai.daylight.assistant.ui.home.HomeBoard
+import ai.daylight.assistant.ui.shell.InkLine
+import ai.daylight.assistant.ui.shell.LocalInkStrip
 import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStripEffect
 import ai.daylight.assistant.ui.dot.DotColorsLight
 import ai.daylight.assistant.ui.dot.DataMonoFamily
-import ai.daylight.assistant.ui.dot.SansFamily
-import ai.daylight.assistant.ui.theme.LocalGlassOpacity
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import ai.daylight.assistant.ui.agent.BotMood
-import ai.daylight.assistant.ui.agent.BotSize
-import ai.daylight.assistant.ui.agent.KryzzMascot
 import ai.daylight.assistant.ui.agent.MascotState
 import ai.daylight.assistant.voice.VoicePhase
 import java.io.File
-import java.text.DateFormat
-import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 internal fun agentPrimaryColor(darkBackground: Boolean): Color =
     if (darkBackground) DotColors.TextPrimary else DotColorsLight.TextPrimary
@@ -319,7 +225,6 @@ fun ChatScreen(
 ) {
     val messages by vm.messages.collectAsStateWithLifecycle()
     val usage by vm.usage.collectAsStateWithLifecycle()
-    val title by vm.title.collectAsStateWithLifecycle()
     val composer by vm.composer.collectAsStateWithLifecycle()
     val editing by vm.editingFrom.collectAsStateWithLifecycle()
     val generating by vm.generating.collectAsStateWithLifecycle()
@@ -503,13 +408,23 @@ fun requestVoice() {
     }
     LaunchedEffect(shownArm) { onArmShown(shownArm) }
     val conversationPlan = agentPlan?.takeIf { it.conversationId == vm.conversationId }
+    // The live plan is cleared when a run ends. Keep the last one for this run, so the finished
+    // card stays on screen (and the strip says RUN DONE) until a new run starts.
+    val currentRunId = messages.lastOrNull { it.role == "USER" }?.id
+    var heldPlan by remember(vm.conversationId) { mutableStateOf<Pair<String?, AgentPlan>?>(null) }
+    LaunchedEffect(conversationPlan, currentRunId) {
+        if (conversationPlan != null) heldPlan = currentRunId to conversationPlan
+    }
+    LaunchedEffect(generating) { if (generating && vm.agentPlan.value == null) heldPlan = null }
+    val runPlan = conversationPlan ?: heldPlan?.takeIf { it.first == currentRunId }?.second
     val inkLine = when (shownArm) {
         Arm.VOICE -> InkLines.voice(voicePhase, voiceSearching)
         Arm.RUN -> InkLines.run(
             generating = generating,
-            doneSteps = conversationPlan?.doneCount ?: 0,
-            totalSteps = conversationPlan?.steps?.size ?: 0,
-            latestActivity = activities.lastOrNull()
+            doneSteps = runPlan?.doneCount ?: 0,
+            totalSteps = runPlan?.steps?.size ?: 0,
+            // Not "Agent at work": that marker is up for the whole run and would read RUN AGENT.
+            latestActivity = WorkChips.latestActivity(activities)
         )
         else -> {
             // "TALK READING 3 OF 5": the same counts the source readout shows.
@@ -564,12 +479,29 @@ fun requestVoice() {
         }
     }
     var showTalkOptions by remember(vm.conversationId) { mutableStateOf(false) }
+    var showRunOptions by remember(vm.conversationId) { mutableStateOf(false) }
+    var showQualitySheet by remember(vm.conversationId) { mutableStateOf(false) }
+    val inkStrip = LocalInkStrip.current
     fun launchImagePicker() = pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     fun launchCamera() {
         cameraFile.value = File(context.cacheDir, "kryzz-camera-${System.currentTimeMillis()}.jpg")
         captureImage.launch(FileProvider.getUriForFile(context, "${context.packageName}.files", cameraFile.value!!))
     }
     fun launchFilePicker() = pickAttachments.launch(arrayOf("*/*"))
+    val paneCallbacks = TalkCallbacks(
+        onOpenLibrary = onOpenLibrary,
+        onEdit = vm::startEditing,
+        onRegenerate = vm::regenerate,
+        onSpeak = vm::speakMessage,
+        onShowUsage = { usageMessage = it },
+        onSaveOutput = {
+            pendingOutput = it
+            saveOutput.launch(it.fileName)
+        },
+        onOpenOutput = { openOutput(context, it) },
+        onQuestionAnswer = vm::sendQuestionAnswer,
+        onCreateSkill = vm::createSkillFromConversation
+    )
     val baseColors = MaterialTheme.colorScheme
     val darkBackground = baseColors.background.luminance() < 0.45f
     val modeColors = if (currentMode == AssistantMode.AGENT) {
@@ -587,16 +519,11 @@ fun requestVoice() {
                     containerColor = Color.Transparent,
                     topBar = {
                         // Talk has no top bar (kit chat-b): the departure board starts right
-                        // under the ink strip. Run keeps its header until phase C3.
-                        if (currentMode == AssistantMode.AGENT) ChatHeader(
-                            title = title,
-                            modelId = activeModelId,
-                            mode = currentMode,
-                            modeLocked = modeLocked,
-                            onModeSwitch = ::requestMode,
-                            onNewChat = onNewChat,
-                            onOpenLibrary = onOpenLibrary,
-                            onModelClick = { showAiControls = true }
+                        // under the ink strip. Run has RUN and the thinking-mode pill (agent-run).
+                        if (currentMode == AssistantMode.AGENT) RunHeader(
+                            quality = settings.agentQuality,
+                            onQuality = { showQualitySheet = true },
+                            onOpenLibrary = onOpenLibrary
                         )
                     },
                     bottomBar = {
@@ -631,38 +558,56 @@ fun requestVoice() {
                             },
                             onRemoveAttachment = vm::removeAttachment,
                             onFocusChanged = onComposerFocusChanged
-                        ) else Composer(
+                        ) else if (generating) RunActions(
+                            // The agent has no pause, so Pause only says it is not here yet.
+                            onPause = { inkStrip?.flash(InkLine("PAUSE NOT YET")) },
+                            onStop = {
+                                stopRequested = true
+                                vm.stop()
+                            }
+                        ) else ReplyLine(
                             value = composer,
-                            density = settings.chatDensity,
-                            onValue = vm::updateComposer,
-                            generating = generating,
+                            onValueChange = vm::updateComposer,
+                            generating = false,
                             editing = editing != null,
-                            mode = currentMode,
-                            capability = selectedCapability,
-                            quality = settings.agentQuality,
-                            onQuality = vm::setAgentQuality,
-                            modelNotice = agentModelNotice,
-                            onModelNoticeAnswer = vm::answerAgentModelSuggestion,
+                            queued = null,
                             attachments = pendingAttachments,
-                            rootNavVisible = rootNavVisible,
-                            onPickImage = {
-                                pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                            },
-                            onPickCamera = {
-                                cameraFile.value = File(context.cacheDir, "kryzz-camera-${System.currentTimeMillis()}.jpg")
-                                captureImage.launch(FileProvider.getUriForFile(context, "${context.packageName}.files", cameraFile.value!!))
-                            },
-                            onPickFile = { pickAttachments.launch(arrayOf("*/*")) },
-onRemoveAttachment = vm::removeAttachment,
                             dictating = dictating,
                             dictationLevel = dictationLevel,
-                            onDictation = ::requestDictation,
-                            onCapability = { showCapabilityPicker = true },
+                            verticalPadding = settings.chatDensity.composerVerticalPadding(),
                             onSend = vm::send,
+                            onQueue = {},
                             onStop = vm::stop,
-                            onVoice = ::requestVoice,
+                            onDictation = ::requestDictation,
+                            onOptions = {
+                                keyboard?.hide()
+                                showRunOptions = true
+                            },
                             onCancelEdit = vm::cancelEditing,
-                            onComposerFocusChanged = onComposerFocusChanged
+                            onUnqueue = {},
+                            onRemoveAttachment = vm::removeAttachment,
+                            onFocusChanged = onComposerFocusChanged,
+                            idlePlaceholder = if (messages.isEmpty()) "Give Kryzz a task" else "Follow up",
+                            optionsLabel = "Run options",
+                            notes = {
+                                if (agentModelNotice.visible) {
+                                    KryzzAgentModelNoticeCard(
+                                        notice = agentModelNotice,
+                                        onSwitch = { vm.answerAgentModelSuggestion(true) },
+                                        onKeep = { vm.answerAgentModelSuggestion(false) },
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                    )
+                                }
+                                if (selectedCapability != AgentCapability.AUTO) {
+                                    NoteRow(
+                                        label = "WORKFLOW",
+                                        text = selectedCapability.shortLabel,
+                                        action = "Change",
+                                        onAction = { showCapabilityPicker = true },
+                                        accent = false
+                                    )
+                                }
+                            }
                         )
                     }
                 ) { padding ->
@@ -686,47 +631,26 @@ onRemoveAttachment = vm::removeAttachment,
                             attachments = repository::attachments,
                             speakingMessageId = speakingMessageId,
                             synthesizingMessageId = synthesizingMessageId,
-                            callbacks = TalkCallbacks(
-                                onOpenLibrary = onOpenLibrary,
-                                onEdit = vm::startEditing,
-                                onRegenerate = vm::regenerate,
-                                onSpeak = vm::speakMessage,
-                                onShowUsage = { usageMessage = it },
-                                onSaveOutput = {
-                                    pendingOutput = it
-                                    saveOutput.launch(it.fileName)
-                                },
-                                onOpenOutput = { openOutput(context, it) },
-                                onQuestionAnswer = vm::sendQuestionAnswer
-                            )
-                        ) else ChatPane(
-                            mode = mode,
-                            density = settings.chatDensity,
+                            callbacks = paneCallbacks
+                        ) else RunPane(
+                            conversationId = vm.conversationId,
                             messages = messages,
-                            error = error,
                             generating = generating,
+                            error = error,
+                            activities = activities,
+                            workLogs = workLogs,
+                            plan = runPlan,
+                            swarm = swarmStatus,
                             capability = selectedCapability,
+                            capCents = HomeBoard.effectiveCapCents(settings.agentQuality, settings.costCapCents),
                             citations = repository::citations,
                             outputs = repository::outputs,
                             attachments = repository::attachments,
-                            activities = activities,
-                            swarmStatus = swarmStatus,
-                            plan = agentPlan?.takeIf { it.conversationId == vm.conversationId },
-                            workLogs = workLogs,
-                            onRegenerate = vm::regenerate,
-                            onEdit = vm::startEditing,
-                            onSaveOutput = {
-                                pendingOutput = it
-                                saveOutput.launch(it.fileName)
-                            },
-                            onOpenOutput = { openOutput(context, it) },
-                            onSpeak = vm::speakMessage,
                             speakingMessageId = speakingMessageId,
                             synthesizingMessageId = synthesizingMessageId,
-                            onShowUsage = { usageMessage = it },
                             skillCreatedFor = skillCreatedFor,
-                            onCreateSkill = vm::createSkillFromConversation,
-                            onQuestionAnswer = vm::sendQuestionAnswer
+                            callbacks = paneCallbacks,
+                            onWorkflow = { showCapabilityPicker = true }
                         )
                     }
                 }
@@ -786,6 +710,36 @@ onRemoveAttachment = vm::removeAttachment,
                         onDismiss = { showTalkOptions = false }
                     )
                 }
+                if (showRunOptions) {
+                    RunOptionsSheet(
+                        modeLocked = modeLocked,
+                        workflowLabel = selectedCapability.shortLabel,
+                        webSearch = settings.searchEnabled,
+                        modelLabel = activeModelId.compactModel(),
+                        onTalk = {
+                            showRunOptions = false
+                            requestMode(AssistantMode.CHAT)
+                        },
+                        onWorkflow = { showRunOptions = false; showCapabilityPicker = true },
+                        onWebSearch = onWebSearch,
+                        onModel = { showRunOptions = false; showAiControls = true },
+                        onPickImage = { showRunOptions = false; launchImagePicker() },
+                        onPickCamera = { showRunOptions = false; launchCamera() },
+                        onPickFile = { showRunOptions = false; launchFilePicker() },
+                        onVoice = { showRunOptions = false; requestVoice() },
+                        onChats = { showRunOptions = false; onOpenLibrary() },
+                        onNewRun = { showRunOptions = false; onNewChat(AssistantMode.AGENT) },
+                        onDismiss = { showRunOptions = false }
+                    )
+                }
+                if (showQualitySheet) {
+                    QualitySheet(
+                        selected = settings.agentQuality,
+                        capCents = settings.costCapCents,
+                        onSelect = vm::setAgentQuality,
+                        onDismiss = { showQualitySheet = false }
+                    )
+                }
                 if (showCapabilityPicker) {
                     AgentCapabilitySheet(
                         selected = selectedCapability,
@@ -830,1287 +784,6 @@ onRemoveAttachment = vm::removeAttachment,
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ChatHeader(
-    title: String,
-    modelId: String,
-    mode: AssistantMode,
-    modeLocked: Boolean,
-    onModeSwitch: (AssistantMode) -> Unit,
-    onNewChat: (AssistantMode) -> Unit,
-    onOpenLibrary: () -> Unit,
-    onModelClick: () -> Unit
-) {
-    TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-            // No band: the ink strip above already separates the header from the status bar.
-            containerColor = Color.Transparent,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-            actionIconContentColor = MaterialTheme.colorScheme.onSurface
-        ),
-        title = {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // There is no menu button: tapping the chat title opens the chat library
-                // (the left-edge swipe still works too).
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClickLabel = "Open chat library", onClick = onOpenLibrary)
-                        .padding(horizontal = 4.dp),
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        title,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        "CHATS",
-                        maxLines = 1,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                ModelPill(modelId = modelId, onClick = onModelClick)
-            }
-        },
-actions = {
-            val motionEnabled = LocalKryzzMotionEnabled.current
-            AnimatedContent(
-                targetState = modeLocked,
-                transitionSpec = {
-                    if (motionEnabled) {
-                        (scaleIn(initialScale = 0.8f) + fadeIn(tween(160)))
-                            .togetherWith(scaleOut(targetScale = 0.8f) + fadeOut(tween(130)))
-                    } else {
-                        EnterTransition.None togetherWith ExitTransition.None
-                    }
-                },
-                label = "mode lock to new chat"
-            ) { locked ->
-                if (locked) {
-                    // The conversation has a first message: the switcher becomes a
-                    // single button that starts a fresh conversation in this mode.
-                    NewChatButton(mode, onNewChat, Modifier.padding(end = 6.dp))
-                } else {
-                    ModeSwitcher(mode, onModeSwitch, Modifier.padding(end = 6.dp))
-                }
-            }
-        }
-    )
-}
-
-/** The active model, as a small outlined pill. Opens the AI controls sheet. */
-@Composable
-private fun ModelPill(modelId: String, onClick: () -> Unit) {
-    val label = modelId.compactModel()
-    Surface(
-        onClick = onClick,
-        modifier = Modifier
-            .heightIn(min = 36.dp)
-            .widthIn(max = 132.dp)
-            .semantics { contentDescription = "Model $label, AI controls" },
-        shape = RoundedCornerShape(percent = 50),
-        color = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Box(Modifier.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-            Text(
-                label,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelMedium
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModeSwitcher(
-    current: AssistantMode,
-    onSwitch: (AssistantMode) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier.heightIn(min = 38.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-    ) {
-        Row(Modifier.padding(3.dp), verticalAlignment = Alignment.CenterVertically) {
-            ModeSwitcherSegment(
-                label = "Chat",
-                icon = R.drawable.ic_kz_chat,
-                selected = current == AssistantMode.CHAT,
-                onClick = { onSwitch(AssistantMode.CHAT) }
-            )
-            ModeSwitcherSegment(
-                label = "Agent",
-                icon = R.drawable.ic_kz_agent,
-                selected = current == AssistantMode.AGENT,
-                onClick = { onSwitch(AssistantMode.AGENT) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModeSwitcherSegment(
-    label: String,
-    @DrawableRes icon: Int,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    val description = "$label mode"
-    Surface(
-        modifier = Modifier
-            .clip(RoundedCornerShape(11.dp))
-            .semantics { contentDescription = description }
-            .selectable(
-                selected = selected,
-                role = Role.RadioButton,
-                onClick = onClick
-            ),
-        shape = RoundedCornerShape(11.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    ) {
-        Row(
-            Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(painterResource(icon), null, Modifier.size(15.dp))
-            Text(
-                label,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
-            )
-        }
-    }
-}
-
-/**
- * What the mode switcher becomes once a conversation has its first message: one button
- * that starts a fresh conversation in the current (locked) mode.
- */
-@Composable
-private fun NewChatButton(
-    mode: AssistantMode,
-    onNewChat: (AssistantMode) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        onClick = { onNewChat(mode) },
-        modifier = modifier
-            .heightIn(min = 38.dp)
-            .semantics { contentDescription = "New chat" },
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-    ) {
-        Row(
-            Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Icon(painterResource(R.drawable.ic_kz_chat_new), null, Modifier.size(16.dp))
-            Text(
-                "New chat",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
-
-@Composable
-private fun ChatPane(
-    mode: AssistantMode,
-    density: ChatDensity,
-    messages: List<MessageEntity>,
-    error: String?,
-    generating: Boolean,
-    capability: AgentCapability,
-    citations: (MessageEntity) -> List<Citation>,
-    outputs: (MessageEntity) -> List<GeneratedOutput>,
-    attachments: (MessageEntity) -> List<ChatAttachment>,
-    onRegenerate: () -> Unit,
-    onEdit: (MessageEntity) -> Unit,
-    onSaveOutput: (GeneratedOutput) -> Unit,
-    onOpenOutput: (GeneratedOutput) -> Unit,
-    onSpeak: (String) -> Unit,
-    speakingMessageId: String?,
-    synthesizingMessageId: String?,
-    onShowUsage: (MessageEntity) -> Unit,
-    skillCreatedFor: Set<String>,
-    onCreateSkill: (MessageEntity) -> Unit,
-    activities: List<String> = emptyList(),
-    swarmStatus: SwarmStatus? = null,
-    plan: AgentPlan? = null,
-    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
-    workLogs: Map<String, WorkLog> = emptyMap()
-) {
-    MessageList(
-        mode, messages, error, generating, capability, density, citations, outputs, attachments,
-        onRegenerate, onEdit, onSaveOutput, onOpenOutput, onSpeak,
-        speakingMessageId, synthesizingMessageId,
-        onShowUsage,
-        skillCreatedFor, onCreateSkill, activities, swarmStatus, Modifier.fillMaxSize(), onQuestionAnswer, plan,
-        workLogs = workLogs
-    )
-}
-
-@Composable
-private fun MessageList(
-    mode: AssistantMode,
-    messages: List<MessageEntity>,
-    error: String?,
-    generating: Boolean,
-    capability: AgentCapability,
-    density: ChatDensity,
-    citations: (MessageEntity) -> List<Citation>,
-    outputs: (MessageEntity) -> List<GeneratedOutput>,
-    attachments: (MessageEntity) -> List<ChatAttachment>,
-    onRegenerate: () -> Unit,
-    onEdit: (MessageEntity) -> Unit,
-    onSaveOutput: (GeneratedOutput) -> Unit,
-    onOpenOutput: (GeneratedOutput) -> Unit,
-    onSpeak: (String) -> Unit,
-    speakingMessageId: String?,
-    synthesizingMessageId: String?,
-    onShowUsage: (MessageEntity) -> Unit,
-    skillCreatedFor: Set<String>,
-    onCreateSkill: (MessageEntity) -> Unit,
-    activities: List<String> = emptyList(),
-    swarmStatus: SwarmStatus? = null,
-    modifier: Modifier = Modifier,
-    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
-    plan: AgentPlan? = null,
-    workLogs: Map<String, WorkLog> = emptyMap()
-) {
-    val motionEnabled = LocalKryzzMotionEnabled.current
-    val listState = rememberLazyListState()
-    var followNewest by remember { mutableStateOf(true) }
-    var programmaticScroll by remember { mutableStateOf(false) }
-    val lastAssistant = messages.indexOfLast { it.role == "ASSISTANT" }
-    LaunchedEffect(listState) {
-        snapshotFlow {
-            val info = listState.layoutInfo
-            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-            Triple(listState.isScrollInProgress, lastVisible, info.totalItemsCount)
-        }.collect { (scrolling, lastVisible, totalItems) ->
-            if (scrolling && !programmaticScroll) {
-                followNewest = totalItems == 0 || lastVisible >= totalItems - 1
-            }
-        }
-    }
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length) {
-        if (messages.isNotEmpty() && followNewest) {
-            programmaticScroll = true
-            listState.scrollToItem(messages.lastIndex)
-            programmaticScroll = false
-        }
-    }
-    if (messages.isEmpty()) {
-        EmptyWorkspace(mode, activities, swarmStatus, modifier)
-    } else {
-        LazyColumn(
-            state = listState,
-            modifier = modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(density.messageSpacing())
-        ) {
-            itemsIndexed(messages, key = { _, item -> item.id }) { index, message ->
-                val messageCitations = remember(message.id, message.citationsJson) { citations(message) }
-                val messageOutputs = remember(message.id, message.outputsJson) { outputs(message) }
-                val messageAttachments = remember(message.id, message.attachmentsJson) { attachments(message) }
-                AnimatedVisibility(
-                    visible = true,
-                    enter = if (motionEnabled) {
-                        fadeIn(tween(130)) + slideInVertically(tween(150)) { it / 5 }
-                    } else {
-                        EnterTransition.None
-                    }
-                ) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                        MessageItem(
-                            message,
-                            citations = messageCitations,
-                            outputs = messageOutputs,
-                            attachments = messageAttachments,
-                            canRegenerate = index == lastAssistant && !generating,
-                            canCreateSkill = index == lastAssistant && !generating &&
-                                message.role == "ASSISTANT" && message.mode == AssistantMode.AGENT.name &&
-                                message.status == MessageStatus.COMPLETE.name,
-                            skillCreated = message.id in skillCreatedFor,
-                            onRegenerate = onRegenerate,
-                            onEdit = { onEdit(message) },
-                            onSaveOutput = onSaveOutput,
-                            onOpenOutput = onOpenOutput,
-                            onSpeak = { onSpeak(message.id) },
-                            speaking = message.id == speakingMessageId,
-                            synthesizing = message.id == synthesizingMessageId,
-                            onShowUsage = { onShowUsage(message) },
-                            onCreateSkill = { onCreateSkill(message) },
-                            onQuestionAnswer = onQuestionAnswer,
-                            workLog = workLogs[message.id],
-                            modifier = Modifier.widthIn(max = 860.dp).fillMaxWidth()
-                        )
-                    }
-                }
-            }
-            plan?.let { current ->
-                item(key = "agent-plan") {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                        AgentPlanCard(current, Modifier.widthIn(max = 860.dp).fillMaxWidth())
-                    }
-                }
-            }
-            activities.forEach { tool ->
-                item(key = "tool-activity-$tool") {
-                    val label = when (tool) {
-                        "parallel_search" -> "Searching the web…"
-                        "search_past_chats" -> "Looking through earlier chats…"
-                        "create_artifact" -> "Putting the deliverable together…"
-                        "create_skill" -> "Creating a reusable skill…"
-                        "create_code_project" -> "Building the code project…"
-                        "generate_image" -> "Generating the image…"
-                        "generate_video" -> "Generating the video…"
-                        "generate_audio" -> "Generating the audio…"
-                        // v5.11: detailed labels ("Searching: pixel 10 battery test") end in their own text.
-                        else -> if (':' in tool) tool else "$tool…"
-                    }
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
-                            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
-            swarmStatus?.let { swarm ->
-                item(key = "swarm-status") {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                        SwarmStatusCard(swarm, motionEnabled, Modifier.widthIn(max = 860.dp).fillMaxWidth())
-                    }
-                }
-            }
-            error?.let {
-                item {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.widthIn(max = 860.dp).padding(12.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** The agent's live `update_plan` checklist: done steps ticked, the active one spinning. */
-@Composable
-private fun AgentPlanCard(plan: AgentPlan, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
-    ) {
-        Column(
-            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
-            Text(
-                "Plan · ${plan.doneCount} of ${plan.steps.size} done",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-            plan.steps.forEach { step ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    when (step.status) {
-                        PlanStepStatus.IN_PROGRESS -> CircularProgressIndicator(
-                            modifier = Modifier.size(13.dp),
-                            strokeWidth = 2.dp
-                        )
-                        PlanStepStatus.DONE -> Icon(
-                            Icons.Outlined.CheckCircle, "Step done", Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        PlanStepStatus.PENDING -> Icon(
-                            Icons.Outlined.RadioButtonUnchecked, "Step pending", Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                    }
-                    Text(
-                        step.title,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (step.status == PlanStepStatus.PENDING) {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        } else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SwarmStatusCard(
-    status: SwarmStatus,
-    motionEnabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val glow = if (motionEnabled) {
-        val transition = rememberInfiniteTransition(label = "swarm-glow")
-        transition.animateFloat(
-            initialValue = 0.22f,
-            targetValue = 0.62f,
-            animationSpec = infiniteRepeatable(tween(1_400), RepeatMode.Reverse),
-            label = "swarm-glow-alpha"
-        ).value
-    } else 0.4f
-    val active = status.phase == SwarmPhase.PLANNING || status.phase == SwarmPhase.RUNNING ||
-        status.phase == SwarmPhase.SYNTHESIZING
-    val runningCount = status.subagents.count { it.state == SubagentState.RUNNING }
-    val phaseLabel = when (status.phase) {
-        SwarmPhase.PLANNING -> "Planning the swarm…"
-        SwarmPhase.RUNNING -> if (runningCount > 0) {
-            "$runningCount subagent${if (runningCount == 1) "" else "s"} working…"
-        } else "Subagents queued…"
-        SwarmPhase.SYNTHESIZING -> "Merging results…"
-        SwarmPhase.DONE -> "Swarm complete"
-        SwarmPhase.FAILED -> "Swarm stopped"
-    }
-    AnimatedVisibility(
-        visible = true,
-        enter = if (motionEnabled) fadeIn(tween(160)) + slideInVertically(tween(180)) { it / 4 } else EnterTransition.None,
-        modifier = modifier
-    ) {
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = if (active) glow else 0.3f))
-        ) {
-            Column(
-                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    when {
-                        active -> CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
-                        status.phase == SwarmPhase.DONE -> Icon(
-                            Icons.Outlined.CheckCircle, null, Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        else -> Icon(
-                            Icons.Outlined.ErrorOutline, null, Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    AnimatedContent(
-                        targetState = phaseLabel,
-                        transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(140)) },
-                        label = "swarm-phase"
-                    ) { label ->
-                        Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                status.subagents.forEach { sub ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        when (sub.state) {
-                            SubagentState.RUNNING -> CircularProgressIndicator(
-                                modifier = Modifier.size(13.dp).graphicsLayer { alpha = glow.coerceIn(0.35f, 1f) + 0.35f },
-                                strokeWidth = 2.dp
-                            )
-                            SubagentState.DONE -> Icon(
-                                Icons.Outlined.CheckCircle, "Subagent finished", Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            SubagentState.FAILED -> Icon(
-                                Icons.Outlined.ErrorOutline, "Subagent failed", Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            SubagentState.PENDING -> Icon(
-                                Icons.Outlined.Schedule, "Subagent queued", Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                            )
-                        }
-                        Text(
-                            sub.title,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (sub.state == SubagentState.PENDING) {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                            } else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyWorkspace(
-    mode: AssistantMode,
-    activities: List<String> = emptyList(),
-    swarmStatus: SwarmStatus? = null,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        if (mode == AssistantMode.AGENT) {
-            KryzzMascot(
-                mood = agentBotMood(mode, generating = false, error = null, activities = activities, swarmStatus = swarmStatus),
-                size = BotSize.HERO
-            )
-            Spacer(Modifier.height(14.dp))
-            Text("KryzzBot is online", style = MaterialTheme.typography.headlineSmall)
-        } else {
-            Text("How can I help?", style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Ask anything. Your conversations stay on this device.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(max = 340.dp)
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun Composer(
-    value: String,
-    density: ChatDensity,
-    onValue: (String) -> Unit,
-    generating: Boolean,
-    editing: Boolean,
-    mode: AssistantMode,
-    capability: AgentCapability,
-    quality: AgentQuality,
-    onQuality: (AgentQuality) -> Unit,
-    modelNotice: KryzzAgentModelNotice,
-    onModelNoticeAnswer: (Boolean) -> Unit,
-    attachments: List<ChatAttachment>,
-    rootNavVisible: Boolean,
-    onPickImage: () -> Unit,
-    onPickCamera: () -> Unit,
-    onPickFile: () -> Unit,
-onRemoveAttachment: (String) -> Unit,
-    dictating: Boolean,
-    dictationLevel: Float,
-    onDictation: () -> Unit,
-    onCapability: () -> Unit,
-    onSend: () -> Unit,
-    onStop: () -> Unit,
-    onVoice: () -> Unit,
-    onCancelEdit: () -> Unit,
-    onComposerFocusChanged: (Boolean) -> Unit
-) {
-    val motionEnabled = LocalKryzzMotionEnabled.current
-    var attachMenu by remember { mutableStateOf(false) }
-    // With nothing typed and no attachments, the primary action is voice chat:
-    // the mic button replaces the send arrow until the user starts typing.
-    val showVoiceButton = !generating && !editing && value.isBlank() && attachments.isEmpty()
-    val insetModifier = if (rootNavVisible) {
-        Modifier.imePadding()
-    } else {
-        Modifier.navigationBarsPadding().imePadding()
-    }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .then(insetModifier)
-            .padding(horizontal = 12.dp, vertical = density.composerVerticalPadding())
-    ) {
-        Column(
-            Modifier.align(Alignment.BottomCenter).widthIn(max = 860.dp).fillMaxWidth()
-        ) {
-        if (editing) Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Edit, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-            Text(" Editing an earlier message", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-            TextButton(onClick = onCancelEdit) { Text("Cancel") }
-        }
-        Surface(
-            shape = RoundedCornerShape(26.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = (LocalGlassOpacity.current + 0.16f).coerceAtMost(0.96f)),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.64f)),
-            shadowElevation = 0.dp
-        ) {
-            Column(Modifier.padding(start = 6.dp, end = 7.dp, top = 4.dp, bottom = 6.dp)) {
-                if (mode == AssistantMode.AGENT) {
-                    Row(
-                        Modifier.padding(start = 8.dp, top = 6.dp, bottom = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Surface(
-                            onClick = onCapability,
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-                                Text("Workflow · ${capability.shortLabel}", style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                        // v5.10: Fast / Balanced / Max, next to the capability picker.
-                        KryzzAgentQualityChip(quality = quality, onSelect = onQuality)
-                    }
-                    if (modelNotice.visible) {
-                        KryzzAgentModelNoticeCard(
-                            notice = modelNotice,
-                            onSwitch = { onModelNoticeAnswer(true) },
-                            onKeep = { onModelNoticeAnswer(false) },
-                            modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 2.dp)
-                        )
-                    }
-                }
-                if (attachments.isNotEmpty()) {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 5.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        items(attachments, key = { it.id }) { attachment ->
-                            Surface(
-                                shape = RoundedCornerShape(13.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            ) {
-                                Row(Modifier.padding(start = 10.dp, end = 2.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.InsertDriveFile, null, Modifier.size(15.dp))
-                                    Text(" ${attachment.name}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, modifier = Modifier.widthIn(max = 150.dp))
-                                    IconButton(onClick = { onRemoveAttachment(attachment.id) }, modifier = Modifier.size(48.dp)) {
-                                        Icon(Icons.Outlined.Close, "Remove ${attachment.name}", Modifier.size(15.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box {
-                        IconButton(onClick = { attachMenu = true }, enabled = !generating, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.AttachFile, "Attach images, videos, or files", tint = MaterialTheme.colorScheme.primary)
-                        }
-                        DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Image") },
-                                leadingIcon = { Icon(Icons.Outlined.Image, null) },
-                                onClick = { attachMenu = false; onPickImage() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Camera") },
-                                leadingIcon = { Icon(Icons.Outlined.PhotoCamera, null) },
-                                onClick = { attachMenu = false; onPickCamera() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("File") },
-                                leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) },
-                                onClick = { attachMenu = false; onPickFile() }
-                            )
-                        }
-                    }
-                    Box(Modifier.size(48.dp)) {
-                        DictationMic(level = dictationLevel, active = dictating, onClick = onDictation, modifier = Modifier.fillMaxSize())
-                    }
-                    TextField(
-                        value = value,
-                        onValueChange = onValue,
-                        placeholder = { Text(when {
-                            dictating -> "Listening…"
-                            editing -> "Edit and resend"
-                            mode == AssistantMode.CHAT -> "Message Kryzz…"
-                            else -> "Give Kryzz a task…"
-                        }) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 52.dp, max = 180.dp)
-                            .onFocusChanged { onComposerFocusChanged(it.isFocused) },
-                        maxLines = 6,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent
-                        ),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { if (!generating) onSend() })
-                    )
-                    FilledIconButton(
-                        onClick = if (generating) onStop else if (showVoiceButton) onVoice else onSend,
-                        enabled = generating || value.isNotBlank() || attachments.isNotEmpty() || showVoiceButton,
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        if (motionEnabled) {
-                            AnimatedContent(
-                                targetState = ComposerAction.from(generating, showVoiceButton),
-                                transitionSpec = { (scaleIn(tween(80)) + fadeIn(tween(80))).togetherWith(scaleOut(tween(80)) + fadeOut(tween(80))) },
-                                label = "send voice stop"
-                            ) { action ->
-                                when (action) {
-                                    ComposerAction.STOP -> Icon(Icons.Outlined.Stop, "Stop generation", Modifier.size(20.dp))
-                                    ComposerAction.VOICE -> Icon(Icons.Outlined.RecordVoiceOver, "Voice chat", Modifier.size(20.dp))
-                                    ComposerAction.SEND -> Icon(Icons.AutoMirrored.Rounded.Send, "Send", Modifier.size(20.dp))
-                                }
-                            }
-                        } else {
-                            when {
-                                generating -> Icon(Icons.Outlined.Stop, "Stop generation", Modifier.size(20.dp))
-                                showVoiceButton -> Icon(Icons.Outlined.RecordVoiceOver, "Voice chat", Modifier.size(20.dp))
-                                else -> Icon(Icons.AutoMirrored.Rounded.Send, "Send", Modifier.size(20.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Text(
-            if (mode == AssistantMode.CHAT) "Chat can make mistakes. Check important information."
-            else "Agent tools may use paid provider requests. Review generated files before use.",
-            Modifier.align(Alignment.CenterHorizontally).padding(top = 6.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        }
-    }
-}
-
-/**
- * Interactive question card ("ask the user"), matching the chat-mode inline protocol and
- * the agent ask_user floating card: question title with a dismiss (X) button, lettered
- * tappable options (A, B, C …), and a free-text box for a custom answer.
- */
-@Composable
-internal fun QuestionCard(
-    question: InlineQuestion,
-    onAnswer: (String) -> Unit,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    answeredWith: String? = null
-) {
-    var freeText by rememberSaveable { mutableStateOf("") }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f)),
-        shadowElevation = 0.dp,
-        tonalElevation = 2.dp
-    ) {
-        Column(
-            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    question.question,
-                    Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Outlined.Close, "Dismiss question", Modifier.size(16.dp))
-                }
-            }
-            if (question.options.isNotEmpty()) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
-                ) {
-                    Column {
-                        question.options.forEachIndexed { index, option ->
-                            val selected = answeredWith == option
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable(enabled = enabled) { onAnswer(option) }
-                                    .padding(horizontal = 12.dp, vertical = 11.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Surface(
-                                    modifier = Modifier.size(22.dp),
-                                    shape = RoundedCornerShape(7.dp),
-                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                ) {
-                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text(
-                                            ('A' + index).toString(),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                                Text(
-                                    option,
-                                    Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (selected) {
-                                    Icon(
-                                        Icons.Outlined.CheckCircle, "Chosen",
-                                        Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            if (index < question.options.lastIndex) {
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-                            }
-                        }
-                    }
-                }
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                TextField(
-                    value = freeText,
-                    onValueChange = { freeText = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = {
-                        Text(
-                            if (answeredWith != null) "Answered: $answeredWith" else "Type your own answer",
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    singleLine = true,
-                    enabled = enabled,
-                    shape = RoundedCornerShape(14.dp),
-                    colors = TextFieldDefaults.colors(
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        disabledIndicatorColor = Color.Transparent
-                    ),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(
-                        onSend = { if (freeText.isNotBlank()) onAnswer(freeText.trim()) }
-                    )
-                )
-                if (freeText.isNotBlank() && enabled) {
-                    FilledIconButton(
-                        onClick = { onAnswer(freeText.trim()) },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.Send, "Send answer", Modifier.size(17.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MessageItem(
-    message: MessageEntity,
-    citations: List<Citation>,
-    outputs: List<GeneratedOutput>,
-    attachments: List<ChatAttachment>,
-    canRegenerate: Boolean,
-    canCreateSkill: Boolean,
-    skillCreated: Boolean,
-    onRegenerate: () -> Unit,
-    onEdit: () -> Unit,
-    onSaveOutput: (GeneratedOutput) -> Unit,
-    onOpenOutput: (GeneratedOutput) -> Unit,
-    onSpeak: () -> Unit,
-    speaking: Boolean,
-    synthesizing: Boolean,
-    onShowUsage: () -> Unit,
-    onCreateSkill: () -> Unit,
-    onQuestionAnswer: (question: String, answer: String) -> Unit = { _, _ -> },
-    workLog: WorkLog? = null,
-    modifier: Modifier = Modifier
-) {
-    val isUser = message.role == "USER"
-    val context = LocalContext.current
-    val motionEnabled = LocalKryzzMotionEnabled.current
-    val startedStreaming = remember(message.id) { message.status == MessageStatus.STREAMING.name }
-    var revealedLength by remember(message.id) {
-        mutableIntStateOf(if (startedStreaming && motionEnabled) 0 else message.content.length)
-    }
-    LaunchedEffect(message.id, message.content, message.status, motionEnabled) {
-        if (!motionEnabled || !startedStreaming) {
-            revealedLength = message.content.length
-            return@LaunchedEffect
-        }
-        while (revealedLength < message.content.length) {
-            delay(24)
-            revealedLength = (revealedLength + 6).coerceAtMost(message.content.length)
-            if (revealedLength >= message.content.length - 3) { revealedLength = message.content.length; break }
-        }
-        if (message.status != MessageStatus.STREAMING.name) {
-            revealedLength = message.content.length
-        }
-    }
-    val visibleContent = if (!isUser && startedStreaming && motionEnabled) {
-        message.content.take(revealedLength.coerceIn(0, message.content.length))
-    } else {
-        message.content
-    }
-    // Assistant replies may carry interactive question cards as fenced kryzz-question
-    // blocks (chat-mode protocol). Parsed blocks render as tappable cards; anything
-    // malformed stays inline as ordinary markdown, so partial streams never break.
-    val segments = remember(visibleContent, isUser) {
-        if (isUser || visibleContent.isBlank()) listOf(MessageSegment.Markdown(visibleContent))
-        else InlineQuestionProtocol.parse(visibleContent)
-    }
-    val messageContent: @Composable () -> Unit = {
-        if (visibleContent.isBlank() && message.status == MessageStatus.STREAMING.name) {
-            ThinkingIndicator()
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                segments.forEach { segment ->
-                    when (segment) {
-                        is MessageSegment.Markdown -> SelectionContainer {
-                            MarkdownText(
-                                markdown = segment.text,
-                                contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        is MessageSegment.Question -> {
-                            var answered by remember(segment.question.question) { mutableStateOf<String?>(null) }
-                            var hidden by remember(segment.question.question) { mutableStateOf(false) }
-                            if (!hidden) {
-                                QuestionCard(
-                                    question = segment.question,
-                                    answeredWith = answered,
-                                    enabled = message.status == MessageStatus.COMPLETE.name && answered == null,
-                                    onAnswer = { choice ->
-                                        answered = choice
-                                        onQuestionAnswer(segment.question.question, choice)
-                                    },
-                                    onDismiss = { hidden = true },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    val isAgentAssistant = !isUser && message.mode == AssistantMode.AGENT.name
-    Column(modifier.fillMaxWidth(), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
-        if (!isUser && !isAgentAssistant) {
-            Row(Modifier.padding(start = 2.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    modifier = Modifier.size(24.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.SmartToy, null, Modifier.size(13.dp))
-                    }
-                }
-                Text(
-                    "  Kryzz",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else if (!isUser && isAgentAssistant) {
-            // The dot squid sits above the bubble, to the left of the "Kryzz · Agent"
-            // label, like a chat profile picture.
-            Row(
-                Modifier.padding(start = 2.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                KryzzMascot(
-                    state = agentMessageMascotState(message),
-                    size = 46.dp
-                )
-                Text(
-                    "Kryzz · Agent",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        if (isUser) {
-            Surface(
-                modifier = Modifier.widthIn(max = 560.dp),
-                shape = RoundedCornerShape(topStart = 22.dp, topEnd = 8.dp, bottomEnd = 22.dp, bottomStart = 22.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                tonalElevation = 2.dp,
-                shadowElevation = 0.dp
-            ) {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 13.dp)) { messageContent() }
-            }
-        } else {
-            Box(Modifier.widthIn(max = 780.dp).fillMaxWidth().padding(horizontal = 2.dp, vertical = 2.dp)) {
-                messageContent()
-            }
-            // v5.11: the steps behind this answer, hidden while it streams (the live chips cover that).
-            if (workLog != null && message.status != MessageStatus.STREAMING.name) {
-                WorkLogRow(workLog, Modifier.widthIn(max = 780.dp).fillMaxWidth().padding(top = 8.dp))
-            }
-        }
-
-        outputs.forEach { output -> GeneratedOutputCard(output, onSaveOutput, onOpenOutput) }
-        if (citations.isNotEmpty()) {
-            Row(
-                Modifier.padding(top = 14.dp, bottom = 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                Icon(Icons.Outlined.Public, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("Sources", style = MaterialTheme.typography.labelLarge)
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 4.dp)) {
-                items(citations.size) { index -> CitationCard(index + 1, citations[index]) }
-            }
-        }
-        if (attachments.isNotEmpty()) {
-            Column(
-                Modifier.widthIn(max = 420.dp).padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                attachments.forEach { attachment ->
-                    Surface(
-                        shape = RoundedCornerShape(15.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
-                        shadowElevation = 0.dp
-                    ) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                modifier = Modifier.size(34.dp),
-                                shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
-                            ) {
-                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Outlined.InsertDriveFile, null, Modifier.size(18.dp))
-                                }
-                            }
-                            Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                                Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
-                                Text("${attachment.mimeType} · ${attachment.sizeBytes.fileSizeLabel()}", style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (message.status == MessageStatus.CANCELLED.name) {
-            Text("Stopped", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(message.createdAt)),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            IconButton(
-                onClick = { (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Kryzz AI message", message.content)) },
-                modifier = Modifier.size(48.dp)
-            ) { Icon(Icons.Outlined.ContentCopy, "Copy", Modifier.size(18.dp)) }
-            if (message.content.isNotBlank()) {
-                IconButton(
-                    onClick = { shareMessage(context, message.content) },
-                    modifier = Modifier.size(48.dp)
-                ) { Icon(Icons.Outlined.Share, "Share message", Modifier.size(18.dp)) }
-            }
-            if (isUser) IconButton(onClick = onEdit, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Edit, "Edit and resend", Modifier.size(18.dp)) }
-            if (!isUser && message.content.isNotBlank()) IconButton(onClick = onSpeak, modifier = Modifier.size(48.dp)) {
-                when {
-                    synthesizing -> CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    speaking -> Icon(Icons.Outlined.Stop, "Stop reading aloud", Modifier.size(18.dp))
-                    else -> Icon(Icons.AutoMirrored.Outlined.VolumeUp, "Read aloud", Modifier.size(18.dp))
-                }
-            }
-            if (canRegenerate) IconButton(onClick = onRegenerate, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Refresh, "Regenerate", Modifier.size(18.dp)) }
-            if (!isUser) IconButton(onClick = onShowUsage, modifier = Modifier.size(48.dp)) { Icon(Icons.Outlined.Info, "Conversation usage", Modifier.size(18.dp)) }
-            if (canCreateSkill || skillCreated) TextButton(
-                onClick = onCreateSkill,
-                enabled = !skillCreated,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-            ) {
-                Icon(Icons.Outlined.Extension, null, Modifier.size(17.dp))
-                Text(if (skillCreated) " Skill saved" else " Make skill", style = MaterialTheme.typography.labelMedium)
-            }
-        }
-        if (message.totalTokens != null || message.cost != null) {
-            Text(
-                listOfNotNull(message.totalTokens?.let { "$it tokens" }, message.cost?.let { "≈ $${"%.6f".format(it)}" }).joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/** v5.11: what the agent did for an answer. One quiet summary line; tapping it lists the steps. */
-@Composable
-private fun WorkLogRow(log: WorkLog, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val motionEnabled = LocalKryzzMotionEnabled.current
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    Surface(
-        modifier = modifier.animateContentSize(if (motionEnabled) tween(170) else snap()),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (expanded) 0.42f else 0.24f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f))
-    ) {
-        Column(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(Icons.Outlined.Build, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
-                Text(
-                    log.summary,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Icon(
-                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                    if (expanded) "Hide steps" else "Show steps",
-                    Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (expanded) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Column(
-                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(9.dp)
-                ) {
-                    log.steps.forEach { step ->
-                        WorkStepLine(step) { url ->
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WorkStepLine(step: WorkStep, onOpen: (String) -> Unit) {
-    val icon = if (step.failed) Icons.Outlined.ErrorOutline else when (step.kind) {
-        WorkStepKind.SEARCH -> Icons.Outlined.Search
-        WorkStepKind.PAGE -> Icons.Outlined.Language
-        WorkStepKind.CALCULATION -> Icons.Outlined.Calculate
-        WorkStepKind.WEATHER -> Icons.Outlined.WbSunny
-        WorkStepKind.FILE -> Icons.Outlined.Description
-        WorkStepKind.MEMORY -> Icons.Outlined.Lightbulb
-        WorkStepKind.PAST_CHATS -> Icons.Outlined.History
-        WorkStepKind.TIME, WorkStepKind.SCHEDULE -> Icons.Outlined.Schedule
-        WorkStepKind.SKILL -> Icons.Outlined.Extension
-        WorkStepKind.QUESTION -> Icons.Outlined.ChatBubbleOutline
-        WorkStepKind.OTHER -> Icons.Outlined.Build
-    }
-    val url = step.url
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .then(if (url != null) Modifier.clickable { onOpen(url) } else Modifier),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Icon(
-            icon, null, Modifier.padding(top = 1.dp).size(14.dp),
-            tint = if (step.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-        )
-        Column(Modifier.weight(1f)) {
-            Text(
-                step.title,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            step.detail?.let { detail ->
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (step.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (step.failed) 3 else 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        if (url != null) {
-            Icon(
-                Icons.AutoMirrored.Outlined.OpenInNew, "Open page", Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
 @Composable
 private fun ConversationUsageDialog(
     usage: ConversationUsage,
@@ -2146,121 +819,6 @@ private fun UsageLine(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-@Composable
-private fun ThinkingIndicator() {
-    val alpha = if (LocalKryzzMotionEnabled.current) {
-        val transition = rememberInfiniteTransition(label = "thinking")
-        val animated by transition.animateFloat(
-            initialValue = 0.38f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(1_050), RepeatMode.Reverse),
-            label = "thinking pulse"
-        )
-        animated
-    } else {
-        1f
-    }
-    Row(
-        Modifier.padding(vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(7.dp).graphicsLayer { this.alpha = alpha }.background(MaterialTheme.colorScheme.primary, CircleShape))
-        Text("Thinking", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-internal fun GeneratedOutputCard(output: GeneratedOutput, onSave: (GeneratedOutput) -> Unit, onOpen: (GeneratedOutput) -> Unit) {
-    val icon = when (output.kind) {
-        OutputKind.DOCUMENT -> Icons.Outlined.Description
-        OutputKind.SPREADSHEET -> Icons.Outlined.TableChart
-        OutputKind.DATABASE -> Icons.Outlined.Storage
-        OutputKind.CODE -> Icons.Outlined.Code
-        OutputKind.IMAGE -> Icons.Outlined.Photo
-        OutputKind.VIDEO -> Icons.Outlined.Movie
-        OutputKind.AUDIO -> Icons.Outlined.GraphicEq
-        OutputKind.PDF -> Icons.Outlined.PictureAsPdf
-    }
-    Card(
-        Modifier.fillMaxWidth().padding(top = 10.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        if (output.kind == OutputKind.IMAGE && output.localPath != null) GeneratedImagePreview(output.localPath)
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-            ) {
-                Icon(icon, null, Modifier.padding(10.dp).size(22.dp), tint = MaterialTheme.colorScheme.primary)
-            }
-            Column(Modifier.weight(1f)) {
-                Text(output.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${output.kind.name.lowercase().replaceFirstChar(Char::uppercase)} · ${output.fileName}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (output.localPath != null || output.remoteUrl != null) IconButton(onClick = { onOpen(output) }) { Icon(Icons.AutoMirrored.Outlined.OpenInNew, "Open output") }
-            IconButton(onClick = { onSave(output) }) { Icon(Icons.Outlined.Download, "Save output") }
-        }
-        output.content?.lineSequence()?.take(3)?.joinToString("\n")?.takeIf(String::isNotBlank)?.let {
-            Text(it, Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = if (output.kind == OutputKind.DOCUMENT || output.kind == OutputKind.PDF) SansFamily else DataMonoFamily)
-        }
-    }
-}
-
-@Composable
-private fun GeneratedImagePreview(path: String) {
-    var bitmap by remember(path) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-    LaunchedEffect(path) { bitmap = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(path)?.asImageBitmap() } }
-    bitmap?.let {
-        Image(it, "Generated image", Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)), contentScale = ContentScale.Crop)
-    }
-}
-
-@Composable
-private fun CitationCard(index: Int, citation: Citation) {
-    val context = LocalContext.current
-    val host = runCatching { Uri.parse(citation.url).host.orEmpty() }.getOrDefault("")
-    Card(
-        Modifier.width(276.dp).clickable { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(citation.url))) } },
-        shape = RoundedCornerShape(17.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.66f),
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.68f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                Surface(
-                    modifier = Modifier.size(28.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(index.toString(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                    }
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(citation.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(host, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                }
-                Icon(Icons.AutoMirrored.Outlined.OpenInNew, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            citation.publishDate?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
-            if (citation.excerpt.isNotBlank()) {
-                Text(citation.excerpt, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
     }
 }
 
@@ -2381,15 +939,6 @@ private fun openOutput(context: Context, output: GeneratedOutput) {
     }
 }
 
-private fun shareMessage(context: Context, content: String) {
-    val share = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, "Kryzz AI")
-        putExtra(Intent.EXTRA_TEXT, content)
-    }
-    context.startActivity(Intent.createChooser(share, "Share Kryzz response"))
-}
-
 // v5.10: under the Max quality preset, agent and research turns run on the Max slot, so the
 // header, AI controls and Models shortcut show and edit that slot.
 private fun activeModelPurpose(mode: AssistantMode, capability: AgentCapability, quality: AgentQuality): ModelPurpose = when {
@@ -2413,24 +962,6 @@ private fun SettingsState.modelFor(purpose: ModelPurpose): String = when (purpos
 }
 
 private fun String.compactModel(): String = substringAfter('/').ifBlank { "Select model" }
-
-private fun Long.fileSizeLabel(): String = when {
-    this >= 1_048_576 -> String.format(java.util.Locale.US, "%.1f MB", this / 1_048_576.0)
-    this >= 1_024 -> String.format(java.util.Locale.US, "%.1f KB", this / 1_024.0)
-    else -> "$this B"
-}
-
-private enum class ComposerAction {
-    STOP, VOICE, SEND;
-
-    companion object {
-        fun from(generating: Boolean, voice: Boolean) = when {
-            generating -> STOP
-            voice -> VOICE
-            else -> SEND
-        }
-    }
-}
 
 /**
  * Full-screen voice chat session: an opaque surface, a live bubble in the centre whose
@@ -2749,35 +1280,4 @@ internal fun voiceOverlayDescription(phase: VoicePhase): String = when (phase) {
     VoicePhase.PROCESSING -> "Voice chat processing. Tap to cancel."
     VoicePhase.SPEAKING -> "Voice chat speaking. Tap to interrupt."
     VoicePhase.IDLE -> "Voice chat"
-}
-
-@Composable
-private fun DictationMic(level: Float, active: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val motionEnabled = LocalKryzzMotionEnabled.current
-    val pulse = rememberInfiniteTransition(label = "dictation pulse")
-    val idleScale by pulse.animateFloat(
-        initialValue = 0.82f,
-        targetValue = 1.18f,
-        animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
-        label = "idle scale"
-    )
-    val ringScale = if (active) (1f + level.coerceIn(0f, 1f) * 1.1f).coerceAtLeast(1.15f) else idleScale
-    val ringAlpha = if (active) (0.18f + level.coerceIn(0f, 1f) * 0.55f) else 0.16f
-    IconButton(onClick = onClick, modifier = modifier.semantics { contentDescription = if (active) "Stop dictation" else "Dictation" }) {
-        Box(contentAlignment = Alignment.Center) {
-            if (motionEnabled) {
-                Surface(
-                    modifier = Modifier.size(34.dp).graphicsLayer { scaleX = ringScale; scaleY = ringScale; alpha = ringAlpha },
-                    shape = CircleShape,
-                    color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer
-                ) {}
-            }
-            Icon(
-                if (active) Icons.Outlined.Mic else Icons.Outlined.MicNone,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
-            )
-        }
-    }
 }

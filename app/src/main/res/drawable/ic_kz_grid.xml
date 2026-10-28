@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kryzz x Nothing-inspired icon. Original artwork. Tint with android:tint / Icon(tint=) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+  <path android:pathData="M4.4 6a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M10.4 6a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M16.4 6a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M4.4 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M10.4 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M16.4 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M4.4 18a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M10.4 18a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+  <path android:pathData="M16.4 18a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0" android:fillColor="#FFFFFFFF"/>
+</vector>

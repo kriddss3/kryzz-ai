@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -66,23 +67,8 @@ fun TalkOptionsSheet(
     onNewChat: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val c = DotTheme.c
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        shape = DotRadius.Sheet,
-        containerColor = c.surface,
-        contentColor = c.textPrimary,
-        tonalElevation = 0.dp,
-        dragHandle = { DotSheetHandle() }
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .navigationBarsPadding()
-                .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp)
-        ) {
+    DotSheet(onDismiss) {
+        Column(Modifier.fillMaxWidth()) {
             if (!modeLocked) {
                 SheetLabel("Mode")
                 Segment(
@@ -112,13 +98,13 @@ fun TalkOptionsSheet(
     }
 }
 
-/** One action in a long-press sheet. */
-data class TalkAction(@DrawableRes val icon: Int, val label: String, val onClick: () -> Unit)
-
-/** The long-press sheet on a question or an answer: copy, edit, regenerate and so on. */
+/**
+ * The kit sheet every Talk and Run sheet uses: 32dp top corners, surface, the 32x4 handle,
+ * 20dp side gutters. The content scrolls when it is taller than the screen.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TalkActionsSheet(title: String, actions: List<TalkAction>, onDismiss: () -> Unit) {
+internal fun DotSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val c = DotTheme.c
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -132,9 +118,23 @@ fun TalkActionsSheet(title: String, actions: List<TalkAction>, onDismiss: () -> 
         Column(
             Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp)
-        ) {
+                .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp),
+            content = content
+        )
+    }
+}
+
+/** One action in a long-press sheet. */
+data class TalkAction(@DrawableRes val icon: Int, val label: String, val onClick: () -> Unit)
+
+/** The long-press sheet on a question or an answer: copy, edit, regenerate and so on. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TalkActionsSheet(title: String, actions: List<TalkAction>, onDismiss: () -> Unit) {
+    DotSheet(onDismiss) {
+        Column(Modifier.fillMaxWidth()) {
             SheetLabel(title)
             actions.forEach { action ->
                 OptionRow(action.icon, action.label, onClick = { onDismiss(); action.onClick() })
@@ -144,7 +144,7 @@ fun TalkActionsSheet(title: String, actions: List<TalkAction>, onDismiss: () -> 
 }
 
 @Composable
-private fun SheetLabel(text: String) {
+internal fun SheetLabel(text: String) {
     Text(
         text.uppercase(),
         Modifier.padding(bottom = 10.dp),
@@ -157,7 +157,7 @@ private fun SheetLabel(text: String) {
 
 /** Kit segmented control: raised track, the selected segment is white with black text. */
 @Composable
-private fun Segment(left: String, right: String, rightSelected: Boolean, onLeft: () -> Unit, onRight: () -> Unit) {
+internal fun Segment(left: String, right: String, rightSelected: Boolean, onLeft: () -> Unit, onRight: () -> Unit) {
     val c = DotTheme.c
     Row(
         Modifier
@@ -186,7 +186,7 @@ private fun Segment(left: String, right: String, rightSelected: Boolean, onLeft:
 }
 
 @Composable
-private fun AttachTile(@DrawableRes icon: Int, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun AttachTile(@DrawableRes icon: Int, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = DotTheme.c
     Column(
         modifier
@@ -206,7 +206,7 @@ private fun AttachTile(@DrawableRes icon: Int, label: String, onClick: () -> Uni
 
 /** A ruled 52dp row: icon, title, optional value and trailing control. */
 @Composable
-private fun OptionRow(
+internal fun OptionRow(
     @DrawableRes icon: Int,
     title: String,
     value: String? = null,

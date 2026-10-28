@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,17 +52,19 @@ import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 
 /** What the reply line's placeholder says right now. */
-internal fun replyPlaceholder(generating: Boolean, editing: Boolean, dictating: Boolean): String = when {
+internal fun replyPlaceholder(generating: Boolean, editing: Boolean, dictating: Boolean, idle: String = "Reply"): String = when {
     dictating -> "Listening…"
     editing -> "Edit and resend"
     generating -> "Queue a follow-up"
-    else -> "Reply"
+    else -> idle
 }
 
 /**
  * Talk's reply line: no box, just a hairline and the text. Idle it shows "Reply" and the
  * dictation mic; while a reply streams it reads "Queue a follow-up" and shows a white stop
  * button. The "+" opens the Talk options sheet (attach, web, model, voice, chats).
+ * Run uses the same line with its own [idlePlaceholder], [optionsLabel] and [notes]
+ * (rows drawn above the rule, such as the chosen workflow).
  */
 @Composable
 fun ReplyLine(
@@ -84,9 +87,13 @@ fun ReplyLine(
     onRemoveAttachment: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    idlePlaceholder: String = "Reply",
+    optionsLabel: String = "Talk options",
+    notes: @Composable ColumnScope.() -> Unit = {},
 ) {
     val c = DotTheme.c
     val hasText = value.isNotBlank()
+    val placeholder = replyPlaceholder(generating, editing, dictating, idlePlaceholder)
     val canSend = !generating && (hasText || attachments.isNotEmpty())
     Column(
         modifier
@@ -95,6 +102,7 @@ fun ReplyLine(
             .imePadding()
             .padding(start = 20.dp, end = 8.dp, bottom = verticalPadding)
     ) {
+        notes()
         if (!queued.isNullOrBlank()) {
             NoteRow(label = "QUEUED", text = queued, action = "Cancel", onAction = onUnqueue)
         }
@@ -116,7 +124,7 @@ fun ReplyLine(
             Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(top = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            RoundIcon(R.drawable.ic_kz_plus, "Talk options", onOptions, filled = false)
+            RoundIcon(R.drawable.ic_kz_plus, optionsLabel, onOptions, filled = false)
             Spacer(Modifier.width(6.dp))
             Box(Modifier.weight(1f).padding(vertical = 8.dp)) {
                 BasicTextField(
@@ -125,7 +133,7 @@ fun ReplyLine(
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { onFocusChanged(it.isFocused) }
-                        .semantics { contentDescription = replyPlaceholder(generating, editing, dictating) },
+                        .semantics { contentDescription = placeholder },
                     textStyle = DotType.Answer.copy(color = c.textPrimary),
                     cursorBrush = SolidColor(c.accent),
                     maxLines = 6,
@@ -134,7 +142,7 @@ fun ReplyLine(
                     decorationBox = { inner ->
                         if (value.isEmpty()) {
                             Text(
-                                replyPlaceholder(generating, editing, dictating),
+                                placeholder,
                                 style = DotType.Answer,
                                 color = c.textTertiary,
                                 maxLines = 1
@@ -160,14 +168,15 @@ fun ReplyLine(
     }
 }
 
+/** A note above the reply line: a yellow mono label, a line of text and a text action. */
 @Composable
-private fun NoteRow(label: String, text: String, action: String, onAction: () -> Unit) {
+internal fun NoteRow(label: String, text: String, action: String, onAction: () -> Unit, accent: Boolean = true) {
     val c = DotTheme.c
     Row(
         Modifier.fillMaxWidth().heightIn(min = 40.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = DotType.Label, color = c.accent)
+        Text(label, style = DotType.Label, color = if (accent) c.accent else c.textTertiary)
         Spacer(Modifier.width(10.dp))
         Text(
             text.replace('\n', ' '),

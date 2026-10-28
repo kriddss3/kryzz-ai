@@ -63,6 +63,7 @@ import ai.daylight.assistant.ui.dot.DotMotion
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
@@ -352,21 +353,51 @@ private fun DrawScope.drawTrimmed(path: Path, fraction: Float, color: Color, str
     drawPath(seg, color, style = Stroke(strokeWidth, cap = StrokeCap.Round))
 }
 
+/*
+ * Changes from the kit: the chase only runs while a step is active (an infinite transition
+ * on every mark kept the frame clock busy for finished cards), and a step only draws in and
+ * ticks when it changes while you watch. A finished plan opens already drawn and silent.
+ */
 @Composable
 fun PlanStepMark(state: StepState, modifier: Modifier = Modifier, size: Dp = 20.dp) {
+    val first = remember { state }
+    if (state == StepState.Active) ActiveStepMark(modifier, size)
+    else SettledStepMark(state, animate = state != first, modifier = modifier, size = size)
+}
+
+/** Ten dots on a ring; three accent dots chase round it (still when motion is off). */
+@Composable
+private fun ActiveStepMark(modifier: Modifier, size: Dp) {
+    val c = DotTheme.c
+    val head = if (LocalKryzzMotionEnabled.current) {
+        val t = rememberInfiniteTransition(label = "chase")
+        t.animateValue(0, 10, Int.VectorConverter, infiniteRepeatable(tween(10 * 70, easing = LinearEasing)), label = "h").value
+    } else 3
+    Canvas(modifier.size(size)) {
+        val r = this.size.minDimension / 2 - 1.dp.toPx()
+        for (k in 0 until 10) {
+            val a = 2 * PI * k / 10 - PI / 2
+            val lit = ((k - head + 10) % 10) < 3
+            drawCircle(
+                if (lit) c.accent else c.textTertiary.copy(alpha = .35f),
+                1.3.dp.toPx(),
+                Offset(center.x + r * cos(a).toFloat(), center.y + r * sin(a).toFloat())
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettledStepMark(state: StepState, animate: Boolean, modifier: Modifier, size: Dp) {
     val c = DotTheme.c
     val haptic = LocalHapticFeedback.current
-    val t = rememberInfiniteTransition(label = "chase")
-    val head by t.animateValue(0, 10, Int.VectorConverter, infiniteRepeatable(tween(10 * 70, easing = LinearEasing)), label = "h")
-    val draw = remember { Animatable(0f) }
+    val motion = LocalKryzzMotionEnabled.current
+    val drawn = state == StepState.Done || state == StepState.Failed
+    val draw = remember(state) { Animatable(if (drawn && animate && motion) 0f else 1f) }
     LaunchedEffect(state) {
-        if (state == StepState.Done || state == StepState.Failed) {
-            draw.snapTo(0f)
-            draw.animateTo(1f, tween(DotMotion.Base * 2, easing = DotMotion.Standard))
-            if (state == StepState.Done) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        } else {
-            draw.snapTo(0f)
-        }
+        if (!drawn || !animate) return@LaunchedEffect
+        if (motion) draw.animateTo(1f, tween(DotMotion.Base * 2, easing = DotMotion.Standard))
+        if (state == StepState.Done) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     }
     Canvas(modifier.size(size)) {
         val r = this.size.minDimension / 2 - 1.dp.toPx()
@@ -375,9 +406,8 @@ fun PlanStepMark(state: StepState, modifier: Modifier = Modifier, size: Dp = 20.
         when (state) {
             StepState.Pending, StepState.Active -> for (k in 0 until 10) {
                 val a = 2 * PI * k / 10 - PI / 2
-                val lit = state == StepState.Active && ((k - head + 10) % 10) < 3
                 drawCircle(
-                    if (lit) c.accent else c.textTertiary.copy(alpha = if (state == StepState.Pending) .6f else .35f),
+                    c.textTertiary.copy(alpha = .6f),
                     1.3.dp.toPx(),
                     Offset(ctr.x + r * cos(a).toFloat(), ctr.y + r * sin(a).toFloat())
                 )
@@ -387,7 +417,8 @@ fun PlanStepMark(state: StepState, modifier: Modifier = Modifier, size: Dp = 20.
                 drawLine(c.textTertiary, Offset(ctr.x - r * .45f, ctr.y), Offset(ctr.x + r * .45f, ctr.y), sw, StrokeCap.Round)
             }
             StepState.Done, StepState.Failed -> {
-                val col = if (state == StepState.Done) c.textPrimary else c.error
+                // Grey like the agent-run mockup: a finished step steps back, the live one leads.
+                val col = if (state == StepState.Done) c.textSecondary else c.error
                 val ring = (draw.value * 2).coerceAtMost(1f)
                 val mark = ((draw.value - .5f) * 2).coerceIn(0f, 1f)
                 drawArc(

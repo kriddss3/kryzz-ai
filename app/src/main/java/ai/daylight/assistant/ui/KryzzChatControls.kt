@@ -1,5 +1,12 @@
 package ai.daylight.assistant.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.res.painterResource
+import ai.daylight.assistant.R
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.DotType
+import androidx.compose.foundation.layout.width
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -13,7 +20,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -22,35 +28,16 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.Photo
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SmartToy
-import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.TableChart
-import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -87,9 +74,6 @@ import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.data.remote.MediaModel
 import ai.daylight.assistant.data.remote.OpenRouterModel
-import ai.daylight.assistant.domain.AgentCapability
-import ai.daylight.assistant.domain.AgentQuality
-import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
 import ai.daylight.assistant.domain.availableReasoningEfforts
@@ -463,60 +447,6 @@ internal fun KryzzChatAiControlsSheet(
     }
 }
 
-/**
- * v5.10: the Agent quality preset (Fast / Balanced / Max), a chip next to the Workflow chip
- * in the Agent composer. Tapping it lists the presets with what each one changes.
- */
-@Composable
-internal fun KryzzAgentQualityChip(
-    quality: AgentQuality,
-    onSelect: (AgentQuality) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box(modifier) {
-        Surface(
-            onClick = { expanded = true },
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f))
-        ) {
-            Row(
-                Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Icon(Icons.Outlined.Tune, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("Quality · ${quality.label}", style = MaterialTheme.typography.labelSmall)
-            }
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            AgentQuality.entries.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        Column(Modifier.widthIn(max = 280.dp)) {
-                            Text(option.label, fontWeight = if (option == quality) FontWeight.SemiBold else null)
-                            Text(
-                                option.summary,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    leadingIcon = if (option == quality) {
-                        { Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }
-                    } else null,
-                    onClick = {
-                        expanded = false
-                        onSelect(option)
-                    }
-                )
-            }
-        }
-    }
-}
-
 /** v5.10: what the Agent composer says about the model the next turn will run on. */
 internal data class KryzzAgentModelNotice(
     /** The one-time suggestion to leave the old gpt-4o-mini default. */
@@ -529,6 +459,10 @@ internal data class KryzzAgentModelNotice(
     val visible: Boolean get() = suggestUpgrade || lacksTools
 }
 
+/**
+ * Above Run's reply line: a red line when the model cannot call tools, and the one-time
+ * offer to leave the old default model, with Keep and Switch as text pills.
+ */
 @Composable
 internal fun KryzzAgentModelNoticeCard(
     notice: KryzzAgentModelNotice,
@@ -536,40 +470,54 @@ internal fun KryzzAgentModelNoticeCard(
     onKeep: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    val c = DotTheme.c
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (notice.lacksTools) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(Icons.Outlined.Info, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.error)
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(painterResource(R.drawable.ic_kz_warning), null, Modifier.padding(top = 2.dp).size(14.dp), tint = c.error)
+                Spacer(Modifier.width(8.dp))
                 Text(
                     "This model has no tool calling, so the agent cannot search, read pages or create files with it. Pick a model with the Tool calling badge.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error
+                    style = DotType.BodySmall,
+                    color = c.error
                 )
             }
         }
         if (notice.suggestUpgrade) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f),
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(DotRadius.Tile)
+                    .background(c.surfaceRaised)
+                    .border(1.dp, c.border, DotRadius.Tile)
+                    .padding(start = 14.dp, end = 4.dp, top = 10.dp)
             ) {
-                Column(Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 6.dp)) {
-                    Text(
-                        "This model is weak at multi-step tool use. Switch to ${notice.suggestedName}?",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = onKeep) { Text("Keep") }
-                        TextButton(onClick = onSwitch) { Text("Switch") }
-                    }
+                Text(
+                    "This model is weak at multi-step tool use. Switch to ${notice.suggestedName}?",
+                    style = DotType.BodySmall,
+                    color = c.textPrimary
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    NoticeAction("Keep", onKeep)
+                    NoticeAction("Switch", onSwitch)
                 }
             }
         }
     }
+}
+
+@Composable
+private fun NoticeAction(label: String, onClick: () -> Unit) {
+    Text(
+        label.uppercase(),
+        Modifier
+            .clip(DotRadius.Pill)
+            .clickable(onClick = onClick)
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 14.dp, vertical = 16.dp),
+        style = DotType.Label,
+        color = DotTheme.c.textPrimary
+    )
 }
 
 @Composable

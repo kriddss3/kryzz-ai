@@ -61,10 +61,8 @@ import ai.daylight.assistant.domain.InlineQuestionProtocol
 import ai.daylight.assistant.domain.MessageSegment
 import ai.daylight.assistant.domain.MessageStatus
 import ai.daylight.assistant.domain.WorkLog
-import ai.daylight.assistant.ui.GeneratedOutputCard
 import ai.daylight.assistant.ui.LocalCitationUrls
 import ai.daylight.assistant.ui.MarkdownText
-import ai.daylight.assistant.ui.QuestionCard
 import ai.daylight.assistant.ui.STREAMING_CARET
 import ai.daylight.assistant.ui.citedNumbers
 import ai.daylight.assistant.ui.dot.DotRadius
@@ -72,6 +70,8 @@ import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
 import ai.daylight.assistant.ui.dot.effects.ThinkingDots
+import ai.daylight.assistant.ui.run.FileCard
+import ai.daylight.assistant.ui.run.QuestionCard
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlinx.coroutines.delay
 
@@ -85,12 +85,16 @@ class TalkCallbacks(
     val onSaveOutput: (GeneratedOutput) -> Unit,
     val onOpenOutput: (GeneratedOutput) -> Unit,
     val onQuestionAnswer: (question: String, answer: String) -> Unit,
+    /** Run only: save a finished run as a reusable skill. */
+    val onCreateSkill: (MessageEntity) -> Unit = {},
 )
 
 /** What a long-press opened its action sheet on. */
-private sealed interface ActionTarget {
+internal sealed interface ActionTarget {
     data class Question(val message: MessageEntity) : ActionTarget
-    data class Answer(val message: MessageEntity, val canRegenerate: Boolean) : ActionTarget
+
+    /** [skill] is set on a finished run's answer: null hides "Make skill", true means saved. */
+    data class Answer(val message: MessageEntity, val canRegenerate: Boolean, val skill: Boolean? = null) : ActionTarget
 }
 
 /** A plain-text preview of an answer: markdown marks and citation numbers removed. */
@@ -197,7 +201,7 @@ fun TalkPane(
                 )
             } else {
                 exchange.answers.forEach { answer ->
-                    Answer(
+                    AnswerBody(
                         message = answer,
                         citations = remember(answer.id, answer.citationsJson) { citations(answer) },
                         outputs = remember(answer.id, answer.outputsJson) { outputs(answer) },
@@ -255,7 +259,32 @@ fun TalkPane(
         }
     }
 
-    when (val target = actionTarget) {
+    actionTarget?.let { target ->
+        MessageActionsSheet(
+            target = target,
+            generating = generating,
+            speakingMessageId = speakingMessageId,
+            synthesizingMessageId = synthesizingMessageId,
+            callbacks = callbacks,
+            onSelectText = { selecting = it },
+            onDismiss = { actionTarget = null }
+        )
+    }
+}
+
+/** The long-press sheet on a question or an answer, shared by Talk and Run. */
+@Composable
+internal fun MessageActionsSheet(
+    target: ActionTarget,
+    generating: Boolean,
+    speakingMessageId: String?,
+    synthesizingMessageId: String?,
+    callbacks: TalkCallbacks,
+    onSelectText: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    when (target) {
         is ActionTarget.Question -> TalkActionsSheet(
             title = "Question",
             actions = buildList {
@@ -263,7 +292,7 @@ fun TalkPane(
                 if (!generating) add(TalkAction(R.drawable.ic_kz_edit, "Edit and resend") { callbacks.onEdit(target.message) })
                 add(TalkAction(R.drawable.ic_kz_share, "Share") { shareText(context, target.message.content) })
             },
-            onDismiss = { actionTarget = null }
+            onDismiss = onDismiss
         )
         is ActionTarget.Answer -> {
             val id = target.message.id
@@ -271,7 +300,7 @@ fun TalkPane(
                 title = "Answer",
                 actions = buildList {
                     add(TalkAction(R.drawable.ic_kz_copy, "Copy") { copyText(context, target.message.content) })
-                    add(TalkAction(R.drawable.ic_kz_quote, "Select text") { selecting = id })
+                    add(TalkAction(R.drawable.ic_kz_quote, "Select text") { onSelectText(id) })
                     add(TalkAction(R.drawable.ic_kz_share, "Share") { shareText(context, target.message.content) })
                     if (target.message.content.isNotBlank()) {
                         val label = when (id) {
@@ -282,12 +311,16 @@ fun TalkPane(
                         add(TalkAction(R.drawable.ic_kz_voice_wave, label) { callbacks.onSpeak(id) })
                     }
                     if (target.canRegenerate) add(TalkAction(R.drawable.ic_kz_retry, "Regenerate") { callbacks.onRegenerate() })
+                    when (target.skill) {
+                        false -> add(TalkAction(R.drawable.ic_kz_skill, "Make skill") { callbacks.onCreateSkill(target.message) })
+                        true -> add(TalkAction(R.drawable.ic_kz_check, "Skill saved") {})
+                        null -> Unit
+                    }
                     add(TalkAction(R.drawable.ic_kz_info, "Usage") { callbacks.onShowUsage(target.message) })
                 },
-                onDismiss = { actionTarget = null }
+                onDismiss = onDismiss
             )
         }
-        null -> Unit
     }
 }
 
@@ -313,7 +346,7 @@ private fun EmptyBoard(onOpenLibrary: () -> Unit) {
 }
 
 @Composable
-private fun FileChip(name: String) {
+internal fun FileChip(name: String) {
     val c = DotTheme.c
     Text(
         name,
@@ -328,8 +361,13 @@ private fun FileChip(name: String) {
     )
 }
 
+/**
+ * One answer with no bubble: type-on reveal, yellow citations, the streaming caret, inline
+ * question cards, file cards and a STOPPED / FAILED mark. Run reuses it with
+ * [showThinking] off, because its work chips already say what is happening.
+ */
 @Composable
-private fun Answer(
+internal fun AnswerBody(
     message: MessageEntity,
     citations: List<Citation>,
     outputs: List<GeneratedOutput>,
@@ -337,6 +375,7 @@ private fun Answer(
     onDoneSelecting: () -> Unit,
     onLongPress: () -> Unit,
     callbacks: TalkCallbacks,
+    showThinking: Boolean = true,
 ) {
     val c = DotTheme.c
     val motion = LocalKryzzMotionEnabled.current
@@ -368,7 +407,7 @@ private fun Answer(
             .talkLongPress("Answer actions", enabled = !selecting, onLongPress = onLongPress)
     ) {
         if (segments.isEmpty() && streaming) {
-            ThinkingDots(Modifier.padding(vertical = 8.dp))
+            if (showThinking) ThinkingDots(Modifier.padding(vertical = 8.dp))
         } else {
             CompositionLocalProvider(LocalCitationUrls provides citations.map { it.url }) {
                 MaterialTheme(typography = MaterialTheme.typography.copy(bodyLarge = DotType.Answer)) {
@@ -403,7 +442,7 @@ private fun Answer(
                 color = c.textPrimary
             )
         }
-        outputs.forEach { GeneratedOutputCard(it, callbacks.onSaveOutput, callbacks.onOpenOutput) }
+        outputs.forEach { FileCard(it, callbacks.onSaveOutput, callbacks.onOpenOutput) }
         when (message.status) {
             MessageStatus.CANCELLED.name -> Text("STOPPED", Modifier.padding(top = 10.dp), style = DotType.Label, color = c.textTertiary)
             MessageStatus.ERROR.name -> Text("FAILED", Modifier.padding(top = 10.dp), style = DotType.Label, color = c.error)
@@ -435,7 +474,7 @@ private fun InlineQuestion(segment: MessageSegment.Question, message: MessageEnt
  * only takes over once the press has lasted the long-press timeout without moving. A tick
  * of haptics confirms it. The latest [onLongPress] is always used.
  */
-private fun Modifier.talkLongPress(label: String, enabled: Boolean = true, onLongPress: () -> Unit): Modifier =
+internal fun Modifier.talkLongPress(label: String, enabled: Boolean = true, onLongPress: () -> Unit): Modifier =
     if (!enabled) this else composed {
         val haptic = LocalHapticFeedback.current
         val current by rememberUpdatedState(onLongPress)
@@ -467,12 +506,12 @@ private fun Modifier.talkLongPress(label: String, enabled: Boolean = true, onLon
             }
     }
 
-private fun copyText(context: Context, text: String) {
+internal fun copyText(context: Context, text: String) {
     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
         .setPrimaryClip(ClipData.newPlainText("Kryzz AI message", text))
 }
 
-private fun shareText(context: Context, text: String) {
+internal fun shareText(context: Context, text: String) {
     val share = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_SUBJECT, "Kryzz AI")
