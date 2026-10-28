@@ -77,7 +77,7 @@ class MainActivity : FragmentActivity() {
                 } else if (settings.biometricLock && !unlocked) {
                     DaylightBackground(style = settings.backgroundStyle, blurRadius = settings.backgroundBlur, colouredGradient = settings.colouredGradient) { BiometricLockScreen(::authenticate) }
                 } else {
-                        AppNavigation(container, settings.onboardingComplete, settings.backgroundStyle, settings.backgroundBlur, settings.colouredGradient)
+                        AppNavigation(container, settings.onboardingComplete, settings.backgroundStyle, settings.backgroundBlur, settings.colouredGradient, settings.dotBackground)
                 }
             }
         }

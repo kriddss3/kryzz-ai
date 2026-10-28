@@ -78,6 +78,8 @@ data class SettingsState(
     val animationsEnabled: Boolean = true,
     val surfaceOpacity: Float = 0.84f,
     val backgroundBlur: Float = 0f,
+    /** v5.12.6 (Tune): the kit's dot grid behind Talk, Run and Home. Off keeps the plain background. */
+    val dotBackground: Boolean = false,
     val biometricLock: Boolean = false,
     val memoryEnabled: Boolean = false,
     val agentSwarmEnabled: Boolean = false,
@@ -133,6 +135,7 @@ class AppPreferences(private val context: Context) {
         val animationsEnabled = booleanPreferencesKey("animations_enabled")
         val surfaceOpacity = floatPreferencesKey("surface_opacity")
         val backgroundBlur = floatPreferencesKey("background_blur")
+        val dotBackground = booleanPreferencesKey("dot_background")
         val biometric = booleanPreferencesKey("biometric_lock")
         val memoryEnabled = booleanPreferencesKey("memory_enabled")
         val agentSwarmEnabled = booleanPreferencesKey("agent_swarm_enabled")
@@ -199,6 +202,7 @@ class AppPreferences(private val context: Context) {
                 animationsEnabled = p[Keys.animationsEnabled] ?: true,
                 surfaceOpacity = 0.84f,
                 backgroundBlur = 0f,
+                dotBackground = p[Keys.dotBackground] ?: false,
                 biometricLock = p[Keys.biometric] ?: false,
                 memoryEnabled = p[Keys.memoryEnabled] ?: false,
                 agentSwarmEnabled = p[Keys.agentSwarmEnabled] ?: false,
@@ -385,6 +389,7 @@ class AppPreferences(private val context: Context) {
     suspend fun setAnimationsEnabled(value: Boolean) = context.dataStore.edit { it[Keys.animationsEnabled] = value }
     suspend fun setSurfaceOpacity(value: Float) = context.dataStore.edit { it[Keys.surfaceOpacity] = value.coerceIn(0.42f, 0.96f) }
     suspend fun setBackgroundBlur(value: Float) = context.dataStore.edit { it[Keys.backgroundBlur] = value.coerceIn(0f, 28f) }
+    suspend fun setDotBackground(value: Boolean) = context.dataStore.edit { it[Keys.dotBackground] = value }
     suspend fun setBiometricLock(value: Boolean) = context.dataStore.edit { it[Keys.biometric] = value }
     suspend fun setMemoryEnabled(value: Boolean) = context.dataStore.edit { it[Keys.memoryEnabled] = value }
     suspend fun setAgentSwarmEnabled(value: Boolean) = context.dataStore.edit { it[Keys.agentSwarmEnabled] = value }

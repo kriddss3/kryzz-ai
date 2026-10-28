@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kryzz location pin, drawn in the kit outline style (24dp, stroke 1.5, round caps). Tint with Icon(tint=) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+  <path android:pathData="M12 21c-3.5-3.6-6-6.9-6-10.2a6 6 0 1 1 12 0c0 3.3-2.5 6.6-6 10.2z M10 10.8a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+</vector>

@@ -119,7 +119,8 @@ fun AppNavigation(
     onboardingComplete: Boolean,
     backgroundStyle: BackgroundStyle = BackgroundStyle.CONSTELLATION,
     backgroundBlur: Float = 0f,
-    colouredGradient: GradientPalette = GradientPalette.OCEAN
+    colouredGradient: GradientPalette = GradientPalette.OCEAN,
+    dotBackground: Boolean = false
 ) {
     key(onboardingComplete) {
         val nav = rememberNavController()
@@ -281,11 +282,15 @@ fun AppNavigation(
         LaunchedEffect(currentRoute) {
             if (panelOpen && topLevelTabForRoute(currentRoute) != MainTab.CHAT) panelOpen = false
         }
+        // Read through State: the compiler memoises `::openLibrary`, and the drawer host's copy
+        // was made on the first frame (no route yet, so not allowed). A plain captured val
+        // froze there, so a swipe-opened drawer never set panelOpen and Back left the arm.
+        val libraryAllowed = rememberUpdatedState(sidePanelSwipeEnabled)
         fun openLibrary() {
             // Hard gate: never open the panel from a depth destination
             // (settings subpage, models, skills, etc.). The user has to
             // back out to a top-level screen first.
-            if (!sidePanelSwipeEnabled) return
+            if (!libraryAllowed.value) return
             panelOpen = true
         }
         fun chatBackStack(): List<NavBackStackEntry> {
@@ -411,7 +416,8 @@ fun AppNavigation(
         DaylightBackground(
             style = rootBackgroundStyle,
             blurRadius = backgroundBlur,
-            colouredGradient = colouredGradient
+            colouredGradient = colouredGradient,
+            dotGrid = dotBackground && dotGridForRoute(currentRoute)
         ) {
         KryzzSidePanelHost(
             open = panelOpen,
@@ -634,18 +640,15 @@ fun AppNavigation(
         }
         composable(Routes.SETTINGS) {
             val vm: SettingsViewModel = viewModel(factory = factory)
-            val settings by vm.settings.collectAsStateWithLifecycle()
             val memoryCountFlow = remember { container.memories.observe("").map { it.size } }
             val memoryCount by memoryCountFlow.collectAsStateWithLifecycle(initialValue = 0)
-            SettingsHomeScreen(
-                onChats = { openChatLanding() },
+            TuneRoute(
+                vm = vm,
+                memoryCount = memoryCount,
+                onChats = ::openLibrary,
                 onLlms = { nav.navigate(Routes.LLMS) },
                 onSkills = { nav.navigate(Routes.SKILLS) },
-                onOpen = nav::navigate,
-                onChat = { openChatLanding() },
-                onOpenLibrary = ::openLibrary,
-                memoryCount = memoryCount,
-                agentQuality = settings.agentQuality
+                onOpen = { route -> nav.navigate(route) }
             )
         }
         composable(Routes.API) {
@@ -682,15 +685,17 @@ fun AppNavigation(
         }
         }
         // Registered after the NavHost so it outranks the NavHost's own pop-one handler;
-        // screen overlays (sheets, voice) register later still and keep priority. Off
-        // while the drawer is open (the drawer closes on Back) and on the root Home,
-        // where Back leaves the app as usual.
+        // screen overlays (sheets, voice) register later still and keep priority. Off on
+        // the root Home, where Back leaves the app as usual. With the drawer open, Back
+        // closes the drawer first: the drawer's own handler sits before the NavHost, so
+        // the NavHost's pop would otherwise win and leave the arm.
         val homeIsRoot = currentRoute == Routes.HOME && nav.previousBackStackEntry == null
         BackHandler(
-            enabled = !panelOpen && currentRoute != null &&
-                currentRoute !in setOf(Routes.ONBOARDING, Routes.BOOT) && !homeIsRoot
+            enabled = backClosesDrawerFirst(panelOpen) || (currentRoute != null &&
+                currentRoute !in setOf(Routes.ONBOARDING, Routes.BOOT) && !homeIsRoot)
         ) {
             when {
+                backClosesDrawerFirst(panelOpen) -> panelOpen = false
                 // A Home kept above running work: step out of the app like the root
                 // does, without finishing it, so the reply keeps going.
                 currentRoute == Routes.HOME -> context.findActivity()?.moveTaskToBack(true)
@@ -714,6 +719,9 @@ fun AppNavigation(
         }
     }
 }
+
+/** Back with the chat drawer open closes the drawer and stays on the screen under it. */
+internal fun backClosesDrawerFirst(panelOpen: Boolean): Boolean = panelOpen
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

@@ -46,10 +46,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
@@ -301,33 +303,52 @@ fun Ticker(text: String, modifier: Modifier = Modifier) {
 /** Four discrete steps: the toggle thumb moves mechanically. */
 private val FourSteps = Easing { (it * 4).toInt() / 4f }
 
-/* EFFECT 10: toggle. ON = white track + black knob (Tune mockup), OFF = outlined knob. */
+/*
+ * EFFECT 10: toggle, 44x26 as in the Tune mockup. ON = white track + black knob; OFF = a
+ * 1.5dp outline + grey knob; disabled = a dashed outline + dim knob. With [onChange] null it
+ * only draws, for a row that is itself the switch (the row then carries the semantics).
+ */
 @Composable
-fun DotToggle(checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun DotToggle(checked: Boolean, onChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val c = DotTheme.c
     val haptic = LocalHapticFeedback.current
     val x by animateFloatAsState(if (checked) 1f else 0f, tween(DotMotion.Fast, easing = FourSteps), label = "x")
-    Box(
-        modifier
-            .size(52.dp, 30.dp)
-            .background(if (checked) c.textPrimary else c.surfaceHigh, DotRadius.Pill)
-            .toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Switch,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onChange(it)
-            }
+    val interactive = if (onChange == null) Modifier else Modifier.toggleable(
+        value = checked,
+        enabled = enabled,
+        role = Role.Switch,
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val r = size.height * .32f
-            val cx = size.height / 2 + x * (size.width - size.height)
-            if (checked) drawCircle(c.bg, r, Offset(cx, size.height / 2))
-            else drawCircle(c.textSecondary, r - 1.dp.toPx(), Offset(cx, size.height / 2), style = Stroke(1.5.dp.toPx()))
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        onChange(it)
+    }
+    Canvas(modifier.size(44.dp, 26.dp).then(interactive)) {
+        val stroke = 1.5.dp.toPx()
+        val radius = CornerRadius(size.height / 2f)
+        val on = checked && enabled
+        if (on) {
+            drawRoundRect(c.textPrimary, cornerRadius = radius)
+        } else {
+            val dashed = if (enabled) null else PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))
+            drawRoundRect(
+                if (enabled) c.borderStrong else c.border,
+                topLeft = Offset(stroke / 2f, stroke / 2f),
+                size = Size(size.width - stroke, size.height - stroke),
+                cornerRadius = CornerRadius(size.height / 2f - stroke / 2f),
+                style = Stroke(stroke, pathEffect = dashed)
+            )
         }
+        // Knob: 13dp, 6.5dp in from the outline at either end.
+        val knob = 6.5.dp.toPx()
+        val start = 13.dp.toPx()
+        val end = size.width - 13.dp.toPx()
+        val knobColour = when {
+            on -> c.bg
+            !enabled -> c.dotOff
+            else -> c.textDisabled
+        }
+        drawCircle(knobColour, knob, Offset(start + x * (end - start), size.height / 2f))
     }
 }
 

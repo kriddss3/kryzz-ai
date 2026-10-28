@@ -3,7 +3,6 @@ package ai.daylight.assistant.ui
 import androidx.biometric.BiometricManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,10 +11,8 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,19 +22,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.ManageSearch
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DeleteForever
-import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.PrivacyTip
-import androidx.compose.material.icons.outlined.Psychology
-import androidx.compose.material.icons.outlined.RecordVoiceOver
-import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,7 +68,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import ai.daylight.assistant.BuildConfig
 import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.domain.AgentTurnPolicy
 import ai.daylight.assistant.domain.AssistantPreset
@@ -93,196 +80,150 @@ import ai.daylight.assistant.voice.FishVoices
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoiceReplyModels
 import ai.daylight.assistant.voice.VoiceSttModels
-import ai.daylight.assistant.ui.shell.Arm
-import ai.daylight.assistant.ui.shell.InkLines
-import ai.daylight.assistant.ui.shell.InkStripEffect
+import ai.daylight.assistant.ui.tune.TuneActions
+import ai.daylight.assistant.ui.tune.TuneScreen
+import ai.daylight.assistant.ui.tune.TuneState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The Tune arm (kit settings.png), drawn by [TuneScreen]. It is stateless: [TuneRoute] passes
+ * the [state] and the [actions]. [onChats] opens the chat library from the TUNE title,
+ * [onLlms] is the model catalog and [onOpen] navigates to a settings route.
+ */
 @Composable
 fun SettingsHomeScreen(
     onChats: () -> Unit,
     onLlms: () -> Unit,
     onSkills: () -> Unit,
     onOpen: (String) -> Unit,
-    onChat: () -> Unit = onChats,
-    onOpenLibrary: () -> Unit = onChats,
-    memoryCount: Int = 0,
-    agentQuality: AgentQuality = AgentQuality.DEFAULT
+    state: TuneState = TuneState(),
+    actions: TuneActions = TuneActions()
 ) {
-    var advancedExpanded by remember { mutableStateOf(false) }
-    // Tune arm: the strip shows the current thinking mode, e.g. TUNE BALANCED.
-    InkStripEffect(InkLines.tune(agentQuality), arm = Arm.TUNE)
+    TuneScreen(
+        state = state,
+        actions = actions,
+        onOpen = onOpen,
+        onModelCatalog = onLlms,
+        onSkills = onSkills,
+        onLibrary = onChats
+    )
+}
 
-    Scaffold(
-        modifier = Modifier,
-        containerColor = Color.Transparent,
-        topBar = {
-            // No menu button: the arm rail navigates, and the chat library opens with a
-            // left-edge swipe.
-            TopAppBar(
-                title = { Text("Settings", style = MaterialTheme.typography.titleLarge) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
-            )
+/**
+ * Binds Tune to [SettingsViewModel]: every control saves at once, location asks for its
+ * permission first, and Backup runs the same file pickers as the chat library.
+ */
+@Composable
+fun TuneRoute(
+    vm: SettingsViewModel,
+    memoryCount: Int,
+    onChats: () -> Unit,
+    onLlms: () -> Unit,
+    onSkills: () -> Unit,
+    onOpen: (String) -> Unit
+) {
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val keys by vm.keyTails.collectAsStateWithLifecycle()
+    val notice by vm.notice.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val biometricAvailable = remember {
+        BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+    }
+    // Re-read the key endings each time Tune is shown (a key may have been saved in API keys).
+    LaunchedEffect(Unit) { vm.refreshKeyTails() }
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(8_000)
+            vm.notice.value = null
         }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                KryzzMark(Modifier.size(54.dp), contentDescription = null)
-                Text("KRYZZ AI", style = MaterialTheme.typography.labelLarge)
-                Text(
-                    "Private workspace · local history",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            SettingsGroup(title = "Appearance", compact = true) {
-                SettingsLink(
-                    icon = Icons.Outlined.Palette,
-                    title = "Theme and display"
-                ) { onOpen(Routes.APPEARANCE) }
-            }
-
-            SettingsGroup(title = "AI and models", compact = true) {
-                SettingsLink(
-                    icon = Icons.Outlined.SmartToy,
-                    title = "Default models"
-                ) { onOpen(Routes.models()) }
-                SettingsDivider()
-                SettingsLink(
-                    icon = Icons.Outlined.MenuBook,
-                    title = "Model catalog"
-                ) { onOpen(Routes.LLMS) }
-                SettingsDivider()
-                SettingsLink(
-                    icon = Icons.Outlined.Person,
-                    title = "Agent & persona"
-                ) { onOpen(Routes.PERSONA) }
-            }
-
-            SettingsGroup(title = "Voice chat", compact = true) {
-                SettingsLink(
-                    icon = Icons.Outlined.RecordVoiceOver,
-                    title = "Voice chat"
-                ) { onOpen(Routes.VOICE) }
-            }
-
-            SettingsGroup(title = "Memory", compact = true) {
-                // The Chat memory toggle lives only on the dedicated Memory screen.
-                SettingsLink(
-                    icon = Icons.Outlined.Psychology,
-                    title = "Manage memories",
-                    onClick = { onOpen(Routes.MEMORY) }
-                )
-            }
-
-            SettingsGroup(title = "Tools and connections", compact = true) {
-                SettingsLink(
-                    icon = Icons.Outlined.Extension,
-                    title = "Skills & tools"
-                ) { onOpen(Routes.SKILLS) }
-                SettingsDivider()
-                SettingsLink(
-                    icon = Icons.AutoMirrored.Outlined.ManageSearch,
-                    title = "Search & tools"
-                ) { onOpen(Routes.TOOLS) }
-            }
-
-            SettingsGroup(title = "Data and privacy", compact = true) {
-                SettingsLink(
-                    icon = Icons.Outlined.PrivacyTip,
-                    title = "Data, privacy & usage"
-                ) { onOpen(Routes.PRIVACY) }
-            }
-
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = LocalGlassOpacity.current),
-                tonalElevation = 1.dp
-            ) {
-                Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .clickable { advancedExpanded = !advancedExpanded }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = "Advanced",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = if (advancedExpanded) "Hide" else "Show",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Icon(
-                            imageVector = Icons.Outlined.ChevronRight,
-                            contentDescription = if (advancedExpanded) "Collapse Advanced" else "Expand Advanced",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    if (advancedExpanded) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        SettingsLink(
-                            icon = Icons.Outlined.Key,
-                            title = "API setup",
-                            subtitle = "Provider API keys"
-                        ) { onOpen(Routes.API) }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Column(Modifier.padding(12.dp)) {
-                            ProviderNotice()
+    }
+    val locationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> vm.setLocationEnabled(granted) }
+    var pendingExport by remember { mutableStateOf("") }
+    val createBackup = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val stream = requireNotNull(context.contentResolver.openOutputStream(uri)) {
+                            "The selected file could not be opened."
                         }
+                        stream.bufferedWriter().use { it.write(pendingExport) }
                     }
+                }.onSuccess {
+                    vm.notice.value = "Chat backup saved."
+                }.onFailure {
+                    vm.notice.value = it.message ?: "The backup could not be saved."
                 }
-            }
-            Spacer(Modifier.height(4.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 18.dp, bottom = 26.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Text(
-                    "Version ${BuildConfig.VERSION_NAME} · created and coded by Kryzz",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "© ${java.time.Year.now().value} Kryzz AI",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                pendingExport = ""
             }
         }
     }
+    val openBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val content = runCatching {
+                    withContext(Dispatchers.IO) {
+                        requireNotNull(context.contentResolver.openInputStream(uri)) {
+                            "The selected file could not be opened."
+                        }.bufferedReader().use { it.readText() }
+                    }
+                }.onFailure {
+                    vm.notice.value = it.message ?: "The backup could not be opened."
+                }.getOrNull()
+                if (content != null) vm.importChats(content)
+            }
+        }
+    }
+    val actions = remember(vm) {
+        TuneActions(
+            onQuality = vm::setAgentQuality,
+            onCostCap = vm::setCostCapCents,
+            onSearch = vm::setSearch,
+            onMemory = vm::setMemoryEnabled,
+            onLocation = { wanted ->
+                if (wanted && !vm.hasLocationPermission()) {
+                    locationPermission.launch(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                } else {
+                    vm.setLocationEnabled(wanted)
+                }
+            },
+            onBiometric = vm::setBiometric,
+            onTheme = vm::setTheme,
+            onDotBackground = vm::setDotBackground,
+            onExportChats = {
+                vm.exportChats { json ->
+                    pendingExport = json
+                    createBackup.launch("kryzz-ai-chat-backup.json")
+                }
+            },
+            onImportChats = { openBackup.launch(arrayOf("application/json")) }
+        )
+    }
+    SettingsHomeScreen(
+        onChats = onChats,
+        onLlms = onLlms,
+        onSkills = onSkills,
+        onOpen = onOpen,
+        state = TuneState(
+            settings = settings,
+            keys = keys,
+            memoryCount = memoryCount,
+            biometricAvailable = biometricAvailable,
+            backupNotice = notice
+        ),
+        actions = actions
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -1305,54 +1246,6 @@ private fun SettingsGroup(
         ) {
             Column(content = content)
         }
-    }
-}
-
-@Composable
-private fun SettingsLink(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String = "",
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp)
-        )
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (subtitle.isNotBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        Icon(
-            imageVector = Icons.Outlined.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp)
-        )
     }
 }
 

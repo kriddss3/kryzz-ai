@@ -60,6 +60,8 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Job
+import ai.daylight.assistant.ui.tune.TuneKeys
+import ai.daylight.assistant.ui.tune.TuneModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -1971,7 +1973,36 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
     fun hasLocationPermission() = container.location.hasPermission()
     fun setMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setMemoryEnabled(value) }
+    fun setDotBackground(value: Boolean) = viewModelScope.launch { container.preferences.setDotBackground(value) }
     fun clearAll() = viewModelScope.launch { container.clearAllLocalData(); notice.value = "All local conversations, settings, and credentials were cleared." }
+
+    /** Tune's key row. Only the last four characters of each key are kept (see [TuneModel.keyTail]). */
+    val keyTails = MutableStateFlow(TuneKeys())
+
+    fun refreshKeyTails() = viewModelScope.launch {
+        keyTails.value = withContext(Dispatchers.IO) {
+            val credentials = container.credentials
+            TuneKeys(
+                openRouterTail = TuneModel.keyTail(runCatching { credentials.openRouterKey() }.getOrNull()),
+                minimaxTail = TuneModel.keyTail(runCatching { credentials.minimaxKey() }.getOrNull()),
+                hasParallel = credentials.hasParallelKey(),
+                hasFish = credentials.hasFishKey()
+            )
+        }
+    }
+
+    /** Tune's Backup row: the same JSON file the chat library exports and imports. */
+    fun exportChats(onReady: (String) -> Unit) = viewModelScope.launch {
+        runCatching { container.conversations.exportJson() }
+            .onSuccess(onReady)
+            .onFailure { notice.value = it.message ?: "The chat backup could not be created." }
+    }
+
+    fun importChats(content: String) = viewModelScope.launch {
+        runCatching { container.conversations.importJson(content) }
+            .onSuccess { notice.value = "Imported $it conversation${if (it == 1) "" else "s"}." }
+            .onFailure { notice.value = "Import failed: ${it.message ?: "invalid file"}" }
+    }
 }
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

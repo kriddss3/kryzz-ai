@@ -34,6 +34,7 @@ import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.ui.dot.DotMotion
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.effects.dotGrid
 import ai.daylight.assistant.ui.theme.KryzzColors
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 
@@ -82,6 +83,9 @@ fun KryzzMark(
  * App background. Every persisted [BackgroundStyle] now renders the same Dot kit
  * background: a flat near-black field (kit rule: no gradients, no glass, no blur).
  * The parameters stay so existing call sites and saved settings keep working.
+ *
+ * [dotGrid] adds the kit's dot grid (components.md section 1: text colour at 6%, 8dp pitch,
+ * 1dp dots). Tune's "Dot background" switch turns it on for [dotGridForRoute].
  */
 @Composable
 fun DaylightBackground(
@@ -90,13 +94,22 @@ fun DaylightBackground(
     @Suppress("UNUSED_PARAMETER") style: BackgroundStyle = BackgroundStyle.CONSTELLATION,
     @Suppress("UNUSED_PARAMETER") blurRadius: Float = 0f,
     @Suppress("UNUSED_PARAMETER") colouredGradient: GradientPalette = GradientPalette.OCEAN,
+    dotGrid: Boolean = false,
     content: @Composable BoxScope.() -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    Box(modifier.fillMaxSize().background(scheme.background)) {
+    val grid = if (dotGrid) Modifier.dotGrid(DotTheme.c.textPrimary.copy(alpha = DOT_GRID_ALPHA)) else Modifier
+    Box(modifier.fillMaxSize().background(scheme.background).then(grid)) {
         CompositionLocalProvider(LocalContentColor provides scheme.onBackground) { content() }
     }
 }
+
+/** The kit's dot-grid strength behind text (components.md section 1). */
+internal const val DOT_GRID_ALPHA = 0.06f
+
+/** Where the dot background shows: Home and the chat arms (Talk, Run). Voice draws its own. */
+internal fun dotGridForRoute(route: String?): Boolean =
+    route == Routes.HOME || route == Routes.CHAT || route?.startsWith("chat/") == true
 
 /** Launch intro: the Kryzz mark and name on black. The dot-matrix reveal arrives in phase D. */
 @Composable

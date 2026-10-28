@@ -182,7 +182,7 @@ fun QualitySheet(selected: AgentQuality, capCents: Int, onSelect: (AgentQuality)
             }
         }
         Text(
-            "Change the cap in Tune, Search & tools".uppercase(Locale.US),
+            "Change the cap in Tune".uppercase(Locale.US),
             Modifier.padding(top = 4.dp),
             style = DotType.Caption,
             color = c.textTertiary

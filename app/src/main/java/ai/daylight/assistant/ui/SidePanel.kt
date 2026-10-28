@@ -194,6 +194,14 @@ internal fun panelDragIsMeaningful(
         (goingLeft && progress > 0f)
 }
 
+/**
+ * A child that already took this drag (Tune's cost slider, a sideways-scrolling row) keeps
+ * it: once a move was consumed below the drawer before the drawer engaged, the drawer stays
+ * out of that gesture. A drag nothing else claims still opens the drawer as before.
+ */
+internal fun panelYieldsToChild(engaged: Boolean, moveConsumedByChild: Boolean): Boolean =
+    !engaged && moveConsumedByChild
+
 internal fun panelShouldSettleOpen(
     startProgress: Float,
     endProgress: Float,
@@ -358,6 +366,7 @@ fun KryzzSidePanelHost(
                             continue
                         }
                         var engaged = false
+                        var yielded = false
                         var totalDx = 0f
                         var totalDy = 0f
                         var dragProgress = progress.value
@@ -367,6 +376,12 @@ fun KryzzSidePanelHost(
                                 val ev = awaitPointerEvent(PointerEventPass.Final)
                                 val ch = ev.changes.firstOrNull { it.id == downId } ?: break
                                 if (!ch.pressed) break
+                                if (yielded) continue
+                                val childMoved = ch.isConsumed && ch.position != ch.previousPosition
+                                if (panelYieldsToChild(engaged, childMoved)) {
+                                    yielded = true
+                                    continue
+                                }
                                 val dx = ch.position.x - ch.previousPosition.x
                                 val dy = ch.position.y - ch.previousPosition.y
                                 totalDx += dx
@@ -916,7 +931,7 @@ private fun FolderAssignmentDialog(
 }
 
 @Composable
-private fun GalacticAboutDialog(onDismiss: () -> Unit) {
+internal fun GalacticAboutDialog(onDismiss: () -> Unit) {
     val motionEnabled = LocalKryzzMotionEnabled.current
     val galacticMotion = rememberInfiniteTransition(label = "about galaxy")
     val orbitProgress by galacticMotion.animateFloat(
