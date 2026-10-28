@@ -1,6 +1,9 @@
 package ai.daylight.assistant.ui
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -36,6 +39,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavBackStackEntry
@@ -56,6 +60,8 @@ import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.GradientPalette
+import ai.daylight.assistant.ui.home.HomeScreen
+import ai.daylight.assistant.ui.link.LinkScreen
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.ArmRail
 import ai.daylight.assistant.ui.shell.ArmRailSpec
@@ -76,6 +82,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object Routes {
+    /** The arm board, the start screen. Back from any arm comes here. */
+    const val HOME = "home"
+    /** Link's COMING LATER page (a future project, no integration). */
+    const val LINK = "link"
     const val BOOT = "boot"
     const val ONBOARDING = "onboarding"
     const val LLMS = "llms"
@@ -114,6 +124,7 @@ fun AppNavigation(
     key(onboardingComplete) {
         val nav = rememberNavController()
         val scope = rememberCoroutineScope()
+        val context = LocalContext.current
         val currentEntry = nav.currentBackStackEntryAsState().value
         val currentRoute = currentEntry?.destination?.route
         val currentConversationId = currentEntry?.arguments?.getString("conversationId")
@@ -163,11 +174,52 @@ fun AppNavigation(
                 }
             }
         }
-        fun openSingleConversation(route: String) {
-            nav.navigate(route) {
-                popUpTo(Routes.CHAT) { inclusive = true }
-                launchSingleTop = true
+        /**
+         * Opens an arm screen. Arms replace each other above Home, so Back from any arm
+         * lands on Home. A chat that is still generating is the exception: it stays
+         * underneath (its ViewModel holds the reply) and the new arm opens on top of it.
+         */
+        fun navigateArm(route: String) {
+            @SuppressLint("RestrictedApi")
+            val stack = nav.currentBackStack.value
+            val busyChat = stack.lastOrNull {
+                it.destination.route == Routes.CHAT && inkStrip.isBusy(it.arguments?.getString("conversationId"))
             }
+            if (busyChat != null) {
+                while (nav.currentBackStackEntry?.id != busyChat.id) {
+                    if (!nav.popBackStack()) break
+                }
+                nav.navigate(route) { launchSingleTop = true }
+            } else {
+                nav.navigate(route) {
+                    popUpTo(Routes.HOME) { inclusive = false }
+                    launchSingleTop = true
+                }
+            }
+        }
+        fun openSingleConversation(route: String) = navigateArm(route)
+
+        /**
+         * Back from an arm goes to Home. Normally that is the root Home, but a chat that is
+         * still generating must not be popped (that would cancel its reply), so Home then
+         * opens on top of it: the board shows the arm as busy, and its port leads back.
+         */
+        fun goHome() {
+            @SuppressLint("RestrictedApi")
+            val stack = nav.currentBackStack.value
+            val busyChat = stack.lastOrNull {
+                it.destination.route == Routes.CHAT && inkStrip.isBusy(it.arguments?.getString("conversationId"))
+            }
+            if (busyChat == null) {
+                if (!nav.popBackStack(Routes.HOME, inclusive = false)) {
+                    nav.navigate(Routes.HOME) { popUpTo(nav.graph.id) { inclusive = true } }
+                }
+                return
+            }
+            while (nav.currentBackStackEntry?.id != busyChat.id) {
+                if (!nav.popBackStack()) break
+            }
+            nav.navigate(Routes.HOME) { launchSingleTop = true }
         }
         suspend fun rememberedRoute(id: String): Pair<AssistantMode, AgentCapability> {
             rememberedChatRoutes[id]?.let { return it }
@@ -202,18 +254,11 @@ fun AppNavigation(
                 }
             }
         }
-        BackHandler(
-            enabled = currentRoute != null && currentRoute !in setOf(Routes.ONBOARDING, Routes.BOOT, Routes.CHAT)
-        ) {
-            nav.popBackStack()
-        }
         val factory = DaylightViewModelFactory(container)
         fun openTopLevel(route: String) {
             val targetTab = topLevelTabForRoute(route)
             if (targetTab != null && targetTab == topLevelTabForRoute(currentRoute)) return
-            nav.navigate(route) {
-                launchSingleTop = true
-            }
+            navigateArm(route)
         }
         val motionEnabled = LocalKryzzMotionEnabled.current
         val appViewModelStoreOwner = checkNotNull(LocalViewModelStoreOwner.current)
@@ -249,10 +294,9 @@ fun AppNavigation(
             return stack.filter { it.destination.route == Routes.CHAT }
         }
         /**
-         * Shows a conversation. If it is already on the back stack (for example under
-         * Settings, or a run kept alive under another arm), pop back to it so its
-         * ViewModel and any running reply survive. Otherwise replace the top chat, unless
-         * that chat is still generating: then push on top so the reply keeps running.
+         * Shows a conversation. If it is already on the back stack (a run kept alive under
+         * another arm), pop back to it so its ViewModel and any running reply survive.
+         * Otherwise open it as an arm ([navigateArm] keeps a generating chat underneath).
          */
         fun showConversation(
             id: String,
@@ -270,13 +314,7 @@ fun AppNavigation(
                 }
                 return
             }
-            val route = Routes.chat(id, mode, capability, voice)
-            val topChatId = chats.lastOrNull()?.arguments?.getString("conversationId")
-            if (inkStrip.isBusy(topChatId)) {
-                nav.navigate(route) { popUpTo(Routes.CHAT) { inclusive = false } }
-            } else {
-                openSingleConversation(route)
-            }
+            navigateArm(Routes.chat(id, mode, capability, voice))
         }
         fun openConversationFromLibrary(id: String) {
             panelOpen = false
@@ -342,7 +380,27 @@ fun AppNavigation(
                 Arm.TALK, Arm.RUN -> openArmConversation(arm)
                 Arm.VOICE -> newConversationFromLibrary(AssistantMode.CHAT, voice = true)
                 Arm.TUNE -> openTopLevel(Routes.SETTINGS)
-                Arm.MAKE, Arm.FIND, Arm.CREW, Arm.LINK -> inkStrip.flash(InkLines.notYet(arm))
+                Arm.LINK -> navigateArm(Routes.LINK)
+                Arm.MAKE, Arm.FIND, Arm.CREW -> inkStrip.flash(InkLines.notYet(arm))
+            }
+        }
+        /**
+         * The Home composer: a new conversation opens with the text and sends it once.
+         * [capability] null is Talk; IMAGE or VIDEO is the one-tap "make" switch, which
+         * runs the existing agent generation until the Make screen arrives (C7).
+         */
+        fun startFromHome(text: String, capability: AgentCapability?) {
+            panelOpen = false
+            scope.launch {
+                container.conversations.deleteEmptyExcept(chatDraftConversationIds())
+                val id = container.conversations.createConversation()
+                val mode = if (capability == null) AssistantMode.CHAT else AssistantMode.AGENT
+                val cap = capability ?: AgentCapability.AUTO
+                queueChatSend(id, text)
+                rememberedChatRoutes[id] = mode to cap
+                withContext(Dispatchers.Main.immediate) {
+                    showConversation(id, mode, cap)
+                }
             }
         }
         val rootBackgroundStyle = if (currentRoute == Routes.CHAT || currentRoute?.startsWith("chat/") == true) {
@@ -400,7 +458,7 @@ fun AppNavigation(
         Row(Modifier.fillMaxWidth().weight(1f)) {
         NavHost(
             navController = nav,
-            startDestination = if (onboardingComplete) Routes.BOOT else Routes.ONBOARDING,
+            startDestination = if (onboardingComplete) Routes.HOME else Routes.ONBOARDING,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
@@ -425,20 +483,32 @@ fun AppNavigation(
         composable(Routes.ONBOARDING) {
             val vm: OnboardingViewModel = viewModel(factory = factory)
             OnboardingScreen(vm) {
-                nav.navigate(Routes.BOOT) { popUpTo(Routes.ONBOARDING) { inclusive = true } }
+                nav.navigate(Routes.HOME) { popUpTo(Routes.ONBOARDING) { inclusive = true } }
             }
         }
+        // Kept for old saved states: boot now just lands on Home (the chat library's
+        // ViewModel already prunes empty conversations at start).
         composable(Routes.BOOT) {
             LaunchedEffect(Unit) {
-                container.conversations.deleteEmptyExcept(chatDraftConversationIds())
-                val id = container.conversations.createConversation()
-                withContext(Dispatchers.Main.immediate) {
-                    nav.navigate(Routes.chat(id)) {
-                        popUpTo(Routes.BOOT) { inclusive = true }
-                        launchSingleTop = true
-                    }
+                nav.navigate(Routes.HOME) {
+                    popUpTo(Routes.BOOT) { inclusive = true }
+                    launchSingleTop = true
                 }
             }
+        }
+        composable(Routes.HOME) {
+            val vm: HomeViewModel = viewModel(factory = factory)
+            HomeScreen(
+                vm = vm,
+                onOpenArm = ::openArm,
+                onAsk = { text -> startFromHome(text, capability = null) },
+                onMake = { text, capability -> startFromHome(text, capability) },
+                onVoice = { openArm(Arm.VOICE) },
+                onInkwell = { inkStrip.flash(InkLines.INKWELL_NOT_YET) }
+            )
+        }
+        composable(Routes.LINK) {
+            LinkScreen()
         }
         composable(Routes.LLMS) {
             val vm: LlmCatalogViewModel = viewModel(factory = factory)
@@ -611,6 +681,23 @@ fun AppNavigation(
             CronJobsScreen(vm, nav::popBackStack)
         }
         }
+        // Registered after the NavHost so it outranks the NavHost's own pop-one handler;
+        // screen overlays (sheets, voice) register later still and keep priority. Off
+        // while the drawer is open (the drawer closes on Back) and on the root Home,
+        // where Back leaves the app as usual.
+        val homeIsRoot = currentRoute == Routes.HOME && nav.previousBackStackEntry == null
+        BackHandler(
+            enabled = !panelOpen && currentRoute != null &&
+                currentRoute !in setOf(Routes.ONBOARDING, Routes.BOOT) && !homeIsRoot
+        ) {
+            when {
+                // A Home kept above running work: step out of the app like the root
+                // does, without finishing it, so the reply keeps going.
+                currentRoute == Routes.HOME -> context.findActivity()?.moveTaskToBack(true)
+                armForRoute(currentRoute) != null -> goHome()
+                else -> nav.popBackStack()
+            }
+        }
         if (chromeVisible) {
             // The rail's column stays on every shell screen so layouts don't jump; the
             // dots are drawn only on arm screens (not on depth pages).
@@ -626,6 +713,12 @@ fun AppNavigation(
         }
         }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 private fun mainTabOrder(route: String?): Int? = when (topLevelTabForRoute(route)) {

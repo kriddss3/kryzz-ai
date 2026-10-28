@@ -6,9 +6,10 @@ import ai.daylight.assistant.ui.Routes
 /**
  * The eight arms of the squid, in rail order (top to bottom). Each arm is one capability.
  *
- * [route] is the destination the arm opens today. Null means the arm is unlit: it is drawn
- * as a hollow ring and does nothing yet. Make, Find and Crew light up in their own phases;
- * Link stays unlit (future project).
+ * [route] is the working destination the arm opens today. Null means the arm is unlit: it
+ * is drawn as a hollow ring and only says "not yet". Make, Find and Crew light up in their
+ * own phases. Link stays unlit for good (a future project): it opens its COMING LATER page
+ * (Routes.LINK), which is not a working screen.
  */
 enum class Arm(val label: String, val route: String?) {
     TALK("Talk", Routes.CHAT),
@@ -28,8 +29,8 @@ private fun isChatRoute(route: String?): Boolean =
     route == Routes.CHAT || route?.startsWith("chat/") == true
 
 /**
- * The arm a route belongs to, or null for a depth page (settings subpages, models,
- * skills, cron, memory) and for onboarding. A chat route is Run in agent mode, Voice when
+ * The arm a route belongs to, or null for Home, a depth page (settings subpages, models,
+ * skills, cron, memory) and onboarding. A chat route is Run in agent mode, Voice when
  * it was opened for voice, and Talk otherwise. The chat screen refines this live (its
  * mode switch and voice session) through [InkStripEffect].
  */
@@ -40,10 +41,11 @@ fun armForRoute(route: String?, mode: AssistantMode = AssistantMode.CHAT, voice:
         else -> Arm.TALK
     }
     route == Routes.SETTINGS -> Arm.TUNE
+    route == Routes.LINK -> Arm.LINK
     else -> null
 }
 
-/** The rail is drawn only on arm screens, not on depth pages or onboarding. */
+/** The rail is drawn only on arm screens, not on Home, depth pages or onboarding. */
 fun railVisibleForRoute(route: String?): Boolean = armForRoute(route) != null
 
 /**

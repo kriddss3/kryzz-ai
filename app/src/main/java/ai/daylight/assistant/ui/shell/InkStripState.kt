@@ -85,6 +85,19 @@ object InkLines {
 
     fun tune(quality: AgentQuality): InkLine = InkLine("TUNE ${quality.label}".uppercase())
 
+    /** Home: "2 ARMS WORKING" while anything runs, otherwise "KRYZZ READY". */
+    fun home(busyArms: Int): InkLine = when {
+        busyArms <= 0 -> InkLine("KRYZZ READY")
+        busyArms == 1 -> InkLine("1 ARM WORKING", live = true)
+        else -> InkLine("$busyArms ARMS WORKING", live = true)
+    }
+
+    /** Link is a future project: nothing is connected. */
+    val LINK = InkLine("LINK NOT CONNECTED")
+
+    /** The Inkwell button is unlit until it arrives (C10). */
+    val INKWELL_NOT_YET = InkLine("INKWELL NOT YET")
+
     /** Shown briefly when an unlit arm is tapped: unlit means "not yet". */
     fun notYet(arm: Arm): InkLine = InkLine("${arm.label} NOT YET".uppercase())
 }
@@ -96,6 +109,8 @@ object InkLines {
 fun defaultInkLine(route: String?): InkLine {
     val r = route.orEmpty()
     return when {
+        r == Routes.HOME -> InkLines.home(busyArms = 0)
+        r == Routes.LINK -> InkLines.LINK
         r == Routes.BOOT || r == Routes.CHAT || r.startsWith("chat/") -> InkLines.talk(generating = false)
         r == Routes.SETTINGS -> InkLine("TUNE")
         r == Routes.API -> InkLine("TUNE KEYS")

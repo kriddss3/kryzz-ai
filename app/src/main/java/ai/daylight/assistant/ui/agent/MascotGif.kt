@@ -20,26 +20,15 @@ import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlin.math.min
 
-/**
- * The three animated mascot GIF states used across Agent mode.
- *
- *  - [STANDBY]   : the resting pose (the default / "online" look)
- *  - [THINKING]  : shown while the model is reasoning or running tools
- *  - [SPEAKING]  : shown while a streamed answer is being written out
+/*
+ * Legacy cyan GIF mascot. Since C2 nothing draws it: the dot squid (ui/dot/mascot)
+ * replaced it everywhere. This file and the GIFs in res/raw are deleted in phase E.
  */
-enum class MascotState { STANDBY, THINKING, SPEAKING }
 
 private fun MascotState.rawRes(): Int = when (this) {
     MascotState.STANDBY -> R.raw.mascot_standby
     MascotState.THINKING -> R.raw.mascot_thinking
     MascotState.SPEAKING -> R.raw.mascot_speaking
-}
-
-/** Maps the legacy [BotMood] used by older call sites onto a mascot GIF state. */
-internal fun BotMood.toMascotState(): MascotState = when (this) {
-    BotMood.THINKING, BotMood.TOOLING -> MascotState.THINKING
-    BotMood.SPEAKING -> MascotState.SPEAKING
-    else -> MascotState.STANDBY
 }
 
 /**

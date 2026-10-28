@@ -122,6 +122,39 @@ private object ChatDraftStore {
     fun contains(conversationId: String): Boolean = drafts.containsKey(conversationId)
 
     fun conversationIds(): Set<String> = drafts.keys.toSet()
+
+    /** Chats that send their restored draft once when they first open (the Home composer). */
+    private val autoSend: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    fun markAutoSend(conversationId: String) { autoSend.add(conversationId) }
+
+    fun consumeAutoSend(conversationId: String): Boolean = autoSend.remove(conversationId)
+}
+
+/**
+ * Home composer hand-off: the new conversation opens with [text] in its composer and sends
+ * it once ([consumeChatAutoSend]). The draft also keeps the empty conversation from being
+ * pruned before the chat screen opens.
+ */
+internal fun queueChatSend(conversationId: String, text: String) {
+    ChatDraftStore.write(conversationId, ChatDraftSnapshot(composer = text))
+    ChatDraftStore.markAutoSend(conversationId)
+}
+
+/** True once for a conversation queued by [queueChatSend]; the chat then calls send. */
+internal fun consumeChatAutoSend(conversationId: String): Boolean = ChatDraftStore.consumeAutoSend(conversationId)
+
+/** The thread count and newest thread time shown on the Home board. */
+data class HomeThreads(val count: Int = 0, val lastAt: Long? = null)
+
+/** Home board data: threads from the chat library list, settings, and the agent's live plan. */
+class HomeViewModel(container: AppContainer) : ViewModel() {
+    val threads: StateFlow<HomeThreads> = container.conversations.conversations(archived = false, query = "")
+        .map { list -> HomeThreads(list.size, list.maxOfOrNull { it.updatedAt }) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeThreads())
+    val settings = container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsState())
+    val agentPlan = container.agent.agentPlan
 }
 
 internal fun transferChatDraft(fromConversationId: String, toConversationId: String) {
@@ -2072,6 +2105,7 @@ class DaylightViewModelFactory(private val container: AppContainer) : ViewModelP
         SettingsViewModel::class.java -> SettingsViewModel(container)
         MemoryViewModel::class.java -> MemoryViewModel(container)
         CronViewModel::class.java -> CronViewModel(container)
+        HomeViewModel::class.java -> HomeViewModel(container)
         else -> throw IllegalArgumentException("Unknown ViewModel ${modelClass.name}")
     } as T
 }

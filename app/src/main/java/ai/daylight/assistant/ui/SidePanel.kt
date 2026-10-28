@@ -165,7 +165,7 @@ internal fun panelSwipeEnabledForRoute(route: String?): Boolean {
     if (route == null) return false
     if (route.startsWith("chat/")) return true
     return when (route) {
-        "boot", "onboarding", "settings" -> true
+        "home", "boot", "onboarding", "settings" -> true
         else -> false
     }
 }

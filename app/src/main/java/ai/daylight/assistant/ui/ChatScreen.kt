@@ -244,7 +244,6 @@ import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import ai.daylight.assistant.ui.agent.BotMood
 import ai.daylight.assistant.ui.agent.BotSize
 import ai.daylight.assistant.ui.agent.KryzzMascot
-import ai.daylight.assistant.ui.agent.MascotGif
 import ai.daylight.assistant.ui.agent.MascotState
 import ai.daylight.assistant.voice.VoicePhase
 import java.io.File
@@ -456,6 +455,15 @@ fun requestVoice() {
         vm.mode.value = AssistantMode.entries[pager.settledPage]
     }
     LaunchedEffect(initialCapability) { vm.capability.value = initialCapability }
+    // Opened from the Home composer: the question is already in the composer, send it
+    // once. Mode and capability are set here too so the send can't race the effects above.
+    LaunchedEffect(vm.conversationId) {
+        if (consumeChatAutoSend(vm.conversationId)) {
+            vm.mode.value = initialMode
+            vm.capability.value = initialCapability
+            vm.send()
+        }
+    }
     DisposableEffect(Unit) { onDispose { onComposerFocusChanged(false) } }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, vm) {
@@ -1858,14 +1866,14 @@ private fun MessageItem(
                 )
             }
         } else if (!isUser && isAgentAssistant) {
-            // The mascot GIF sits above the bubble, to the left of the "Kryzz · Agent"
-            // label — like a chat profile picture with plenty of room to be big.
+            // The dot squid sits above the bubble, to the left of the "Kryzz · Agent"
+            // label, like a chat profile picture.
             Row(
                 Modifier.padding(start = 2.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                MascotGif(
+                KryzzMascot(
                     state = agentMessageMascotState(message),
                     size = 46.dp
                 )
