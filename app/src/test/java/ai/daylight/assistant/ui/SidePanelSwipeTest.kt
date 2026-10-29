@@ -59,6 +59,7 @@ class SidePanelSwipeTest {
         assertThat(sidePanelOpenAllowedForRoute("onboarding")).isTrue()
         assertThat(sidePanelOpenAllowedForRoute("boot")).isTrue()
         assertThat(sidePanelOpenAllowedForRoute(Routes.MAKE)).isTrue()
+        assertThat(sidePanelOpenAllowedForRoute(Routes.FIND)).isTrue()
     }
 
     @Test

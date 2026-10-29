@@ -63,6 +63,8 @@ import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.ui.home.HomeScreen
 import ai.daylight.assistant.ui.link.LinkScreen
+import ai.daylight.assistant.ui.find.FindScreen
+import ai.daylight.assistant.ui.find.FindViewModel
 import ai.daylight.assistant.ui.make.MakeScreen
 import ai.daylight.assistant.ui.make.MakeViewModel
 import ai.daylight.assistant.ui.make.makeModel
@@ -73,6 +75,8 @@ import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStrip
 import ai.daylight.assistant.ui.shell.InkStripState
 import ai.daylight.assistant.ui.shell.LocalInkStrip
+import ai.daylight.assistant.ui.shell.LocalScreenBack
+import ai.daylight.assistant.ui.shell.ScreenBackState
 import ai.daylight.assistant.ui.shell.armForMode
 import ai.daylight.assistant.ui.shell.armForRoute
 import ai.daylight.assistant.ui.shell.defaultInkLine
@@ -93,6 +97,8 @@ object Routes {
     const val LINK = "link"
     /** Make (C7): image and video renders. [kind] (IMAGE or VIDEO) is optional. */
     const val MAKE = "make?kind={kind}"
+    /** Find (C8): free images from Wikimedia Commons. */
+    const val FIND = "find"
     const val BOOT = "boot"
     const val ONBOARDING = "onboarding"
     const val LLMS = "llms"
@@ -149,6 +155,7 @@ fun AppNavigation(
         var activeConversationId by rememberSaveable { mutableStateOf<String?>(null) }
         // Eight Arms shell: the ink strip's line and the rail's busy dots.
         val inkStrip = remember { InkStripState() }
+        val screenBack = remember { ScreenBackState() }
         val currentVoice = currentEntry?.arguments?.getString("voice")?.toBoolean() ?: false
         val activeArm: Arm? = if (railVisibleForRoute(currentRoute)) {
             inkStrip.reportedArm ?: armForRoute(currentRoute, currentMode, currentVoice)
@@ -401,7 +408,8 @@ fun AppNavigation(
                 Arm.TUNE -> openTopLevel(Routes.SETTINGS)
                 Arm.LINK -> navigateArm(Routes.LINK)
                 Arm.MAKE -> navigateArm(Routes.make())
-                Arm.FIND, Arm.CREW -> inkStrip.flash(InkLines.notYet(arm))
+                Arm.FIND -> navigateArm(Routes.FIND)
+                Arm.CREW -> inkStrip.flash(InkLines.notYet(arm))
             }
         }
         /**
@@ -480,7 +488,7 @@ fun AppNavigation(
         // 5.1.4/5.1.5). The status bar is consumed here once, so screens that pad for it
         // (TopAppBar, statusBarsPadding) don't add it a second time under the strip.
         val chromeVisible = shellChromeVisibleForRoute(currentRoute, onboardingComplete)
-        CompositionLocalProvider(LocalInkStrip provides inkStrip) {
+        CompositionLocalProvider(LocalInkStrip provides inkStrip, LocalScreenBack provides screenBack) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -561,6 +569,10 @@ fun AppNavigation(
                 onBackground = ::goHome,
                 onInkwell = { inkStrip.flash(InkLines.INKWELL_NOT_YET) }
             )
+        }
+        composable(Routes.FIND) {
+            val vm: FindViewModel = viewModel(factory = factory)
+            FindScreen(vm = vm, onLibrary = ::openLibrary)
         }
         composable(Routes.LLMS) {
             val vm: LlmCatalogViewModel = viewModel(factory = factory)
@@ -737,11 +749,13 @@ fun AppNavigation(
         // the NavHost's pop would otherwise win and leave the arm.
         val homeIsRoot = currentRoute == Routes.HOME && nav.previousBackStackEntry == null
         BackHandler(
-            enabled = backClosesDrawerFirst(panelOpen) || (currentRoute != null &&
+            enabled = backClosesDrawerFirst(panelOpen) || screenBack.active || (currentRoute != null &&
                 currentRoute !in setOf(Routes.ONBOARDING, Routes.BOOT) && !homeIsRoot)
         ) {
             when {
                 backClosesDrawerFirst(panelOpen) -> panelOpen = false
+                // Then whatever the screen has open (Find's viewer sheet), before leaving the arm.
+                screenBack.handle() -> Unit
                 // A Home kept above running work: step out of the app like the root
                 // does, without finishing it, so the reply keeps going.
                 currentRoute == Routes.HOME -> context.findActivity()?.moveTaskToBack(true)

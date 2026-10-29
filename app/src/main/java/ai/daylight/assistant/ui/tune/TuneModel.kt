@@ -106,8 +106,9 @@ object TuneModel {
         }
     }
 
+    /** The one switch covers Talk and Run (through Parallel, which needs a key) and Find (Commons, no key). */
     fun searchCaption(hasParallelKey: Boolean): String =
-        if (hasParallelKey) "Talk and Run, through Parallel" else "Needs a Parallel key"
+        if (hasParallelKey) "Talk and Run via Parallel, and Find" else "Find only; Talk needs a Parallel key"
 
     fun memoryCaption(enabled: Boolean, count: Int): String = when {
         !enabled -> "Paused, nothing saved or used"

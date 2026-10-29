@@ -44,6 +44,7 @@ fun HomeScreen(
     val plan by vm.agentPlan.collectAsStateWithLifecycle()
     val makeRender by vm.makeRender.collectAsStateWithLifecycle()
     val lastMedia by vm.lastMedia.collectAsStateWithLifecycle()
+    val lastFindQuery by vm.lastFindQuery.collectAsStateWithLifecycle()
     val strip = LocalInkStrip.current
     val busy = strip?.busyArms.orEmpty()
     // Minute clock: the date block and "last 09:12" stay right while Home is open.
@@ -64,6 +65,8 @@ fun HomeScreen(
         makeKind = makeRender?.takeIf { it.running }?.kind,
         lastMakeKind = lastMedia?.let { MakeModel.kindOf(it.output) },
         lastMakeAt = lastMedia?.createdAt,
+        findEnabled = settings.searchEnabled,
+        lastFindQuery = lastFindQuery.ifBlank { null },
         now = now,
         zone = zone
     )

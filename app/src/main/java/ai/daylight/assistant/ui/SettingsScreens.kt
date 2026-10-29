@@ -784,7 +784,8 @@ fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         TuneSection("Web search")
         TuneRow(
             R.drawable.ic_kz_web, "Parallel web search",
-            detail = "Lets the model look up current information. Searching never needs a confirmation.",
+            detail = "Lets the model look up current information. Searching never needs a confirmation. " +
+                "The same switch lets Find search Wikimedia Commons for free images.",
             trailing = TuneTrailing.Switch(settings.searchEnabled, vm::setSearch)
         )
         Spacer(Modifier.height(16.dp))

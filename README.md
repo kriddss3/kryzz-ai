@@ -155,6 +155,7 @@ Previous public builds stay up: [`v1.1`](https://github.com/kriddss3/kryzz-ai/re
 - Android backup, device-to-device transfer, cleartext traffic, and HTTP logging are all **disabled**.
 - The microphone is only active during a voice session; recorded audio is cached for transcription only and deleted afterward.
 - Optional **coarse location** is used only when you enable Location in Settings, and only as text in requests you already send (weather / “nearby”).
+- **Find** searches **Wikimedia Commons** (`commons.wikimedia.org`, no key) and loads images from Wikimedia's media hosts (`upload.wikimedia.org`, `thumb.wikimedia.org`). It sends only your search words and filters, and it is off whenever *Allow web search* is off. Saved and shared images carry their credit line (author, licence and source).
 
 One small thing: for a fresh conversation's auto-title, Kryzz may send at most the first 1,500 characters of your first message through OpenRouter to a small model (Gemini 2.5 Flash Lite) for naming. This runs in parallel with your first answer, never blocks it, and falls back to a local title if it can't complete.
 

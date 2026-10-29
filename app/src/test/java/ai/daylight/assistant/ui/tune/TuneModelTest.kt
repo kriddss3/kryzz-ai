@@ -100,7 +100,9 @@ class TuneModelTest {
 
     @Test fun privacyCaptionsFollowTheRealState() {
         assertThat(TuneModel.searchCaption(true)).contains("Parallel")
-        assertThat(TuneModel.searchCaption(false)).isEqualTo("Needs a Parallel key")
+        // C8: the same switch gates Find, which needs no key.
+        assertThat(TuneModel.searchCaption(true)).contains("Find")
+        assertThat(TuneModel.searchCaption(false)).isEqualTo("Find only; Talk needs a Parallel key")
         assertThat(TuneModel.memoryCaption(false, 12)).startsWith("Paused")
         assertThat(TuneModel.memoryCaption(true, 1)).isEqualTo("1 memory on this phone")
         assertThat(TuneModel.memoryCaption(true, 12)).isEqualTo("12 memories on this phone")

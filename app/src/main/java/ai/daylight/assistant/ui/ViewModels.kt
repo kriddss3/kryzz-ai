@@ -63,6 +63,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Job
 import ai.daylight.assistant.ui.make.MakeModel
 import ai.daylight.assistant.ui.make.MakeViewModel
+import ai.daylight.assistant.ui.find.FindViewModel
 import ai.daylight.assistant.ui.tune.TuneKeys
 import ai.daylight.assistant.ui.tune.TuneModel
 import kotlinx.coroutines.Dispatchers
@@ -167,6 +168,12 @@ class HomeViewModel(container: AppContainer) : ViewModel() {
         .map { list -> list.firstOrNull { MakeModel.isMedia(it.output) } }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Find's last search in this app session, for the Find port. */
+    val lastFindQuery: StateFlow<String> = container.find.state
+        .map { it.query }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.find.state.value.query)
 }
 
 internal fun transferChatDraft(fromConversationId: String, toConversationId: String) {
@@ -2150,6 +2157,7 @@ class DaylightViewModelFactory(private val container: AppContainer) : ViewModelP
         CronViewModel::class.java -> CronViewModel(container)
         HomeViewModel::class.java -> HomeViewModel(container)
         MakeViewModel::class.java -> MakeViewModel(container)
+        FindViewModel::class.java -> FindViewModel(container)
         else -> throw IllegalArgumentException("Unknown ViewModel ${modelClass.name}")
     } as T
 }

@@ -65,11 +65,22 @@ class HomePortCaptionTest {
 
     @Test fun unbuiltArmsAreUnlitAndLinkCarriesTheLaterTag() {
         val ports = HomeBoard.ports(base).associateBy { it.arm }
-        listOf(Arm.FIND, Arm.CREW, Arm.LINK).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.UNLIT) }
-        listOf(Arm.TALK, Arm.MAKE, Arm.RUN, Arm.VOICE, Arm.TUNE).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.IDLE) }
+        listOf(Arm.CREW, Arm.LINK).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.UNLIT) }
+        listOf(Arm.TALK, Arm.MAKE, Arm.FIND, Arm.RUN, Arm.VOICE, Arm.TUNE).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.IDLE) }
         assertThat(ports.filterValues { it.later }.keys).containsExactly(Arm.LINK)
         assertThat(ports.getValue(Arm.LINK).caption).isEqualTo("Essential, coming later")
-        assertThat(ports.getValue(Arm.FIND).caption).endsWith("not yet")
+        assertThat(ports.getValue(Arm.CREW).caption).endsWith("not yet")
+    }
+
+    @Test fun findSaysWhenItIsOffOrWhatItLastSearched() {
+        assertThat(HomeBoard.caption(Arm.FIND, base)).isEqualTo("Free images to reuse")
+        assertThat(HomeBoard.caption(Arm.FIND, base.copy(lastFindQuery = "lighthouses"))).isEqualTo("Last: lighthouses")
+        // Long searches are cut to fit the port.
+        assertThat(HomeBoard.caption(Arm.FIND, base.copy(lastFindQuery = "lighthouses at night in winter")))
+            .isEqualTo("Last: lighthouses at ni…")
+        // Off wins: Find can't search while web search is off.
+        assertThat(HomeBoard.caption(Arm.FIND, base.copy(findEnabled = false, lastFindQuery = "lighthouses")))
+            .isEqualTo("Off, web search is off")
     }
 
     @Test fun makeSaysWhatIsRenderingOrWhenTheLastWasMade() {

@@ -26,12 +26,15 @@ import ai.daylight.assistant.data.remote.MiniMaxClient
 import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.ErrorKind
 import ai.daylight.assistant.data.remote.PublicWebClient
+import ai.daylight.assistant.data.remote.CommonsImageClient
 import ai.daylight.assistant.domain.AgentExecutor
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ChatProvider
+import ai.daylight.assistant.domain.FindSession
 import ai.daylight.assistant.domain.MakeStudio
 import ai.daylight.assistant.domain.SwarmOrchestrator
 import ai.daylight.assistant.security.SecureCredentialStore
+import ai.daylight.assistant.ui.find.findImageLoader
 import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoicePlayer
@@ -50,6 +53,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import coil.ImageLoader
 
 class DaylightApplication : Application() {
     val container: AppContainer by lazy { AppContainer(this) }
@@ -140,6 +144,16 @@ class AppContainer(private val application: Application) {
             agent.send(id, prompt, AssistantMode.AGENT, kind.capability, media = options)
         }
     )
+
+    /** Find (C8): Wikimedia Commons, key-free. Its search runs here so switching arms keeps it. */
+    val commons = CommonsImageClient()
+    val find = FindSession(
+        scope = applicationScope,
+        search = { query, filters, offset -> commons.search(query, filters, offset) }
+    )
+
+    /** Find's thumbnails: Wikimedia hosts only, with Wikimedia's required user agent. */
+    val findImages: ImageLoader by lazy { findImageLoader(application, commons.mediaHttp) }
 
     init {
         applicationScope.launch {

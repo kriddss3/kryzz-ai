@@ -12,9 +12,10 @@ class ArmRoutesTest {
             .inOrder()
     }
 
-    @Test fun makeLightsUpInC7AndFindCrewLinkStayUnlit() {
+    @Test fun findLightsUpInC8AndCrewLinkStayUnlit() {
         assertThat(Arm.entries.filter { it.live })
-            .containsExactly(Arm.TALK, Arm.MAKE, Arm.RUN, Arm.VOICE, Arm.TUNE)
+            .containsExactly(Arm.TALK, Arm.MAKE, Arm.FIND, Arm.RUN, Arm.VOICE, Arm.TUNE)
+        assertThat(Arm.CREW.live).isFalse()
         assertThat(Arm.LINK.live).isFalse()
         assertThat(Arm.LINK.route).isNull()
     }
@@ -29,6 +30,10 @@ class ArmRoutesTest {
         assertThat(railVisibleForRoute(Routes.MAKE)).isTrue()
         assertThat(Routes.make()).isEqualTo("make")
         assertThat(Routes.make(ai.daylight.assistant.domain.MakeKind.VIDEO)).isEqualTo("make?kind=VIDEO")
+        assertThat(Arm.FIND.route).isEqualTo(Routes.FIND)
+        assertThat(armForRoute(Routes.FIND)).isEqualTo(Arm.FIND)
+        assertThat(railVisibleForRoute(Routes.FIND)).isTrue()
+        assertThat(defaultInkLine(Routes.FIND).text).isEqualTo("FIND READY")
     }
 
     @Test fun chatRoutesMapToTalkRunOrVoice() {

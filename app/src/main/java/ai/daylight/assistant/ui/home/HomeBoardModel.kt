@@ -40,6 +40,10 @@ data class HomeSnapshot(
     /** The newest image or clip in the history, and when it was made. */
     val lastMakeKind: MakeKind? = null,
     val lastMakeAt: Long? = null,
+    /** Find is gated by "Allow web search". */
+    val findEnabled: Boolean = true,
+    /** The last search Find ran in this app session, if any. */
+    val lastFindQuery: String? = null,
     val now: Long = 0L,
     val zone: ZoneId = ZoneId.systemDefault()
 )
@@ -87,7 +91,11 @@ object HomeBoard {
                 }
                 else -> "Images and clips"
             }
-            Arm.FIND -> "Web images, not yet"
+            Arm.FIND -> when {
+                !s.findEnabled -> "Off, web search is off"
+                !s.lastFindQuery.isNullOrBlank() -> "Last: ${clip(s.lastFindQuery, 18)}"
+                else -> "Free images to reuse"
+            }
             Arm.CREW -> "Personal bots, not yet"
             Arm.RUN -> when {
                 busy && s.runPlan != null && s.runPlan.steps.isNotEmpty() -> stepText(s.runPlan)
@@ -129,6 +137,12 @@ object HomeBoard {
         } else {
             "Nothing is running. Last thread ${timePhrase(last, s.now, s.zone)}."
         }
+    }
+
+    /** [text] on one line, at most [max] characters, ending in an ellipsis when cut. */
+    private fun clip(text: String, max: Int): String {
+        val one = text.replace(Regex("\\s+"), " ").trim()
+        return if (one.length <= max) one else one.take(max - 1).trimEnd() + "…"
     }
 
     /** "STEP 3 OF 5": the step in progress, never past the last one. */
