@@ -33,7 +33,6 @@ import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ThemeMode
-import ai.daylight.assistant.ui.GalacticAboutDialog
 import ai.daylight.assistant.ui.Routes
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
@@ -93,7 +92,6 @@ fun TuneScreen(
     // The slider moves live while dragging and saves once on release.
     var capIndex by remember(s.costCapCents) { mutableIntStateOf(TuneModel.capIndex(s.costCapCents)) }
     var showBackup by rememberSaveable { mutableStateOf(false) }
-    var showAbout by rememberSaveable { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -178,7 +176,7 @@ fun TuneScreen(
         )
         TuneRow(
             R.drawable.ic_kz_lock, "Lock the app", TuneModel.lockCaption(state.biometricAvailable),
-            TuneTrailing.Switch(s.biometricLock, actions.onBiometric, enabled = state.biometricAvailable)
+            TuneTrailing.Switch(s.biometricLock, actions.onBiometric, enabled = state.biometricAvailable || s.biometricLock)
         )
         Spacer(Modifier.height(24.dp))
 
@@ -219,7 +217,7 @@ fun TuneScreen(
             R.drawable.ic_kz_export, "Backup", state.backupNotice ?: "Export or import your chats",
             onClick = { showBackup = true }
         )
-        TuneRow(R.drawable.ic_kz_info, "About", "Version ${BuildConfig.VERSION_NAME}", onClick = { showAbout = true })
+        TuneRow(R.drawable.ic_kz_info, "About", "Version ${BuildConfig.VERSION_NAME}", onClick = { onOpen(Routes.ABOUT) })
         Spacer(Modifier.height(28.dp))
         TuneCaption(
             "Kryzz AI ${BuildConfig.VERSION_NAME}, created and coded by Kryzz",
@@ -241,7 +239,6 @@ fun TuneScreen(
             TuneCaption("API keys are never in a backup", Modifier.padding(top = 10.dp))
         }
     }
-    if (showAbout) GalacticAboutDialog(onDismiss = { showAbout = false })
 }
 
 /** Dark / Light / Auto, shared by Tune and Text and motion. */

@@ -41,7 +41,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -50,7 +49,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -82,6 +80,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
@@ -138,6 +137,10 @@ import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.DotDialog
+import ai.daylight.assistant.ui.dot.DotDialogTitle
+import ai.daylight.assistant.ui.dot.DotPillButton
+import ai.daylight.assistant.ui.dot.DotButtonStyle
 import ai.daylight.assistant.ui.dot.effects.VoiceDotWave
 import ai.daylight.assistant.ui.voice.VOICE_COMPACT_HEIGHT
 import ai.daylight.assistant.ui.voice.VOICE_WAVE_COLS
@@ -807,41 +810,57 @@ fun requestVoice() {
     }
 }
 
+/**
+ * Usage for the conversation (kit dialog, components.md section 14): mono labels with the
+ * numbers in Geist Mono on the right, a note on cache hits, and a ghost Close.
+ */
 @Composable
 private fun ConversationUsageDialog(
     usage: ConversationUsage,
     message: MessageEntity,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Conversation usage") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                UsageLine("Total tokens", usage.totalTokens.toString())
-                UsageLine("Input tokens", usage.inputTokens.toString())
-                UsageLine("Cache hit", usage.cacheHitInputTokens.toString())
-                UsageLine("Cache miss", usage.cacheMissInputTokens.toString())
-                UsageLine("Output tokens", usage.outputTokens.toString())
-                UsageLine("Total estimated cost", String.format(Locale.US, "$%.6f", usage.cost))
-                UsageLine("First token latency", formatLatencyMs(message.firstTokenLatencyMs))
-                UsageLine("Total response time", formatLatencyMs(message.totalGenerationTimeMs))
-                Text(
-                    "Cache hits are provider-reported. Input tokens without cache details are counted as cache misses.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
-    )
+    val c = DotTheme.c
+    DotDialog(onDismiss) {
+        DotDialogTitle("Usage")
+        Text(
+            "This conversation so far, and the reply you picked.",
+            Modifier.padding(top = 8.dp, bottom = 16.dp),
+            style = DotType.BodySmall,
+            color = c.textTertiary
+        )
+        UsageLine("Total tokens", usage.totalTokens.toString())
+        UsageLine("Input tokens", usage.inputTokens.toString())
+        UsageLine("Cache hit", usage.cacheHitInputTokens.toString())
+        UsageLine("Cache miss", usage.cacheMissInputTokens.toString())
+        UsageLine("Output tokens", usage.outputTokens.toString())
+        UsageLine("Estimated cost", String.format(Locale.US, "$%.6f", usage.cost))
+        UsageLine("First token", formatLatencyMs(message.firstTokenLatencyMs))
+        UsageLine("Response time", formatLatencyMs(message.totalGenerationTimeMs))
+        Text(
+            "Cache hits are what the provider reports. Input without cache details counts as a miss.",
+            Modifier.padding(top = 14.dp),
+            style = DotType.BodySmall,
+            color = c.textTertiary
+        )
+        Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.End) {
+            DotPillButton("Close", onDismiss, style = DotButtonStyle.Ghost)
+        }
+    }
 }
 
+/** One ruled usage row: a mono caps label and the value in Geist Mono. */
 @Composable
 private fun UsageLine(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontWeight = FontWeight.SemiBold)
+    val c = DotTheme.c
+    HorizontalDivider(thickness = 1.dp, color = c.border)
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 40.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label.uppercase(Locale.US), style = DotType.Label, color = c.textSecondary)
+        Text(value, style = DotType.Data.copy(fontSize = 14.sp), color = c.textPrimary)
     }
 }
 

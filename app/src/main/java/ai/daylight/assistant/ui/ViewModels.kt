@@ -243,7 +243,12 @@ internal fun toolDisplayLabel(tool: String): String = when (tool) {
 }
 
 class RootViewModel(container: AppContainer) : ViewModel() {
-    val settings = container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsState())
+    /**
+     * Null until the stored settings have been read once. The lock must not decide on the
+     * defaults: they say "lock off", and the app used to unlock itself on every cold start.
+     */
+    val storedSettings: StateFlow<SettingsState?> =
+        container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 }
 
 class OnboardingViewModel(private val container: AppContainer) : ViewModel() {

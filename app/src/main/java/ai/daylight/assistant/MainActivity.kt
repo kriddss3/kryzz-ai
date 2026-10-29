@@ -1,53 +1,36 @@
 package ai.daylight.assistant
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.ui.AppNavigation
 import ai.daylight.assistant.ui.DaylightBackground
 import ai.daylight.assistant.ui.KryzzLaunchIntro
-import ai.daylight.assistant.ui.KryzzMark
-
 import ai.daylight.assistant.ui.RootViewModel
+import ai.daylight.assistant.ui.lock.LockModel
+import ai.daylight.assistant.ui.lock.LockScreen
+import ai.daylight.assistant.ui.lock.UnlockMethod
 import ai.daylight.assistant.ui.theme.DaylightTheme
 
 class MainActivity : FragmentActivity() {
     private var unlocked by mutableStateOf(false)
+    private var unlockMethod by mutableStateOf(UnlockMethod.BIOMETRIC)
+    private var lockMessage by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,9 +42,13 @@ class MainActivity : FragmentActivity() {
         val container = (application as DaylightApplication).container
         setContent {
             val root: RootViewModel = viewModel(factory = ai.daylight.assistant.ui.DaylightViewModelFactory(container))
-            val settings by root.settings.collectAsStateWithLifecycle()
+            val stored by root.storedSettings.collectAsStateWithLifecycle()
+            val settings = stored ?: SettingsState()
+            val loaded = stored != null
             var showIntro by rememberSaveable { mutableStateOf(true) }
-            LaunchedEffect(settings.biometricLock) { if (!settings.biometricLock) unlocked = true }
+            LaunchedEffect(loaded, settings.biometricLock) {
+                if (LockModel.unlockedWithoutPrompt(loaded, settings.biometricLock)) unlocked = true
+            }
             LaunchedEffect(settings.animationsEnabled) { if (!settings.animationsEnabled) showIntro = false }
             DaylightTheme(
                 settings.themeMode,
@@ -72,10 +59,16 @@ class MainActivity : FragmentActivity() {
                 settings.surfaceOpacity,
                 settings.animationsEnabled
             ) {
+                val gate = LockModel.gate(loaded, settings.biometricLock, unlocked)
                 if (showIntro) {
                     KryzzLaunchIntro { showIntro = false }
-                } else if (settings.biometricLock && !unlocked) {
-                    DaylightBackground(style = settings.backgroundStyle, blurRadius = settings.backgroundBlur, colouredGradient = settings.colouredGradient) { BiometricLockScreen(::authenticate) }
+                } else if (gate == LockModel.Gate.WAIT) {
+                    // A blank frame while the stored settings load (a few milliseconds).
+                    DaylightBackground(style = settings.backgroundStyle) {}
+                } else if (gate == LockModel.Gate.LOCKED) {
+                    DaylightBackground(style = settings.backgroundStyle, blurRadius = settings.backgroundBlur, colouredGradient = settings.colouredGradient) {
+                        LockScreen(unlockMethod, lockMessage, ::authenticate, ::openSecuritySettings)
+                    }
                 } else {
                         AppNavigation(container, settings.onboardingComplete, settings.backgroundStyle, settings.backgroundBlur, settings.colouredGradient, settings.dotBackground)
                 }
@@ -83,9 +76,17 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        refreshUnlockMethod()
+    }
+
     override fun onStop() {
         super.onStop()
-        if (!isChangingConfigurations) unlocked = false
+        if (!isChangingConfigurations) {
+            unlocked = false
+            lockMessage = null
+        }
     }
 
     /**
@@ -114,52 +115,48 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Re-reads what can unlock the phone (fingerprints or the screen lock may have changed). */
+    private fun refreshUnlockMethod() {
+        val manager = BiometricManager.from(this)
+        unlockMethod = LockModel.method(
+            manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK),
+            manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+        )
+    }
+
     private fun authenticate() {
-        if (BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) != BiometricManager.BIOMETRIC_SUCCESS) return
+        refreshUnlockMethod()
+        val method = unlockMethod
+        if (method == UnlockMethod.NONE) return
+        lockMessage = null
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock Kryzz AI")
+            .setSubtitle("Your local conversations stay private")
+        if (method == UnlockMethod.BIOMETRIC) {
+            info.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+                .setNegativeButtonText("Cancel")
+        } else {
+            // A prompt that allows the screen lock must not have a negative button.
+            info.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+        }
         BiometricPrompt(
             this,
             ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    lockMessage = null
                     unlocked = true
                 }
-            }
-        ).authenticate(
-            BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Unlock Kryzz AI")
-                .setSubtitle("Your local conversations stay private")
-                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-                .setNegativeButtonText("Cancel")
-                .build()
-        )
-    }
-}
 
-@Composable
-private fun BiometricLockScreen(onUnlock: () -> Unit) {
-    Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.fillMaxWidth().widthIn(max = 420.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Surface(
-                modifier = Modifier.padding(bottom = 8.dp).size(76.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.primary
-            ) { KryzzMark(Modifier.padding(15.dp), contentDescription = null) }
-            Text("Kryzz AI is locked", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "Authenticate to view local conversations and settings.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Button(
-                onClick = onUnlock,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                shape = RoundedCornerShape(14.dp)
-            ) { Text("Unlock") }
-        }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (!LockModel.quietError(errorCode)) lockMessage = errString.toString()
+                }
+            }
+        ).authenticate(info.build())
+    }
+
+    private fun openSecuritySettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS)) }
+            .onFailure { runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) } }
     }
 }

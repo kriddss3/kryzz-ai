@@ -74,6 +74,7 @@ import ai.daylight.assistant.ui.inkwell.InkwellViewModel
 import ai.daylight.assistant.ui.make.MakeScreen
 import ai.daylight.assistant.ui.make.MakeViewModel
 import ai.daylight.assistant.ui.make.makeModel
+import ai.daylight.assistant.ui.about.AboutScreen
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.ArmRail
 import ai.daylight.assistant.ui.shell.ArmRailSpec
@@ -124,6 +125,8 @@ object Routes {
     const val VOICE = "settings/voice"
     const val MEMORY = "settings/memory"
     const val CRON = "cron"
+    /** About (C11): a Tune depth page; also three quick taps on the drawer's CHATS title. */
+    const val ABOUT = "settings/about"
     fun chat(id: String, mode: AssistantMode = AssistantMode.CHAT, capability: AgentCapability = AgentCapability.AUTO, voice: Boolean = false) =
         "chat/$id?mode=${mode.name}&capability=${capability.name}&voice=$voice"
     fun models(purpose: ModelPurpose = ModelPurpose.CHAT) = "models/${purpose.name}"
@@ -503,7 +506,11 @@ fun AppNavigation(
                     onNewChat = { mode -> newConversationFromLibrary(mode) },
                     activeConversationId = currentConversationId,
                     onClose = { panelOpen = false },
-                    onDeleteConversation = ::deleteConversationFromLibrary
+                    onDeleteConversation = ::deleteConversationFromLibrary,
+                    onAbout = {
+                        panelOpen = false
+                        nav.navigate(Routes.ABOUT) { launchSingleTop = true }
+                    }
                 )
             }
         ) {
@@ -795,6 +802,9 @@ fun AppNavigation(
         composable(Routes.CRON) {
             val vm: CronViewModel = viewModel(factory = factory)
             CronJobsScreen(vm, nav::popBackStack)
+        }
+        composable(Routes.ABOUT) {
+            AboutScreen(onBack = { nav.popBackStack() })
         }
         }
         // Registered after the NavHost so it outranks the NavHost's own pop-one handler;

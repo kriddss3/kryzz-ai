@@ -32,6 +32,7 @@ import ai.daylight.assistant.ui.KryzzLibraryPanel
 import ai.daylight.assistant.ui.AppearanceSettingsScreen
 import ai.daylight.assistant.ui.SettingsHomeScreen
 import ai.daylight.assistant.ui.SettingsViewModel
+import ai.daylight.assistant.ui.about.AboutScreen
 import ai.daylight.assistant.ui.theme.DaylightTheme
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlinx.coroutines.runBlocking
@@ -336,20 +337,35 @@ class MidnightSignalUiTest {
         compose.onNodeWithText("Saved").assertDoesNotExist()
     }
 
+    // C11: three quick taps on the drawer's CHATS title open the About page (a route now,
+    // not the galaxy dialog), and the page keeps the version, the maker and the licences.
     @Test
     fun tripleTappingDrawerLogoRevealsGalacticAppCredits() {
         val viewModel = ConversationListViewModel(container)
+        var aboutOpened = 0
         compose.setContent {
             DaylightTheme(ThemeMode.DARK) {
-                KryzzLibraryPanel(viewModel, onOpen = {}, onNewChat = {})
+                KryzzLibraryPanel(viewModel, onOpen = {}, onNewChat = {}, onAbout = { aboutOpened++ })
             }
         }
 
-        repeat(3) { compose.onNodeWithContentDescription("Kryzz AI logo").performClick() }
-        compose.onNodeWithText("OBSIDIAN CONSTELLATION").assertIsDisplayed()
-        compose.onNodeWithText("Version", substring = true).assertIsDisplayed()
+        repeat(3) { compose.onNodeWithContentDescription("Chats").performClick() }
+        compose.runOnIdle { assertEquals(1, aboutOpened) }
+    }
+
+    @Test
+    fun aboutPageShowsVersionMakerAndFontLicences() {
+        compose.setContent {
+            DaylightTheme(ThemeMode.DARK) {
+                AboutScreen(onBack = {})
+            }
+        }
+
+        compose.onNodeWithText("Version", substring = true, ignoreCase = true).assertIsDisplayed()
         compose.onNodeWithText("Created and coded by Kryzz").assertIsDisplayed()
-        compose.onNodeWithText("Return to the stars").assertTouchTarget()
+        compose.onNodeWithContentDescription("Back").assertTouchTarget()
+        compose.onNodeWithTag("about_licences").performScrollTo().assertTouchTarget().performClick()
+        compose.onNodeWithText("FONT LICENCES").assertIsDisplayed()
     }
 
     @Test

@@ -6,43 +6,30 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -56,10 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.testTag
@@ -67,22 +51,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import ai.daylight.assistant.BuildConfig
 import ai.daylight.assistant.R
 import ai.daylight.assistant.data.local.ConversationFolderEntity
 import ai.daylight.assistant.data.local.ConversationSummary
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.ui.crew.rememberMinuteClock
-import ai.daylight.assistant.ui.dot.DotColors
 import ai.daylight.assistant.ui.dot.DotConfirmDialog
 import ai.daylight.assistant.ui.dot.DotField
 import ai.daylight.assistant.ui.dot.DotIconButton
@@ -471,7 +449,8 @@ fun KryzzLibraryPanel(
     modifier: Modifier = Modifier,
     activeConversationId: String? = null,
     onClose: (() -> Unit)? = null,
-    onDeleteConversation: (String) -> Unit = vm::delete
+    onDeleteConversation: (String) -> Unit = vm::delete,
+    onAbout: (() -> Unit)? = null
 ) {
     val c = DotTheme.c
     val conversations by vm.conversations.collectAsStateWithLifecycle()
@@ -493,7 +472,6 @@ fun KryzzLibraryPanel(
     var renameFolder by remember { mutableStateOf<ConversationFolderEntity?>(null) }
     var deleteFolder by remember { mutableStateOf<ConversationFolderEntity?>(null) }
     var logoTaps by remember { mutableStateOf(LogoTapProgress()) }
-    var showAbout by rememberSaveable { mutableStateOf(false) }
     val now = rememberMinuteClock()
     val zone = remember { ZoneId.systemDefault() }
 
@@ -574,7 +552,7 @@ fun KryzzLibraryPanel(
                     onTitleTap = {
                         val outcome = registerLogoTap(logoTaps, SystemClock.elapsedRealtime())
                         logoTaps = outcome.progress
-                        if (outcome.openAbout) showAbout = true
+                        if (outcome.openAbout) onAbout?.let { closePanelThen(it) }
                     },
                     onBackup = { backupSheet = true },
                     onClose = if (onClose != null) ({ hostClose(); onClose() }) else null
@@ -739,165 +717,5 @@ fun KryzzLibraryPanel(
             onNewFolder = { createFolderFor = conversation.id },
             onDismiss = { assignConversation = null }
         )
-    }
-    if (showAbout) GalacticAboutDialog(onDismiss = { showAbout = false })
-}
-
-@Composable
-internal fun GalacticAboutDialog(onDismiss: () -> Unit) {
-    val motionEnabled = LocalKryzzMotionEnabled.current
-    val galacticMotion = rememberInfiniteTransition(label = "about galaxy")
-    val orbitProgress by galacticMotion.animateFloat(
-        initialValue = 0f,
-        targetValue = if (motionEnabled) 1f else 0f,
-        animationSpec = infiniteRepeatable(tween(10_000), RepeatMode.Restart),
-        label = "about orbit"
-    )
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.78f))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-                .padding(24.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Surface(
-                modifier = Modifier
-                    .widthIn(max = 390.dp)
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {}
-                    ),
-                shape = RoundedCornerShape(30.dp),
-                color = DotColors.BgAlt,
-                contentColor = DotColors.TextPrimary,
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-                shadowElevation = 0.dp
-            ) {
-                Box {
-                    GalacticAboutStars(orbitProgress, Modifier.matchParentSize())
-                    Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 30.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            modifier = Modifier.size(132.dp),
-                            shape = CircleShape,
-                            color = Color.White.copy(alpha = 0.05f),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                val pulse = if (motionEnabled) {
-                                    1f + kotlin.math.sin(orbitProgress * 2f * kotlin.math.PI.toFloat()) * 0.025f
-                                } else 1f
-                                KryzzMark(
-                                    Modifier
-                                        .size(96.dp)
-                                        .graphicsLayer {
-                                            scaleX = pulse
-                                            scaleY = pulse
-                                            rotationZ = if (motionEnabled) orbitProgress * 2.5f else 0f
-                                        },
-                                    contentDescription = "Kryzz AI"
-                                )
-                            }
-                        }
-                        Text("KRYZZ AI", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "OBSIDIAN CONSTELLATION",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White.copy(alpha = 0.62f)
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = Color.White.copy(alpha = 0.08f)
-                        ) {
-                            Text(
-                                "Version ${BuildConfig.VERSION_NAME}",
-                                Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                                style = MaterialTheme.typography.labelLarge
-                            )
-                        }
-                        HorizontalDivider(
-                            Modifier.padding(vertical = 8.dp),
-                            color = Color.White.copy(alpha = 0.12f)
-                        )
-                        Text("Created and coded by Kryzz", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "Built with Kotlin and Jetpack Compose\nAI routing by OpenRouter · Search by Parallel\nVoice by Fish Audio and OpenRouter",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.66f),
-                            textAlign = TextAlign.Center
-                        )
-                        TextButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.padding(top = 4.dp).heightIn(min = 48.dp)
-                        ) {
-                            Text("Return to the stars")
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun GalacticAboutStars(progress: Float, modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val stars = listOf(
-            Offset(0.08f, 0.13f), Offset(0.23f, 0.08f), Offset(0.42f, 0.17f),
-            Offset(0.72f, 0.09f), Offset(0.90f, 0.20f), Offset(0.16f, 0.36f),
-            Offset(0.84f, 0.40f), Offset(0.10f, 0.69f), Offset(0.30f, 0.83f),
-            Offset(0.62f, 0.76f), Offset(0.88f, 0.88f), Offset(0.74f, 0.58f)
-        )
-        val phase = progress * 2f * kotlin.math.PI.toFloat()
-        val points = stars.mapIndexed { index, star ->
-            val drift = kotlin.math.sin(phase + index * 0.77f) * 3.dp.toPx()
-            Offset(
-                star.x * size.width + drift,
-                star.y * size.height + kotlin.math.cos(phase + index * 0.61f) * 2.dp.toPx()
-            )
-        }
-        listOf(0 to 1, 1 to 2, 3 to 4, 5 to 0, 7 to 8, 8 to 9, 9 to 10, 11 to 6).forEach { (from, to) ->
-            drawLine(
-                color = Color.White.copy(alpha = 0.07f),
-                start = points[from],
-                end = points[to],
-                strokeWidth = 1.dp.toPx(),
-                cap = StrokeCap.Round
-            )
-        }
-        points.forEachIndexed { index, point ->
-            val shimmer = 0.5f + 0.5f * kotlin.math.sin(phase * 1.7f + index * 0.91f)
-            drawCircle(
-                color = Color.White.copy(alpha = (if (index % 4 == 0) 0.32f else 0.14f) + shimmer * 0.28f),
-                radius = (if (index % 4 == 0) 1.25f + shimmer * 0.75f else 0.75f + shimmer * 0.45f).dp.toPx(),
-                center = point
-            )
-        }
-        repeat(5) { index ->
-            val angle = phase * (if (index % 2 == 0) 1f else -0.72f) + index * 1.256f
-            val radius = size.minDimension * (0.24f + index * 0.035f)
-            drawCircle(
-                color = Color.White.copy(alpha = 0.18f + (index % 2) * 0.14f),
-                radius = (1.1f + (index % 3) * 0.45f).dp.toPx(),
-                center = Offset(
-                    center.x + kotlin.math.cos(angle) * radius,
-                    center.y + kotlin.math.sin(angle) * radius
-                )
-            )
-        }
     }
 }

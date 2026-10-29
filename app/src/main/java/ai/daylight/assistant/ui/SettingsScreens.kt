@@ -880,7 +880,7 @@ fun PrivacySettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         TuneSection("On this phone")
         TuneRow(
             R.drawable.ic_kz_lock, "Lock the app", TuneModel.lockCaption(biometricAvailable),
-            TuneTrailing.Switch(settings.biometricLock, vm::setBiometric, enabled = biometricAvailable)
+            TuneTrailing.Switch(settings.biometricLock, vm::setBiometric, enabled = biometricAvailable || settings.biometricLock)
         )
         TuneRow(
             R.drawable.ic_kz_location, "Approximate location",

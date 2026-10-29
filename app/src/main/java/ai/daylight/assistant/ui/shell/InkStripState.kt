@@ -129,6 +129,7 @@ fun defaultInkLine(route: String?): InkLine {
         r == Routes.VOICE -> InkLine("TUNE VOICE")
         r == Routes.MEMORY -> InkLine("TUNE MEMORY")
         r == Routes.CRON -> InkLine("TUNE ROUTINES")
+        r == Routes.ABOUT -> InkLine("TUNE ABOUT")
         r == Routes.SKILLS -> InkLine("TUNE SKILLS")
         r == Routes.LLMS || r.startsWith("models/") -> InkLine("TUNE MODELS")
         else -> InkLine("")
