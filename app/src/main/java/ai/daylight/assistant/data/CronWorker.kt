@@ -15,6 +15,8 @@ import ai.daylight.assistant.DaylightApplication
 import ai.daylight.assistant.MainActivity
 import ai.daylight.assistant.R
 import ai.daylight.assistant.data.local.ScheduledTaskEntity
+import ai.daylight.assistant.data.remote.AssistantApiException
+import ai.daylight.assistant.data.remote.ErrorKind
 
 /**
  * Runs one scheduled task: sends its prompt to the AI inside the task's dedicated
@@ -35,12 +37,23 @@ class CronWorker(
         val shouldRetry = runAttemptCount < MAX_RETRIES
         var rearmNextOccurrence = true
         return try {
-            container.agent.send(task.conversationId, task.prompt)
+            val botId = task.botId
+            if (botId != null) {
+                // C9: a bot's routine takes its turn on the Crew desk (never two replies in
+                // the bot's chat at once) and keeps the chat's title if it was pruned.
+                container.crew.runRoutine(botId, task.id, task.title) {
+                    val conversationId = container.bots.ensureConversation(botId) ?: task.conversationId
+                    container.agent.send(conversationId, task.prompt)
+                }
+            } else {
+                container.agent.send(task.conversationId, task.prompt)
+            }
             dao.updateScheduledTaskLastRun(task.id, System.currentTimeMillis())
-            CronNotifications.notifyFinished(applicationContext, task)
+            val botName = task.botId?.let { dao.bot(it)?.name }
+            CronNotifications.notifyFinished(applicationContext, task, botName)
             Result.success()
         } catch (error: Exception) {
-            if (shouldRetry) {
+            if (shouldRetry && retryable(error)) {
                 // A pending retry reuses this same request; re-arming now would replace
                 // (and cancel) it, so the next occurrence is armed on the final attempt.
                 rearmNextOccurrence = false
@@ -61,6 +74,17 @@ class CronWorker(
     companion object {
         const val KEY_TASK_ID = "taskId"
         private const val MAX_RETRIES = 2
+
+        /**
+         * A retry sends the prompt again, so it only helps when the failure can pass on its
+         * own (network, timeout, rate limit). A rejected key or no credits fails the same way
+         * every time and would only stack copies of the prompt in the chat (C9: a bot's
+         * routine runs in the bot's own, long-lived chat).
+         */
+        internal fun retryable(error: Throwable): Boolean = when ((error as? AssistantApiException)?.kind) {
+            ErrorKind.INVALID_KEY, ErrorKind.INSUFFICIENT_CREDITS, ErrorKind.VALIDATION, ErrorKind.CONTEXT_LENGTH -> false
+            else -> true
+        }
     }
 }
 
@@ -68,7 +92,8 @@ object CronNotifications {
     const val CHANNEL_ID = "cron_runs"
     const val EXTRA_CONVERSATION_ID = "conversationId"
 
-    fun notifyFinished(context: Context, task: ScheduledTaskEntity) {
+    /** [botName] is set for a Crew bot's routine: the bot is named and the routine said. */
+    fun notifyFinished(context: Context, task: ScheduledTaskEntity, botName: String? = null) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
@@ -83,8 +108,8 @@ object CronNotifications {
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(task.title)
-            .setContentText("Cron task finished")
+            .setContentTitle(botName ?: task.title)
+            .setContentText(if (botName != null) "Routine done: ${task.title}" else "Cron task finished")
             .setContentIntent(openApp)
             .setAutoCancel(true)
             .build()

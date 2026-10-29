@@ -63,6 +63,10 @@ import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.ui.home.HomeScreen
 import ai.daylight.assistant.ui.link.LinkScreen
+import ai.daylight.assistant.ui.crew.BotDetailScreen
+import ai.daylight.assistant.ui.crew.BotViewModel
+import ai.daylight.assistant.ui.crew.CrewScreen
+import ai.daylight.assistant.ui.crew.CrewViewModel
 import ai.daylight.assistant.ui.find.FindScreen
 import ai.daylight.assistant.ui.find.FindViewModel
 import ai.daylight.assistant.ui.make.MakeScreen
@@ -99,6 +103,9 @@ object Routes {
     const val MAKE = "make?kind={kind}"
     /** Find (C8): free images from Wikimedia Commons. */
     const val FIND = "find"
+    /** Crew (C9): personal bots, and one bot's page. */
+    const val CREW = "crew"
+    const val BOT = "crew/{botId}"
     const val BOOT = "boot"
     const val ONBOARDING = "onboarding"
     const val LLMS = "llms"
@@ -118,6 +125,7 @@ object Routes {
         "chat/$id?mode=${mode.name}&capability=${capability.name}&voice=$voice"
     fun models(purpose: ModelPurpose = ModelPurpose.CHAT) = "models/${purpose.name}"
     fun make(kind: MakeKind? = null) = if (kind == null) "make" else "make?kind=${kind.name}"
+    fun bot(id: String) = "crew/$id"
 }
 
 /** Chat is the home destination; Settings is the only other top-level surface. */
@@ -186,6 +194,12 @@ fun AppNavigation(
         LaunchedEffect(container) {
             container.make.current.collect { render ->
                 inkStrip.setBusy(MAKE_BUSY_KEY, if (render?.running == true) Arm.MAKE else null)
+            }
+        }
+        // Crew's bots work on the app's desk (routines from the scheduler, chat replies).
+        LaunchedEffect(container) {
+            container.crew.work.collect { work ->
+                inkStrip.setBusy(CREW_BUSY_KEY, if (work.isNotEmpty()) Arm.CREW else null)
             }
         }
         LaunchedEffect(currentConversationId, currentMode, currentCapability) {
@@ -399,7 +413,13 @@ fun AppNavigation(
         // Read through State: the compiler memoises `::openArm`, so a plain captured
         // `activeArm` would stay frozen at its first value (Talk taps were ignored).
         val currentArm = rememberUpdatedState(activeArm)
+        val currentRouteState = rememberUpdatedState(currentRoute)
         fun openArm(arm: Arm) {
+            // On a bot's page the Crew dot leads back to the bot list.
+            if (arm == Arm.CREW && currentRouteState.value == Routes.BOT) {
+                nav.popBackStack(Routes.CREW, inclusive = false)
+                return
+            }
             if (arm == currentArm.value) return
             panelOpen = false
             when (arm) {
@@ -409,7 +429,7 @@ fun AppNavigation(
                 Arm.LINK -> navigateArm(Routes.LINK)
                 Arm.MAKE -> navigateArm(Routes.make())
                 Arm.FIND -> navigateArm(Routes.FIND)
-                Arm.CREW -> inkStrip.flash(InkLines.notYet(arm))
+                Arm.CREW -> navigateArm(Routes.CREW)
             }
         }
         /**
@@ -573,6 +593,27 @@ fun AppNavigation(
         composable(Routes.FIND) {
             val vm: FindViewModel = viewModel(factory = factory)
             FindScreen(vm = vm, onLibrary = ::openLibrary)
+        }
+        composable(Routes.CREW) {
+            val vm: CrewViewModel = viewModel(factory = factory)
+            CrewScreen(
+                vm = vm,
+                onOpenBot = { id -> nav.navigate(Routes.bot(id)) { launchSingleTop = true } },
+                onRoutines = { nav.navigate(Routes.CRON) { launchSingleTop = true } },
+                onLibrary = ::openLibrary
+            )
+        }
+        composable(Routes.BOT, arguments = listOf(navArgument("botId") { type = NavType.StringType })) { entry ->
+            val botId = checkNotNull(entry.arguments?.getString("botId"))
+            val vm: BotViewModel = viewModel(
+                key = "bot-$botId",
+                viewModelStoreOwner = entry,
+                factory = object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T = BotViewModel(container, botId) as T
+                }
+            )
+            BotDetailScreen(vm = vm, onBack = { if (!nav.popBackStack(Routes.CREW, inclusive = false)) goHome() })
         }
         composable(Routes.LLMS) {
             val vm: LlmCatalogViewModel = viewModel(factory = factory)
@@ -759,6 +800,8 @@ fun AppNavigation(
                 // A Home kept above running work: step out of the app like the root
                 // does, without finishing it, so the reply keeps going.
                 currentRoute == Routes.HOME -> context.findActivity()?.moveTaskToBack(true)
+                // A bot's page is a step inside Crew: Back returns to the bot list.
+                currentRoute == Routes.BOT -> if (!nav.popBackStack(Routes.CREW, inclusive = false)) goHome()
                 armForRoute(currentRoute) != null -> goHome()
                 else -> nav.popBackStack()
             }
@@ -782,6 +825,9 @@ fun AppNavigation(
 
 /** The ink strip's busy key for Make's render (one at a time, run by MakeStudio). */
 private const val MAKE_BUSY_KEY = "make-studio"
+
+/** The ink strip's busy key for Crew's bots (any bot working on the Crew desk). */
+private const val CREW_BUSY_KEY = "crew-desk"
 
 /** Back with the chat drawer open closes the drawer and stays on the screen under it. */
 internal fun backClosesDrawerFirst(panelOpen: Boolean): Boolean = panelOpen

@@ -108,7 +108,7 @@ data class SkillEntity(
 
 @Entity(
     tableName = "scheduled_tasks",
-    indices = [Index("enabled"), Index("conversationId")]
+    indices = [Index("enabled"), Index("conversationId"), Index("botId")]
 )
 data class ScheduledTaskEntity(
     @PrimaryKey val id: String,
@@ -124,7 +124,26 @@ data class ScheduledTaskEntity(
     val minuteOfHour: Int? = null,
     val dayOfWeek: Int? = null,
     val dayOfMonth: Int? = null,
-    val daysOfWeek: String? = null
+    val daysOfWeek: String? = null,
+    /** C9: the Crew bot this routine belongs to, or null for a plain routine. */
+    val botId: String? = null
+)
+
+/**
+ * C9 Crew: a personal bot. It has a [persona] (added to the system prompt in its chat), a
+ * dot avatar drawn from its name and [avatarSeed], and one conversation it talks in. Its
+ * routines are ordinary scheduled tasks with [ScheduledTaskEntity.botId] set, and they run
+ * in that same conversation, so the bot remembers what its runs found.
+ */
+@Entity(tableName = "bots", indices = [Index("conversationId")])
+data class BotEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val persona: String,
+    val avatarSeed: Int,
+    val conversationId: String,
+    val createdAt: Long,
+    val updatedAt: Long
 )
 
 @Entity(

@@ -223,11 +223,13 @@ class AgentExecutor(
         val voiceLab = voiceMode && VoiceConfig.developerLabActive(
             history.filter { it.role == "USER" }.map { it.content }
         )
+        // C9: a Crew bot's conversation adds the bot's role to the user's persona.
+        val bot = if (voiceMode) null else dao.botForConversation(conversationId)
         val basePrompt = when {
             voiceMode -> VoiceConfig.voiceSystemPrompt(settings.voiceEmotions, developerLab = voiceLab)
             preset.id == "custom" -> settings.customPrompt.ifBlank { AssistantPreset.balanced.prompt }
             else -> preset.prompt
-        }
+        }.let { base -> if (bot == null) base else BotPersona.systemPrompt(base, bot.name, bot.persona) }
         val enabledSkills = if (!voiceMode && mode == AssistantMode.AGENT && capability != AgentCapability.SKILL_MAKER) dao.enabledSkills().take(16) else emptyList()
         val memoryContext = if (settings.memoryEnabled && !voiceMode) memoryRepository.buildMemoryContext(lastUser?.content.orEmpty()) else ""
         val memoryInstruction = if (settings.memoryEnabled && !voiceMode) {

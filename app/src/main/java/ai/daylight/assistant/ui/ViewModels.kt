@@ -153,6 +153,13 @@ internal fun consumeChatAutoSend(conversationId: String): Boolean = ChatDraftSto
 /** The thread count and newest thread time shown on the Home board. */
 data class HomeThreads(val count: Int = 0, val lastAt: Long? = null)
 
+/** Crew (C9) for Home's Crew port: how many bots, who is working, and their live routines. */
+data class HomeCrew(
+    val count: Int = 0,
+    val working: List<String> = emptyList(),
+    val routines: List<ScheduledTaskEntity> = emptyList()
+)
+
 /** Home board data: threads from the chat library list, settings, the agent's live plan and Make. */
 class HomeViewModel(container: AppContainer) : ViewModel() {
     val threads: StateFlow<HomeThreads> = container.conversations.conversations(archived = false, query = "")
@@ -168,6 +175,18 @@ class HomeViewModel(container: AppContainer) : ViewModel() {
         .map { list -> list.firstOrNull { MakeModel.isMedia(it.output) } }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Crew's bots, who is working now, and their switched-on routines (for "next run"). */
+    val crew: StateFlow<HomeCrew> = combine(container.bots.bots(), container.bots.routines(), container.crew.work) { bots, routines, work ->
+        val ids = bots.mapTo(mutableSetOf()) { it.id }
+        HomeCrew(
+            count = bots.size,
+            working = bots.filter { it.id in work }.map { it.name },
+            routines = routines.filter { it.botId in ids && it.enabled }
+        )
+    }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeCrew())
 
     /** Find's last search in this app session, for the Find port. */
     val lastFindQuery: StateFlow<String> = container.find.state
@@ -2070,6 +2089,10 @@ class CronViewModel(private val container: AppContainer) : ViewModel() {
     private val dao = container.database.dao()
     val tasks: StateFlow<List<ScheduledTaskEntity>> = dao.observeScheduledTasks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** C9: which Crew bot owns a routine, by bot id, so the row can say so. */
+    val botNames: StateFlow<Map<String, String>> = dao.observeBots()
+        .map { bots -> bots.associate { it.id to it.name } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
     val notice = MutableStateFlow<String?>(null)
 
     fun createTask(
@@ -2138,7 +2161,8 @@ class CronViewModel(private val container: AppContainer) : ViewModel() {
         container.cron.cancel(id)
         val task = dao.scheduledTask(id)
         dao.deleteScheduledTask(id)
-        task?.let { container.conversations.delete(it.conversationId) }
+        // A bot's routine runs in the bot's own chat, which outlives the routine.
+        task?.takeIf { it.botId == null }?.let { container.conversations.delete(it.conversationId) }
         notice.value = "Cron task deleted."
     }
 }
@@ -2158,6 +2182,7 @@ class DaylightViewModelFactory(private val container: AppContainer) : ViewModelP
         HomeViewModel::class.java -> HomeViewModel(container)
         MakeViewModel::class.java -> MakeViewModel(container)
         FindViewModel::class.java -> FindViewModel(container)
+        ai.daylight.assistant.ui.crew.CrewViewModel::class.java -> ai.daylight.assistant.ui.crew.CrewViewModel(container)
         else -> throw IllegalArgumentException("Unknown ViewModel ${modelClass.name}")
     } as T
 }

@@ -113,6 +113,7 @@ fun defaultInkLine(route: String?): InkLine {
         r == Routes.LINK -> InkLines.LINK
         r == Routes.MAKE -> InkLine("MAKE READY")
         r == Routes.FIND -> InkLine("FIND READY")
+        r == Routes.CREW || r == Routes.BOT -> InkLine("CREW READY")
         r == Routes.BOOT || r == Routes.CHAT || r.startsWith("chat/") -> InkLines.talk(generating = false)
         r == Routes.SETTINGS -> InkLine("TUNE")
         r == Routes.API -> InkLine("TUNE KEYS")

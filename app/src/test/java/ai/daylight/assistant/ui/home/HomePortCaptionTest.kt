@@ -63,13 +63,27 @@ class HomePortCaptionTest {
         assertThat(HomeBoard.caption(Arm.TUNE, base.copy(quality = AgentQuality.FAST, costCapCents = 500))).isEqualTo("Fast, cap $5.00")
     }
 
-    @Test fun unbuiltArmsAreUnlitAndLinkCarriesTheLaterTag() {
+    @Test fun onlyLinkIsUnlitAndCarriesTheLaterTag() {
         val ports = HomeBoard.ports(base).associateBy { it.arm }
-        listOf(Arm.CREW, Arm.LINK).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.UNLIT) }
-        listOf(Arm.TALK, Arm.MAKE, Arm.FIND, Arm.RUN, Arm.VOICE, Arm.TUNE).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.IDLE) }
+        assertThat(ports.getValue(Arm.LINK).state).isEqualTo(PortState.UNLIT)
+        listOf(Arm.TALK, Arm.MAKE, Arm.FIND, Arm.CREW, Arm.RUN, Arm.VOICE, Arm.TUNE).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.IDLE) }
         assertThat(ports.filterValues { it.later }.keys).containsExactly(Arm.LINK)
         assertThat(ports.getValue(Arm.LINK).caption).isEqualTo("Essential, coming later")
-        assertThat(ports.getValue(Arm.CREW).caption).endsWith("not yet")
+    }
+
+    @Test fun crewSaysWhoIsWorkingOrWhenTheNextRunIs() {
+        assertThat(HomeBoard.caption(Arm.CREW, base)).isEqualTo("No bots yet")
+        assertThat(HomeBoard.caption(Arm.CREW, base.copy(botCount = 1))).isEqualTo("1 bot, no routine on")
+        assertThat(HomeBoard.caption(Arm.CREW, base.copy(botCount = 3))).isEqualTo("3 bots, no routine on")
+        // Next run later today is a bare time; later in the week it names the day.
+        assertThat(HomeBoard.caption(Arm.CREW, base.copy(botCount = 2, nextBotRunAt = at(26, 18, 0)))).isEqualTo("Next run 18:00")
+        assertThat(HomeBoard.caption(Arm.CREW, base.copy(botCount = 2, nextBotRunAt = at(27, 7, 0)))).isEqualTo("Next run Tue 07:00")
+        val working = base.copy(botCount = 2, busyArms = setOf(Arm.CREW), workingBots = listOf("Scout"))
+        assertThat(HomeBoard.caption(Arm.CREW, working)).isEqualTo("Scout is working")
+        assertThat(HomeBoard.port(Arm.CREW, working).state).isEqualTo(PortState.BUSY)
+        assertThat(HomeBoard.caption(Arm.CREW, working.copy(workingBots = listOf("Scout", "Pilot")))).isEqualTo("2 bots working")
+        assertThat(HomeBoard.status(working)).isEqualTo("Scout is working.")
+        assertThat(HomeBoard.status(working.copy(workingBots = listOf("Scout", "Pilot")))).isEqualTo("2 bots are working.")
     }
 
     @Test fun findSaysWhenItIsOffOrWhatItLastSearched() {

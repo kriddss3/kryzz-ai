@@ -131,7 +131,21 @@ data class ExportBundle(
     val formatVersion: Int = 1,
     val exportedAt: Long,
     val conversations: List<ExportConversation>,
-    val folders: List<ExportConversationFolder> = emptyList()
+    val folders: List<ExportConversationFolder> = emptyList(),
+    /** C9 Crew bots. Optional: backups made before 5.12.10 have none and still import. */
+    val bots: List<ExportBot> = emptyList()
+)
+
+/** A Crew bot in a backup. Its routines are not in backups (no routine ever was). */
+@Serializable
+data class ExportBot(
+    val id: String,
+    val name: String,
+    val persona: String,
+    val avatarSeed: Int = 0,
+    val conversationId: String,
+    val createdAt: Long,
+    val updatedAt: Long
 )
 
 @Serializable

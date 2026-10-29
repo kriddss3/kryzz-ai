@@ -210,4 +210,36 @@ class DatabaseMigrationTest {
             close()
         }
     }
+
+    @Test fun migratesToCrewBotsKeepingChatsAndRoutines() {
+        val name = "migration-v12-v13"
+        helper.createDatabase(name, 12).apply {
+            execSQL("INSERT INTO conversations (id, title, createdAt, updatedAt, archived, searchSessionId, searchDepth, searchWidth, pinned, folderId) VALUES ('one', 'Existing', 1, 1, 0, NULL, 2, 3, 1, NULL)")
+            execSQL("INSERT INTO messages (id, conversationId, role, content, createdAt, status, citationsJson, mode, outputsJson, attachmentsJson) VALUES ('m1', 'one', 'USER', 'hello', 2, 'COMPLETE', '[]', 'CHAT', '[]', '[]')")
+            execSQL(
+                "INSERT INTO scheduled_tasks (id, title, prompt, intervalMinutes, conversationId, enabled, createdAt, recurrence, hourOfDay, minuteOfHour, dayOfWeek, dayOfMonth, daysOfWeek) " +
+                    "VALUES ('daily', 'Daily', 'Prompt', 1440, 'one', 1, 1, 'DAILY', 7, 0, NULL, NULL, NULL)"
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(name, 13, true, AssistantDatabase.MIGRATION_12_13).apply {
+            // Chats and old routines are untouched; old routines belong to no bot.
+            query("SELECT title, pinned FROM conversations WHERE id = 'one'").use { cursor ->
+                check(cursor.moveToFirst() && cursor.getString(0) == "Existing" && cursor.getInt(1) == 1)
+            }
+            query("SELECT content FROM messages WHERE id = 'm1'").use { cursor ->
+                check(cursor.moveToFirst() && cursor.getString(0) == "hello")
+            }
+            query("SELECT hourOfDay, botId FROM scheduled_tasks WHERE id = 'daily'").use { cursor ->
+                check(cursor.moveToFirst() && cursor.getInt(0) == 7 && cursor.isNull(1))
+            }
+            // A bot and its routine round-trip.
+            execSQL("INSERT INTO bots (id, name, persona, avatarSeed, conversationId, createdAt, updatedAt) VALUES ('scout', 'Scout', 'Reads feeds', 4, 'one', 3, 3)")
+            execSQL("UPDATE scheduled_tasks SET botId = 'scout' WHERE id = 'daily'")
+            query("SELECT b.name, b.avatarSeed FROM bots b JOIN scheduled_tasks t ON t.botId = b.id WHERE t.id = 'daily'").use { cursor ->
+                check(cursor.moveToFirst() && cursor.getString(0) == "Scout" && cursor.getInt(1) == 4)
+            }
+            close()
+        }
+    }
 }

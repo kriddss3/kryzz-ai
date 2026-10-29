@@ -271,6 +271,34 @@ interface AssistantDao {
     @Query("DELETE FROM scheduled_tasks")
     suspend fun deleteAllScheduledTasks()
 
+    @Query("SELECT * FROM scheduled_tasks WHERE botId = :botId ORDER BY createdAt")
+    suspend fun scheduledTasksForBot(botId: String): List<ScheduledTaskEntity>
+
+    @Query("SELECT * FROM bots ORDER BY createdAt")
+    fun observeBots(): Flow<List<BotEntity>>
+
+    @Query("SELECT * FROM bots ORDER BY createdAt")
+    suspend fun allBots(): List<BotEntity>
+
+    @Query("SELECT * FROM bots WHERE id = :id")
+    suspend fun bot(id: String): BotEntity?
+
+    @Query("SELECT * FROM bots WHERE id = :id")
+    fun observeBot(id: String): Flow<BotEntity?>
+
+    /** The bot that talks in [conversationId], if any (its persona joins the system prompt). */
+    @Query("SELECT * FROM bots WHERE conversationId = :conversationId LIMIT 1")
+    suspend fun botForConversation(conversationId: String): BotEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBot(bot: BotEntity)
+
+    @Query("DELETE FROM bots WHERE id = :id")
+    suspend fun deleteBot(id: String)
+
+    @Query("DELETE FROM bots")
+    suspend fun deleteAllBots()
+
     @Transaction
     suspend fun clearAll() {
         deleteAllMessages()
@@ -279,5 +307,6 @@ interface AssistantDao {
         deleteAllSkills()
         deleteAllMemories()
         deleteAllScheduledTasks()
+        deleteAllBots()
     }
 }

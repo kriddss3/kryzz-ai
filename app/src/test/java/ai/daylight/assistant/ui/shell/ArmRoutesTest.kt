@@ -12,10 +12,10 @@ class ArmRoutesTest {
             .inOrder()
     }
 
-    @Test fun findLightsUpInC8AndCrewLinkStayUnlit() {
+    @Test fun crewLightsUpInC9AndLinkStaysUnlit() {
         assertThat(Arm.entries.filter { it.live })
-            .containsExactly(Arm.TALK, Arm.MAKE, Arm.FIND, Arm.RUN, Arm.VOICE, Arm.TUNE)
-        assertThat(Arm.CREW.live).isFalse()
+            .containsExactly(Arm.TALK, Arm.MAKE, Arm.FIND, Arm.CREW, Arm.RUN, Arm.VOICE, Arm.TUNE)
+        assertThat(Arm.CREW.live).isTrue()
         assertThat(Arm.LINK.live).isFalse()
         assertThat(Arm.LINK.route).isNull()
     }
@@ -34,6 +34,19 @@ class ArmRoutesTest {
         assertThat(armForRoute(Routes.FIND)).isEqualTo(Arm.FIND)
         assertThat(railVisibleForRoute(Routes.FIND)).isTrue()
         assertThat(defaultInkLine(Routes.FIND).text).isEqualTo("FIND READY")
+        assertThat(Arm.CREW.route).isEqualTo(Routes.CREW)
+        assertThat(armForRoute(Routes.CREW)).isEqualTo(Arm.CREW)
+        assertThat(defaultInkLine(Routes.CREW).text).isEqualTo("CREW READY")
+    }
+
+    @Test fun aBotsPageKeepsTheRailWithCrewLit() {
+        assertThat(Routes.bot("b1")).isEqualTo("crew/b1")
+        assertThat(armForRoute(Routes.BOT)).isEqualTo(Arm.CREW)
+        assertThat(railVisibleForRoute(Routes.BOT)).isTrue()
+        assertThat(railVisibleForRoute(Routes.CREW)).isTrue()
+        // The chat library opens on the Crew list (like the other arms), not on a bot's page.
+        assertThat(ai.daylight.assistant.ui.panelSwipeEnabledForRoute(Routes.CREW)).isTrue()
+        assertThat(ai.daylight.assistant.ui.panelSwipeEnabledForRoute(Routes.BOT)).isFalse()
     }
 
     @Test fun chatRoutesMapToTalkRunOrVoice() {

@@ -1,5 +1,6 @@
 package ai.daylight.assistant.ui.home
 
+import ai.daylight.assistant.data.CronSchedulePresets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +46,7 @@ fun HomeScreen(
     val makeRender by vm.makeRender.collectAsStateWithLifecycle()
     val lastMedia by vm.lastMedia.collectAsStateWithLifecycle()
     val lastFindQuery by vm.lastFindQuery.collectAsStateWithLifecycle()
+    val crew by vm.crew.collectAsStateWithLifecycle()
     val strip = LocalInkStrip.current
     val busy = strip?.busyArms.orEmpty()
     // Minute clock: the date block and "last 09:12" stay right while Home is open.
@@ -67,6 +69,9 @@ fun HomeScreen(
         lastMakeAt = lastMedia?.createdAt,
         findEnabled = settings.searchEnabled,
         lastFindQuery = lastFindQuery.ifBlank { null },
+        botCount = crew.count,
+        workingBots = crew.working,
+        nextBotRunAt = crew.routines.mapNotNull { CronSchedulePresets.nextRunAt(it, now) }.minOrNull(),
         now = now,
         zone = zone
     )

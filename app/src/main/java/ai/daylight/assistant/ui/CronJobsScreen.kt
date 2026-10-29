@@ -78,6 +78,7 @@ import java.util.Locale
 @Composable
 fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
     val tasks by vm.tasks.collectAsStateWithLifecycle()
+    val botNames by vm.botNames.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
     var deleteTask by remember { mutableStateOf<ScheduledTaskEntity?>(null) }
@@ -109,7 +110,10 @@ fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
                 )
             }
         } else {
-            TuneDetail("Each routine runs in its own chat and notifies you when a run finishes.", Modifier.padding(top = 4.dp, bottom = 12.dp))
+            TuneDetail(
+                "Each routine notifies you when a run finishes. A Crew bot's routines run in the bot's chat; the others each have their own.",
+                Modifier.padding(top = 4.dp, bottom = 12.dp)
+            )
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = 8.dp)
@@ -117,6 +121,7 @@ fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
                 items(tasks, key = { it.id }) { task ->
                     CronTaskRow(
                         task = task,
+                        botName = task.botId?.let { botNames[it] },
                         onEnabled = {
                             if (it) ensureNotificationPermission()
                             vm.setEnabled(task.id, it)
@@ -155,7 +160,8 @@ fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
     deleteTask?.let { task ->
         DotConfirmDialog(
             title = "Delete “${task.title}”?",
-            body = "The schedule stops and its own conversation is removed. This cannot be undone.",
+            body = task.botId?.let { botNames[it] }?.let { "The schedule stops. $it keeps its chat and its other routines." }
+                ?: "The schedule stops and its own conversation is removed. This cannot be undone.",
             confirm = "Delete",
             destructive = true,
             onConfirm = {
@@ -170,6 +176,7 @@ fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
 @Composable
 private fun CronTaskRow(
     task: ScheduledTaskEntity,
+    botName: String?,
     onEnabled: (Boolean) -> Unit,
     onRunNow: () -> Unit,
     onDelete: () -> Unit
@@ -189,7 +196,8 @@ private fun CronTaskRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    CronSchedulePresets.label(task).uppercase(Locale.US),
+                    (if (botName != null) "$botName · " else "").uppercase(Locale.US) +
+                        CronSchedulePresets.label(task).uppercase(Locale.US),
                     Modifier.padding(top = 1.dp),
                     style = DotType.Caption.copy(fontSize = 10.sp, lineHeight = 14.sp),
                     color = c.textTertiary
@@ -238,12 +246,16 @@ private fun CronTaskRow(
     }
 }
 
-/** New routine, in the kit dialog: name, prompt, how often, the time, and (weekly) the days. */
+/**
+ * New routine, in the kit dialog: name, prompt, how often, the time, and (weekly) the days.
+ * Crew's bot page reuses it with its own [heading] (C9).
+ */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun AddCronTaskDialog(
+internal fun AddCronTaskDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, String, CronRecurrence, Int, Int, Set<Int>) -> Unit
+    onAdd: (String, String, CronRecurrence, Int, Int, Set<Int>) -> Unit,
+    heading: String = "New routine"
 ) {
     val c = DotTheme.c
     var title by rememberSaveable { mutableStateOf("") }
@@ -269,7 +281,7 @@ private fun AddCronTaskDialog(
     }
 
     DotDialog(onDismiss = onDismiss, padded = false) {
-        DotDialogTitle("New routine", Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp))
+        DotDialogTitle(heading, Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp))
         Column(
             Modifier
                 .weight(1f, fill = false)
@@ -328,22 +340,7 @@ private fun AddCronTaskDialog(
             TimePicker(
                 state = timeState,
                 modifier = Modifier.align(Alignment.CenterHorizontally).testTag("cron_time_picker"),
-                colors = TimePickerDefaults.colors(
-                    clockDialColor = c.surface,
-                    clockDialSelectedContentColor = c.bg,
-                    clockDialUnselectedContentColor = c.textSecondary,
-                    selectorColor = c.textPrimary,
-                    containerColor = c.surfaceRaised,
-                    periodSelectorBorderColor = c.border,
-                    periodSelectorSelectedContainerColor = c.textPrimary,
-                    periodSelectorUnselectedContainerColor = c.surface,
-                    periodSelectorSelectedContentColor = c.bg,
-                    periodSelectorUnselectedContentColor = c.textSecondary,
-                    timeSelectorSelectedContainerColor = c.textPrimary,
-                    timeSelectorUnselectedContainerColor = c.surface,
-                    timeSelectorSelectedContentColor = c.bg,
-                    timeSelectorUnselectedContentColor = c.textPrimary
-                )
+                colors = kitTimePickerColors()
             )
         }
         HorizontalDivider(thickness = 1.dp, color = c.border)
@@ -379,9 +376,32 @@ private fun AddCronTaskDialog(
     }
 }
 
+/** The time picker in kit colours: white selection on dark surfaces, no yellow. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun kitTimePickerColors(): androidx.compose.material3.TimePickerColors {
+    val c = DotTheme.c
+    return TimePickerDefaults.colors(
+        clockDialColor = c.surface,
+        clockDialSelectedContentColor = c.bg,
+        clockDialUnselectedContentColor = c.textSecondary,
+        selectorColor = c.textPrimary,
+        containerColor = c.surfaceRaised,
+        periodSelectorBorderColor = c.border,
+        periodSelectorSelectedContainerColor = c.textPrimary,
+        periodSelectorUnselectedContainerColor = c.surface,
+        periodSelectorSelectedContentColor = c.bg,
+        periodSelectorUnselectedContentColor = c.textSecondary,
+        timeSelectorSelectedContainerColor = c.textPrimary,
+        timeSelectorUnselectedContainerColor = c.surface,
+        timeSelectorSelectedContentColor = c.bg,
+        timeSelectorUnselectedContentColor = c.textPrimary
+    )
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun WeeklyDaysMenu(
+internal fun WeeklyDaysMenu(
     selectedDays: Set<Int>,
     onToggle: (Int) -> Unit,
     onDone: () -> Unit

@@ -1,12 +1,15 @@
 package ai.daylight.assistant.data
 
 import ai.daylight.assistant.data.local.AssistantDao
+import ai.daylight.assistant.data.local.BotEntity
 import ai.daylight.assistant.data.local.ConversationEntity
 import ai.daylight.assistant.data.local.ConversationFolderEntity
 import ai.daylight.assistant.data.local.ConversationSummary
 import ai.daylight.assistant.data.local.MessageEntity
+import ai.daylight.assistant.domain.BotPersona
 import ai.daylight.assistant.domain.Citation
 import ai.daylight.assistant.domain.ChatAttachment
+import ai.daylight.assistant.domain.ExportBot
 import ai.daylight.assistant.domain.ExportBundle
 import ai.daylight.assistant.domain.ExportConversation
 import ai.daylight.assistant.domain.ExportConversationFolder
@@ -151,6 +154,9 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
             },
             folders = folders.map { folder ->
                 ExportConversationFolder(folder.id, folder.name, folder.createdAt, folder.updatedAt)
+            },
+            bots = dao.allBots().map { bot ->
+                ExportBot(bot.id, bot.name, bot.persona, bot.avatarSeed, bot.conversationId, bot.createdAt, bot.updatedAt)
             }
         )
         return json.encodeToString(bundle)
@@ -200,6 +206,24 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
                     cachedInputTokens = m.cachedInputTokens
                 )
             })
+        }
+        // C9: bots come back with their persona and chat. A bot whose chat was empty (so not
+        // in the backup) gets it back on its first message.
+        bundle.bots.forEach { bot ->
+            val name = BotPersona.cleanName(bot.name)
+            if (bot.id.isNotBlank() && bot.conversationId.isNotBlank() && name.isNotEmpty()) {
+                dao.upsertBot(
+                    BotEntity(
+                        id = bot.id,
+                        name = name,
+                        persona = BotPersona.cleanPersona(bot.persona),
+                        avatarSeed = bot.avatarSeed,
+                        conversationId = bot.conversationId,
+                        createdAt = bot.createdAt,
+                        updatedAt = bot.updatedAt
+                    )
+                )
+            }
         }
         return importableConversations.size
     }

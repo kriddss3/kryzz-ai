@@ -9,6 +9,7 @@ import ai.daylight.assistant.data.ConversationRepository
 import ai.daylight.assistant.data.ConversationTitleGenerator
 import ai.daylight.assistant.data.AttachmentStore
 import ai.daylight.assistant.data.CronNotifications
+import ai.daylight.assistant.data.BotRepository
 import ai.daylight.assistant.data.CronScheduler
 import ai.daylight.assistant.data.LocationProvider
 import ai.daylight.assistant.data.local.AssistantDatabase
@@ -28,6 +29,7 @@ import ai.daylight.assistant.data.remote.ErrorKind
 import ai.daylight.assistant.data.remote.PublicWebClient
 import ai.daylight.assistant.data.remote.CommonsImageClient
 import ai.daylight.assistant.domain.AgentExecutor
+import ai.daylight.assistant.domain.CrewDesk
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.FindSession
@@ -85,7 +87,8 @@ class AppContainer(private val application: Application) {
             AssistantDatabase.MIGRATION_8_9,
             AssistantDatabase.MIGRATION_9_10,
             AssistantDatabase.MIGRATION_10_11,
-            AssistantDatabase.MIGRATION_11_12
+            AssistantDatabase.MIGRATION_11_12,
+            AssistantDatabase.MIGRATION_12_13
         )
         .build()
     val preferences = AppPreferences(application)
@@ -150,6 +153,16 @@ class AppContainer(private val application: Application) {
     val find = FindSession(
         scope = applicationScope,
         search = { query, filters, offset -> commons.search(query, filters, offset) }
+    )
+
+    /** Crew (C9): personal bots. Their routines are cron tasks that run in the bot's chat. */
+    val bots = BotRepository(database.dao(), schedule = cron::schedule, cancel = cron::cancel)
+
+    /** The bots' work desk: one job per bot, replies kept running when the screen closes. */
+    val crew = CrewDesk(
+        scope = applicationScope,
+        prepare = bots::ensureConversation,
+        send = { conversationId, text -> agent.send(conversationId, text) }
     )
 
     /** Find's thumbnails: Wikimedia hosts only, with Wikimedia's required user agent. */

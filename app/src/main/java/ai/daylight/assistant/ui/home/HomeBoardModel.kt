@@ -7,6 +7,7 @@ import ai.daylight.assistant.domain.AgentQualityPolicy
 import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.userWantsImage
 import ai.daylight.assistant.domain.userWantsVideo
+import ai.daylight.assistant.ui.crew.CrewModel
 import ai.daylight.assistant.ui.shell.Arm
 import java.time.Instant
 import java.time.LocalDate
@@ -44,6 +45,10 @@ data class HomeSnapshot(
     val findEnabled: Boolean = true,
     /** The last search Find ran in this app session, if any. */
     val lastFindQuery: String? = null,
+    /** Crew (C9): how many bots, the names of those working now, and the next routine run. */
+    val botCount: Int = 0,
+    val workingBots: List<String> = emptyList(),
+    val nextBotRunAt: Long? = null,
     val now: Long = 0L,
     val zone: ZoneId = ZoneId.systemDefault()
 )
@@ -96,7 +101,15 @@ object HomeBoard {
                 !s.lastFindQuery.isNullOrBlank() -> "Last: ${clip(s.lastFindQuery, 18)}"
                 else -> "Free images to reuse"
             }
-            Arm.CREW -> "Personal bots, not yet"
+            Arm.CREW -> when {
+                s.workingBots.size == 1 -> "${clip(s.workingBots.first(), 14)} is working"
+                s.workingBots.size > 1 -> "${s.workingBots.size} bots working"
+                busy -> "A bot is working"
+                s.botCount <= 0 -> "No bots yet"
+                s.nextBotRunAt != null -> "Next run ${CrewModel.whenLabel(s.nextBotRunAt, s.now, s.zone)}"
+                s.botCount == 1 -> "1 bot, no routine on"
+                else -> "${s.botCount} bots, no routine on"
+            }
             Arm.RUN -> when {
                 busy && s.runPlan != null && s.runPlan.steps.isNotEmpty() -> stepText(s.runPlan)
                 busy -> "Working on a task"
@@ -125,6 +138,15 @@ object HomeBoard {
                         MakeKind.VIDEO -> "Make is rendering a clip."
                         MakeKind.IMAGE -> "Make is rendering an image."
                         null -> "Make is rendering."
+                    }
+                )
+            }
+            if (Arm.CREW in s.busyArms) {
+                add(
+                    when (s.workingBots.size) {
+                        0 -> "A bot is working."
+                        1 -> "${s.workingBots.first()} is working."
+                        else -> "${s.workingBots.size} bots are working."
                     }
                 )
             }

@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ConversationEntity::class, ConversationFolderEntity::class, MessageEntity::class, SkillEntity::class, MemoryEntity::class, ScheduledTaskEntity::class],
-    version = 12,
+    entities = [ConversationEntity::class, ConversationFolderEntity::class, MessageEntity::class, SkillEntity::class, MemoryEntity::class, ScheduledTaskEntity::class, BotEntity::class],
+    version = 13,
     exportSchema = true
 )
 abstract class AssistantDatabase : RoomDatabase() {
@@ -149,6 +149,29 @@ abstract class AssistantDatabase : RoomDatabase() {
                     "UPDATE scheduled_tasks SET daysOfWeek = CAST(dayOfWeek AS TEXT) " +
                         "WHERE dayOfWeek IS NOT NULL AND recurrence = 'WEEKLY'"
                 )
+            }
+        }
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // C9 Crew, additive only: a bots table, and routines can belong to a bot.
+                // Existing routines keep botId NULL and run exactly as before.
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `bots` (
+                        `id` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `persona` TEXT NOT NULL,
+                        `avatarSeed` INTEGER NOT NULL,
+                        `conversationId` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bots_conversationId` ON `bots` (`conversationId`)")
+                db.execSQL("ALTER TABLE scheduled_tasks ADD COLUMN botId TEXT")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_scheduled_tasks_botId` ON `scheduled_tasks` (`botId`)")
             }
         }
     }
