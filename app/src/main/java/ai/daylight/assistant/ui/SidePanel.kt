@@ -164,6 +164,7 @@ internal const val PANEL_SETTLE_FRACTION = 0.05f
 internal fun panelSwipeEnabledForRoute(route: String?): Boolean {
     if (route == null) return false
     if (route.startsWith("chat/")) return true
+    if (route == Routes.MAKE) return true
     return when (route) {
         "home", "boot", "onboarding", "settings" -> true
         else -> false

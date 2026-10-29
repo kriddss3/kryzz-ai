@@ -12,9 +12,9 @@ class ArmRoutesTest {
             .inOrder()
     }
 
-    @Test fun onlyTalkRunVoiceAndTuneAreLitInPhaseB() {
+    @Test fun makeLightsUpInC7AndFindCrewLinkStayUnlit() {
         assertThat(Arm.entries.filter { it.live })
-            .containsExactly(Arm.TALK, Arm.RUN, Arm.VOICE, Arm.TUNE)
+            .containsExactly(Arm.TALK, Arm.MAKE, Arm.RUN, Arm.VOICE, Arm.TUNE)
         assertThat(Arm.LINK.live).isFalse()
         assertThat(Arm.LINK.route).isNull()
     }
@@ -24,6 +24,11 @@ class ArmRoutesTest {
         assertThat(Arm.RUN.route).isEqualTo(Routes.CHAT)
         assertThat(Arm.VOICE.route).isEqualTo(Routes.CHAT)
         assertThat(Arm.TUNE.route).isEqualTo(Routes.SETTINGS)
+        assertThat(Arm.MAKE.route).isEqualTo(Routes.MAKE)
+        assertThat(armForRoute(Routes.MAKE)).isEqualTo(Arm.MAKE)
+        assertThat(railVisibleForRoute(Routes.MAKE)).isTrue()
+        assertThat(Routes.make()).isEqualTo("make")
+        assertThat(Routes.make(ai.daylight.assistant.domain.MakeKind.VIDEO)).isEqualTo("make?kind=VIDEO")
     }
 
     @Test fun chatRoutesMapToTalkRunOrVoice() {

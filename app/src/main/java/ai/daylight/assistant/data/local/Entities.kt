@@ -68,6 +68,16 @@ data class ConversationSummary(
 )
 
 /** One earlier chat message used for local past-chat search. */
+/** C7: one message that carries generated files, with the request that made them. */
+data class OutputMessageRow(
+    val messageId: String,
+    val conversationId: String,
+    val createdAt: Long,
+    val outputsJson: String,
+    /** The newest user message at or before this one in the same conversation. */
+    val prompt: String?
+)
+
 data class MessageSearchRow(
     val conversationId: String,
     val conversationTitle: String,

@@ -86,6 +86,18 @@ data class GeneratedOutput(
     val remoteUrl: String? = null
 )
 
+/**
+ * C7: a generated file as it appears in Make's recent ink (and the Inkwell later): the file,
+ * where it lives in the history, when it was made, and the request that made it.
+ */
+data class RecentOutput(
+    val output: GeneratedOutput,
+    val messageId: String,
+    val conversationId: String,
+    val createdAt: Long,
+    val prompt: String?
+)
+
 data class AssistantPreset(val id: String, val title: String, val prompt: String) {
     companion object {
         val balanced = AssistantPreset(

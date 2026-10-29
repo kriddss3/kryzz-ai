@@ -36,8 +36,6 @@ import ai.daylight.assistant.data.remote.MiniMaxTtsRequest
 import ai.daylight.assistant.data.remote.MiniMaxVideoContentItem
 import ai.daylight.assistant.data.remote.MiniMaxVideoRequest
 import ai.daylight.assistant.data.remote.bareMiniMaxModel
-import ai.daylight.assistant.data.remote.isMiniMaxImageModel
-import ai.daylight.assistant.data.remote.isMiniMaxVideoModel
 import ai.daylight.assistant.data.remote.miniMaxImageRequest
 import ai.daylight.assistant.data.remote.requireImagePayload
 import ai.daylight.assistant.data.remote.throwIfFailed
@@ -138,6 +136,13 @@ class AgentExecutor(
     val agentPlan: MutableStateFlow<AgentPlan?> = MutableStateFlow(null)
 
     /**
+     * C7: where the video job of a direct Video render stands (sending, the provider's
+     * queued/processing, downloading), or null. Single slot like [agentPlan]; Make reads it
+     * for its status line. Cleared when the render ends.
+     */
+    val mediaStatus: MutableStateFlow<MediaJobStatus?> = MutableStateFlow(null)
+
+    /**
      * Delivers the user's answer to the pending question card. [answer] null (or blank)
      * means the user dismissed the card — the model is told to continue with its best
      * judgment instead of hanging.
@@ -155,7 +160,8 @@ class AgentExecutor(
         mode: AssistantMode = AssistantMode.CHAT,
         capability: AgentCapability = AgentCapability.AUTO,
         attachments: List<ChatAttachment> = emptyList(),
-        voiceMode: Boolean = false
+        voiceMode: Boolean = false,
+        media: MediaOptions? = null
     ): String? {
         val clean = text.trim()
         require(clean.isNotEmpty())
@@ -183,8 +189,8 @@ class AgentExecutor(
         }
         return when {
             voiceMode -> generateReply(conversationId, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true)
-            savedMode == AssistantMode.AGENT && capability == AgentCapability.IMAGE -> { generateImage(conversationId, clean); null }
-            savedMode == AssistantMode.AGENT && capability == AgentCapability.VIDEO -> { generateVideo(conversationId, clean); null }
+            savedMode == AssistantMode.AGENT && capability == AgentCapability.IMAGE -> { generateImage(conversationId, clean, media); null }
+            savedMode == AssistantMode.AGENT && capability == AgentCapability.VIDEO -> { generateVideo(conversationId, clean, media); null }
             savedMode == AssistantMode.AGENT && capability == AgentCapability.AUDIO -> { generateAudio(conversationId, clean); null }
             else -> generateReply(conversationId, savedMode, capability)
         }
@@ -1164,14 +1170,14 @@ class AgentExecutor(
         }
     }
 
-    private suspend fun generateImage(conversationId: String, prompt: String) {
+    private suspend fun generateImage(conversationId: String, prompt: String, media: MediaOptions? = null) {
         val id = UUID.randomUUID().toString()
         dao.upsertMessage(
             MessageEntity(id, conversationId, "ASSISTANT", "", System.currentTimeMillis(), MessageStatus.STREAMING.name, mode = AssistantMode.AGENT.name, capability = AgentCapability.IMAGE.name)
         )
         toolActivity.tryEmit(ToolActivity(conversationId, TOOL_IMAGE_CREATION, started = true))
         try {
-            val output = produceImageOutput(prompt)
+            val output = produceImageOutput(prompt, media?.aspectRatio)
             dao.finishMessage(
                 id, "Created your image with ${preferences.state.first().imageModel}.", MessageStatus.COMPLETE.name, "[]",
                 null, null, null, null,
@@ -1192,11 +1198,11 @@ class AgentExecutor(
     /** Core image generation, factored out so the AUTO agent's `generate_image` tool and the
      *  dedicated Image capability share one path. Returns the materialised output; the caller
      *  is responsible for attaching it to a message. */
-    private suspend fun produceImageOutput(prompt: String): GeneratedOutput {
+    private suspend fun produceImageOutput(prompt: String, aspectRatio: String? = null): GeneratedOutput {
         val settings = preferences.state.first()
         val model = settings.imageModel
         if (model.isBlank()) throw AssistantApiException(ErrorKind.MODEL_UNAVAILABLE, "Choose an Image model on the Models screen before using Image generation.")
-        val useMiniMax = settings.chatProvider == ChatProvider.MINIMAX || isMiniMaxImageModel(model)
+        val useMiniMax = mediaUsesMiniMax(video = false, settings.chatProvider, model)
         val key = (if (useMiniMax) credentials.minimaxKey() else credentials.openRouterKey())
             ?: throw AssistantApiException(
                 ErrorKind.INVALID_KEY,
@@ -1204,7 +1210,7 @@ class AgentExecutor(
                 else "Add an OpenRouter API key in Settings before generating an image."
             )
         val (file, mime, extension) = if (useMiniMax) {
-            val result = minimax.generateImage(key, miniMaxImageRequest(model, prompt))
+            val result = minimax.generateImage(key, miniMaxImageRequest(model, prompt, aspectRatio ?: DEFAULT_MEDIA_RATIO))
             when (val payload = result.requireImagePayload()) {
                 is MiniMaxImagePayload.Base64 -> {
                     val bytes = Base64.decode(payload.value, Base64.DEFAULT)
@@ -1237,14 +1243,16 @@ class AgentExecutor(
         return GeneratedOutput(UUID.randomUUID().toString(), OutputKind.IMAGE, "Generated image", "kryzz-image.$extension", mime, localPath = file.absolutePath)
     }
 
-    private suspend fun generateVideo(conversationId: String, prompt: String) {
+    private suspend fun generateVideo(conversationId: String, prompt: String, media: MediaOptions? = null) {
         val id = UUID.randomUUID().toString()
         dao.upsertMessage(
             MessageEntity(id, conversationId, "ASSISTANT", "", System.currentTimeMillis(), MessageStatus.STREAMING.name, mode = AssistantMode.AGENT.name, capability = AgentCapability.VIDEO.name)
         )
         toolActivity.tryEmit(ToolActivity(conversationId, TOOL_VIDEO_CREATION, started = true))
         try {
-            val output = produceVideoOutput(prompt, id)
+            val output = produceVideoOutput(prompt, id, media?.aspectRatio) { status ->
+                mediaStatus.value = MediaJobStatus(conversationId, status, System.currentTimeMillis())
+            }
             dao.finishMessage(
                 id, "Created your video with ${preferences.state.first().videoModel}.", MessageStatus.COMPLETE.name, "[]",
                 null, null, null, null,
@@ -1258,32 +1266,40 @@ class AgentExecutor(
             failDirectGeneration(id, error)
             throw error
         } finally {
+            if (mediaStatus.value?.conversationId == conversationId) mediaStatus.value = null
             toolActivity.tryEmit(ToolActivity(conversationId, TOOL_VIDEO_CREATION, started = false))
         }
     }
 
     /** Core video generation. [heartbeatMessageId] is kept streaming so the UI shows the
-     *  ThinkingIndicator while the provider polls; pass null when called from a tool. */
-    private suspend fun produceVideoOutput(prompt: String, heartbeatMessageId: String? = null): GeneratedOutput {
+     *  ThinkingIndicator while the provider polls; pass null when called from a tool.
+     *  [aspectRatio] null keeps 16:9. [onStatus] hears each step of the job (C7). */
+    private suspend fun produceVideoOutput(
+        prompt: String,
+        heartbeatMessageId: String? = null,
+        aspectRatio: String? = null,
+        onStatus: (String) -> Unit = {}
+    ): GeneratedOutput {
         val settings = preferences.state.first()
         val model = settings.videoModel
         if (model.isBlank()) throw AssistantApiException(ErrorKind.MODEL_UNAVAILABLE, "Choose a Video model on the Models screen before using Video generation.")
-        val useMiniMax = settings.chatProvider == ChatProvider.MINIMAX || isMiniMaxVideoModel(model)
+        val useMiniMax = mediaUsesMiniMax(video = true, settings.chatProvider, model)
         val key = (if (useMiniMax) credentials.minimaxKey() else credentials.openRouterKey())
             ?: throw AssistantApiException(
                 ErrorKind.INVALID_KEY,
                 if (useMiniMax) "Add a MiniMax API key in Settings before generating a video."
                 else "Add an OpenRouter API key in Settings before generating a video."
             )
+        onStatus(MediaJobStatus.SENDING)
         val (localPath, mime, remote) = if (useMiniMax) {
             val submit = minimax.submitVideo(
                 key,
                 MiniMaxVideoRequest(
                     model = bareMiniMaxModel(model),
                     content = listOf(MiniMaxVideoContentItem(type = "text", text = prompt)),
-                    duration = 5,
-                    resolution = "2K",
-                    ratio = "16:9"
+                    duration = MINIMAX_VIDEO_SECONDS,
+                    resolution = MINIMAX_VIDEO_RESOLUTION,
+                    ratio = aspectRatio ?: DEFAULT_MEDIA_RATIO
                 )
             )
             val taskId = submit.taskId ?: throw AssistantApiException(ErrorKind.UNKNOWN, "MiniMax did not return a video task ID.")
@@ -1302,12 +1318,14 @@ class AgentExecutor(
                 task = status.task
                 val s = task?.status?.lowercase().orEmpty()
                 if (s in setOf("succeeded", "failed", "cancelled")) break
+                if (s.isNotBlank()) onStatus(s)
             }
             if (task?.status?.lowercase() != "succeeded") {
                 throw AssistantApiException(ErrorKind.UNKNOWN, task?.error ?: "The MiniMax video provider could not complete this generation.")
             }
             val url = task.content?.url
                 ?: throw AssistantApiException(ErrorKind.UNKNOWN, "The MiniMax video task succeeded but returned no download URL.")
+            onStatus(MediaJobStatus.DOWNLOADING)
             val file = outputStore.newFile("mp4")
             val downloadedMime = try {
                 minimax.downloadVideo(url, file)
@@ -1319,9 +1337,10 @@ class AgentExecutor(
             }
             Triple(file.absolutePath, downloadedMime ?: "video/mp4", url)
         } else {
-            var job = openRouter.submitVideo(key, VideoGenerationRequest(model, prompt))
+            var job = openRouter.submitVideo(key, VideoGenerationRequest(model, prompt, aspectRatio = aspectRatio ?: DEFAULT_MEDIA_RATIO))
             val startedAt = System.currentTimeMillis()
             while (job.status.lowercase() !in setOf("completed", "failed", "cancelled")) {
+                onStatus(job.status.lowercase())
                 if (System.currentTimeMillis() - startedAt > 10 * 60_000L) {
                     throw AssistantApiException(ErrorKind.TIMEOUT, "Video generation is still processing after 10 minutes. Check your OpenRouter activity before retrying.")
                 }
@@ -1332,6 +1351,7 @@ class AgentExecutor(
             if (job.status.lowercase() != "completed") {
                 throw AssistantApiException(ErrorKind.UNKNOWN, job.error ?: "The video provider could not complete this generation.")
             }
+            onStatus(MediaJobStatus.DOWNLOADING)
             val file = outputStore.newFile("mp4")
             val (path, downloadedMime) = try {
                 file.absolutePath to openRouter.downloadVideo(key, job.id, file)

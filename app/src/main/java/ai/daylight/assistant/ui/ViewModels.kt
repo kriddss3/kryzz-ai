@@ -28,6 +28,7 @@ import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.MessageStatus
 import ai.daylight.assistant.domain.SwarmStatus
 import ai.daylight.assistant.domain.ReasoningEffort
+import ai.daylight.assistant.domain.RecentOutput
 import ai.daylight.assistant.domain.ThemeMode
 import ai.daylight.assistant.domain.AppPalette
 import ai.daylight.assistant.domain.BackgroundStyle
@@ -60,6 +61,8 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Job
+import ai.daylight.assistant.ui.make.MakeModel
+import ai.daylight.assistant.ui.make.MakeViewModel
 import ai.daylight.assistant.ui.tune.TuneKeys
 import ai.daylight.assistant.ui.tune.TuneModel
 import kotlinx.coroutines.Dispatchers
@@ -149,7 +152,7 @@ internal fun consumeChatAutoSend(conversationId: String): Boolean = ChatDraftSto
 /** The thread count and newest thread time shown on the Home board. */
 data class HomeThreads(val count: Int = 0, val lastAt: Long? = null)
 
-/** Home board data: threads from the chat library list, settings, and the agent's live plan. */
+/** Home board data: threads from the chat library list, settings, the agent's live plan and Make. */
 class HomeViewModel(container: AppContainer) : ViewModel() {
     val threads: StateFlow<HomeThreads> = container.conversations.conversations(archived = false, query = "")
         .map { list -> HomeThreads(list.size, list.maxOfOrNull { it.updatedAt }) }
@@ -157,6 +160,13 @@ class HomeViewModel(container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeThreads())
     val settings = container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsState())
     val agentPlan = container.agent.agentPlan
+    val makeRender = container.make.current
+
+    /** The newest image or clip in the history, for the Make port's "Last image 10:21". */
+    val lastMedia: StateFlow<RecentOutput?> = container.conversations.recentOutputs(MakeModel.RECENT_LIMIT)
+        .map { list -> list.firstOrNull { MakeModel.isMedia(it.output) } }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 }
 
 internal fun transferChatDraft(fromConversationId: String, toConversationId: String) {
@@ -2139,6 +2149,7 @@ class DaylightViewModelFactory(private val container: AppContainer) : ViewModelP
         MemoryViewModel::class.java -> MemoryViewModel(container)
         CronViewModel::class.java -> CronViewModel(container)
         HomeViewModel::class.java -> HomeViewModel(container)
+        MakeViewModel::class.java -> MakeViewModel(container)
         else -> throw IllegalArgumentException("Unknown ViewModel ${modelClass.name}")
     } as T
 }

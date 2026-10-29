@@ -57,11 +57,15 @@ import androidx.navigation.navArgument
 import ai.daylight.assistant.AppContainer
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.AgentCapability
+import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.ui.home.HomeScreen
 import ai.daylight.assistant.ui.link.LinkScreen
+import ai.daylight.assistant.ui.make.MakeScreen
+import ai.daylight.assistant.ui.make.MakeViewModel
+import ai.daylight.assistant.ui.make.makeModel
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.ArmRail
 import ai.daylight.assistant.ui.shell.ArmRailSpec
@@ -76,6 +80,7 @@ import ai.daylight.assistant.ui.shell.railVisibleForRoute
 import ai.daylight.assistant.ui.shell.shellChromeVisibleForRoute
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +91,8 @@ object Routes {
     const val HOME = "home"
     /** Link's COMING LATER page (a future project, no integration). */
     const val LINK = "link"
+    /** Make (C7): image and video renders. [kind] (IMAGE or VIDEO) is optional. */
+    const val MAKE = "make?kind={kind}"
     const val BOOT = "boot"
     const val ONBOARDING = "onboarding"
     const val LLMS = "llms"
@@ -104,6 +111,7 @@ object Routes {
     fun chat(id: String, mode: AssistantMode = AssistantMode.CHAT, capability: AgentCapability = AgentCapability.AUTO, voice: Boolean = false) =
         "chat/$id?mode=${mode.name}&capability=${capability.name}&voice=$voice"
     fun models(purpose: ModelPurpose = ModelPurpose.CHAT) = "models/${purpose.name}"
+    fun make(kind: MakeKind? = null) = if (kind == null) "make" else "make?kind=${kind.name}"
 }
 
 /** Chat is the home destination; Settings is the only other top-level surface. */
@@ -167,6 +175,12 @@ fun AppNavigation(
         // Chat entries whose generation outlives the screen (covered by Settings, or kept
         // under another arm) report busy here until their back-stack entry is destroyed.
         val busyWatchers = remember { mutableSetOf<String>() }
+        // Make's renders run in the app (MakeStudio), so its busy dot follows the studio.
+        LaunchedEffect(container) {
+            container.make.current.collect { render ->
+                inkStrip.setBusy(MAKE_BUSY_KEY, if (render?.running == true) Arm.MAKE else null)
+            }
+        }
         LaunchedEffect(currentConversationId, currentMode, currentCapability) {
             if (currentConversationId != null) {
                 activeConversationId = currentConversationId
@@ -386,16 +400,34 @@ fun AppNavigation(
                 Arm.VOICE -> newConversationFromLibrary(AssistantMode.CHAT, voice = true)
                 Arm.TUNE -> openTopLevel(Routes.SETTINGS)
                 Arm.LINK -> navigateArm(Routes.LINK)
-                Arm.MAKE, Arm.FIND, Arm.CREW -> inkStrip.flash(InkLines.notYet(arm))
+                Arm.MAKE -> navigateArm(Routes.make())
+                Arm.FIND, Arm.CREW -> inkStrip.flash(InkLines.notYet(arm))
             }
         }
         /**
          * The Home composer: a new conversation opens with the text and sends it once.
          * [capability] null is Talk; IMAGE or VIDEO is the one-tap "make" switch, which
-         * runs the existing agent generation until the Make screen arrives (C7).
+         * starts the render in Make (in its own conversation) and opens Make on it.
          */
         fun startFromHome(text: String, capability: AgentCapability?) {
             panelOpen = false
+            val makeKind = when (capability) {
+                AgentCapability.IMAGE -> MakeKind.IMAGE
+                AgentCapability.VIDEO -> MakeKind.VIDEO
+                else -> null
+            }
+            if (makeKind != null) {
+                scope.launch {
+                    val studio = container.make
+                    val model = container.preferences.state.first().makeModel(makeKind)
+                    // Busy with another render: keep the words as Make's draft instead.
+                    if (!studio.start(makeKind, text, studio.ratios.value[makeKind], model)) {
+                        studio.draft.value = text
+                    }
+                    withContext(Dispatchers.Main.immediate) { navigateArm(Routes.make(makeKind)) }
+                }
+                return
+            }
             scope.launch {
                 container.conversations.deleteEmptyExcept(chatDraftConversationIds())
                 val id = container.conversations.createConversation()
@@ -515,6 +547,20 @@ fun AppNavigation(
         }
         composable(Routes.LINK) {
             LinkScreen()
+        }
+        composable(
+            Routes.MAKE,
+            arguments = listOf(navArgument("kind") { type = NavType.StringType; nullable = true; defaultValue = null })
+        ) { entry ->
+            val vm: MakeViewModel = viewModel(factory = factory)
+            MakeScreen(
+                vm = vm,
+                routeKind = MakeKind.from(entry.arguments?.getString("kind")),
+                onModels = { purpose -> nav.navigate(Routes.models(purpose)) },
+                onLibrary = ::openLibrary,
+                onBackground = ::goHome,
+                onInkwell = { inkStrip.flash(InkLines.INKWELL_NOT_YET) }
+            )
         }
         composable(Routes.LLMS) {
             val vm: LlmCatalogViewModel = viewModel(factory = factory)
@@ -719,6 +765,9 @@ fun AppNavigation(
         }
     }
 }
+
+/** The ink strip's busy key for Make's render (one at a time, run by MakeStudio). */
+private const val MAKE_BUSY_KEY = "make-studio"
 
 /** Back with the chat drawer open closes the drawer and stays on the screen under it. */
 internal fun backClosesDrawerFirst(panelOpen: Boolean): Boolean = panelOpen

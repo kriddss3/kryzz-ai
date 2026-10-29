@@ -4,6 +4,7 @@ import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.domain.AgentPlan
 import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.domain.AgentQualityPolicy
+import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.userWantsImage
 import ai.daylight.assistant.domain.userWantsVideo
 import ai.daylight.assistant.ui.shell.Arm
@@ -34,6 +35,11 @@ data class HomeSnapshot(
     val runPlan: AgentPlan? = null,
     val quality: AgentQuality = AgentQuality.DEFAULT,
     val costCapCents: Int = 0,
+    /** What Make is rendering now, when its port is busy. */
+    val makeKind: MakeKind? = null,
+    /** The newest image or clip in the history, and when it was made. */
+    val lastMakeKind: MakeKind? = null,
+    val lastMakeAt: Long? = null,
     val now: Long = 0L,
     val zone: ZoneId = ZoneId.systemDefault()
 )
@@ -69,7 +75,18 @@ object HomeBoard {
                     "${s.threadCount} $noun$last"
                 }
             }
-            Arm.MAKE -> "Images and clips, not yet"
+            Arm.MAKE -> when {
+                busy -> when (s.makeKind) {
+                    MakeKind.IMAGE -> "Rendering an image"
+                    MakeKind.VIDEO -> "Rendering a clip"
+                    null -> "Rendering"
+                }
+                s.lastMakeAt != null -> {
+                    val noun = if (s.lastMakeKind == MakeKind.VIDEO) "clip" else "image"
+                    "Last $noun ${timeLabel(s.lastMakeAt, s.now, s.zone)}"
+                }
+                else -> "Images and clips"
+            }
             Arm.FIND -> "Web images, not yet"
             Arm.CREW -> "Personal bots, not yet"
             Arm.RUN -> when {
@@ -94,6 +111,15 @@ object HomeBoard {
                     ?: "Run is working on a task.")
             }
             if (Arm.TALK in s.busyArms) add("Talk is writing a reply.")
+            if (Arm.MAKE in s.busyArms) {
+                add(
+                    when (s.makeKind) {
+                        MakeKind.VIDEO -> "Make is rendering a clip."
+                        MakeKind.IMAGE -> "Make is rendering an image."
+                        null -> "Make is rendering."
+                    }
+                )
+            }
             if (Arm.VOICE in s.busyArms) add("Voice is listening.")
         }
         if (running.isNotEmpty()) return running.joinToString(" ")

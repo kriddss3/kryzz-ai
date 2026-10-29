@@ -27,7 +27,9 @@ import ai.daylight.assistant.data.remote.AssistantApiException
 import ai.daylight.assistant.data.remote.ErrorKind
 import ai.daylight.assistant.data.remote.PublicWebClient
 import ai.daylight.assistant.domain.AgentExecutor
+import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ChatProvider
+import ai.daylight.assistant.domain.MakeStudio
 import ai.daylight.assistant.domain.SwarmOrchestrator
 import ai.daylight.assistant.security.SecureCredentialStore
 import ai.daylight.assistant.voice.TtsProvider
@@ -128,6 +130,15 @@ class AppContainer(private val application: Application) {
     val swarm = SwarmOrchestrator(
         database.dao(), preferences, credentials, openRouter, minimax, memories, json,
         onFirstUserMessage = conversationTitles::request
+    )
+
+    /** Make's renders (C7) run here, in the app's scope, so leaving the screen doesn't stop them. */
+    val make = MakeStudio(
+        scope = applicationScope,
+        newConversation = conversations::createConversation,
+        render = { id, prompt, kind, options ->
+            agent.send(id, prompt, AssistantMode.AGENT, kind.capability, media = options)
+        }
     )
 
     init {

@@ -125,6 +125,28 @@ interface AssistantDao {
     )
     suspend fun recentMessagesOutside(excludeConversationId: String, limit: Int): List<MessageSearchRow>
 
+    /**
+     * C7: answers that carry generated files, newest first, across every conversation. Each
+     * row brings the newest user message at or before it in the same conversation (the
+     * prompt that made the file). Read-only; Make's recent ink and the Inkwell use it.
+     */
+    @Query(
+        """
+        SELECT m.id AS messageId,
+               m.conversationId AS conversationId,
+               m.createdAt AS createdAt,
+               m.outputsJson AS outputsJson,
+               (SELECT u.content FROM messages u
+                 WHERE u.conversationId = m.conversationId AND u.role = 'USER' AND u.createdAt <= m.createdAt
+                 ORDER BY u.createdAt DESC LIMIT 1) AS prompt
+        FROM messages m
+        WHERE m.role = 'ASSISTANT' AND m.outputsJson NOT IN ('', '[]')
+        ORDER BY m.createdAt DESC
+        LIMIT :limit
+        """
+    )
+    fun observeRecentOutputs(limit: Int): Flow<List<OutputMessageRow>>
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND role = 'USER' ORDER BY createdAt DESC LIMIT 1")
     suspend fun latestUserMessage(conversationId: String): MessageEntity?
 

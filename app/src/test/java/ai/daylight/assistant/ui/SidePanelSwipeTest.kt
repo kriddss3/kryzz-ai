@@ -58,6 +58,7 @@ class SidePanelSwipeTest {
         assertThat(sidePanelOpenAllowedForRoute("chat/{conversationId}?mode={mode}&capability={capability}&voice={voice}")).isTrue()
         assertThat(sidePanelOpenAllowedForRoute("onboarding")).isTrue()
         assertThat(sidePanelOpenAllowedForRoute("boot")).isTrue()
+        assertThat(sidePanelOpenAllowedForRoute(Routes.MAKE)).isTrue()
     }
 
     @Test

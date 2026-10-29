@@ -111,6 +111,7 @@ fun defaultInkLine(route: String?): InkLine {
     return when {
         r == Routes.HOME -> InkLines.home(busyArms = 0)
         r == Routes.LINK -> InkLines.LINK
+        r == Routes.MAKE -> InkLine("MAKE READY")
         r == Routes.BOOT || r == Routes.CHAT || r.startsWith("chat/") -> InkLines.talk(generating = false)
         r == Routes.SETTINGS -> InkLine("TUNE")
         r == Routes.API -> InkLine("TUNE KEYS")

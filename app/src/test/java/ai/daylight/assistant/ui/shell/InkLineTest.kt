@@ -115,6 +115,7 @@ class InkLineTest {
         assertThat(defaultInkLine(Routes.API).text).isEqualTo("TUNE KEYS")
         assertThat(defaultInkLine(Routes.models()).text).isEqualTo("TUNE MODELS")
         assertThat(defaultInkLine(Routes.CRON).text).isEqualTo("TUNE ROUTINES")
+        assertThat(defaultInkLine(Routes.MAKE).text).isEqualTo("MAKE READY")
         assertThat(defaultInkLine(null).text).isEmpty()
         listOf(
             Routes.SETTINGS, Routes.API, Routes.PERSONA, Routes.TOOLS, Routes.PRIVACY, Routes.APPEARANCE,

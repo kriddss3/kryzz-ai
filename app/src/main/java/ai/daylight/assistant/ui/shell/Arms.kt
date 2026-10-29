@@ -7,13 +7,13 @@ import ai.daylight.assistant.ui.Routes
  * The eight arms of the squid, in rail order (top to bottom). Each arm is one capability.
  *
  * [route] is the working destination the arm opens today. Null means the arm is unlit: it
- * is drawn as a hollow ring and only says "not yet". Make, Find and Crew light up in their
- * own phases. Link stays unlit for good (a future project): it opens its COMING LATER page
+ * is drawn as a hollow ring and only says "not yet". Make lit up in C7; Find and Crew light
+ * up in their own phases. Link stays unlit for good (a future project): it opens its COMING LATER page
  * (Routes.LINK), which is not a working screen.
  */
 enum class Arm(val label: String, val route: String?) {
     TALK("Talk", Routes.CHAT),
-    MAKE("Make", null),
+    MAKE("Make", Routes.MAKE),
     FIND("Find", null),
     CREW("Crew", null),
     RUN("Run", Routes.CHAT),
@@ -41,6 +41,7 @@ fun armForRoute(route: String?, mode: AssistantMode = AssistantMode.CHAT, voice:
         else -> Arm.TALK
     }
     route == Routes.SETTINGS -> Arm.TUNE
+    route == Routes.MAKE -> Arm.MAKE
     route == Routes.LINK -> Arm.LINK
     else -> null
 }

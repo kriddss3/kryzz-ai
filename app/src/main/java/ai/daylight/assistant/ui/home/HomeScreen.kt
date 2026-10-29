@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.ui.HomeViewModel
+import ai.daylight.assistant.ui.make.MakeModel
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStripEffect
@@ -41,6 +42,8 @@ fun HomeScreen(
     val threads by vm.threads.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val plan by vm.agentPlan.collectAsStateWithLifecycle()
+    val makeRender by vm.makeRender.collectAsStateWithLifecycle()
+    val lastMedia by vm.lastMedia.collectAsStateWithLifecycle()
     val strip = LocalInkStrip.current
     val busy = strip?.busyArms.orEmpty()
     // Minute clock: the date block and "last 09:12" stay right while Home is open.
@@ -58,6 +61,9 @@ fun HomeScreen(
         runPlan = plan?.takeIf { strip?.isBusy(it.conversationId) == true },
         quality = settings.agentQuality,
         costCapCents = settings.costCapCents,
+        makeKind = makeRender?.takeIf { it.running }?.kind,
+        lastMakeKind = lastMedia?.let { MakeModel.kindOf(it.output) },
+        lastMakeAt = lastMedia?.createdAt,
         now = now,
         zone = zone
     )

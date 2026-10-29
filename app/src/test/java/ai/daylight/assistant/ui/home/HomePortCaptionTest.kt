@@ -3,6 +3,7 @@ package ai.daylight.assistant.ui.home
 import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.domain.AgentPlan
 import ai.daylight.assistant.domain.AgentQuality
+import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.PlanStep
 import ai.daylight.assistant.domain.PlanStepStatus
 import ai.daylight.assistant.ui.shell.Arm
@@ -64,11 +65,24 @@ class HomePortCaptionTest {
 
     @Test fun unbuiltArmsAreUnlitAndLinkCarriesTheLaterTag() {
         val ports = HomeBoard.ports(base).associateBy { it.arm }
-        listOf(Arm.MAKE, Arm.FIND, Arm.CREW, Arm.LINK).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.UNLIT) }
-        listOf(Arm.TALK, Arm.RUN, Arm.VOICE, Arm.TUNE).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.IDLE) }
+        listOf(Arm.FIND, Arm.CREW, Arm.LINK).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.UNLIT) }
+        listOf(Arm.TALK, Arm.MAKE, Arm.RUN, Arm.VOICE, Arm.TUNE).forEach { assertThat(ports.getValue(it).state).isEqualTo(PortState.IDLE) }
         assertThat(ports.filterValues { it.later }.keys).containsExactly(Arm.LINK)
         assertThat(ports.getValue(Arm.LINK).caption).isEqualTo("Essential, coming later")
-        assertThat(ports.getValue(Arm.MAKE).caption).endsWith("not yet")
+        assertThat(ports.getValue(Arm.FIND).caption).endsWith("not yet")
+    }
+
+    @Test fun makeSaysWhatIsRenderingOrWhenTheLastWasMade() {
+        assertThat(HomeBoard.caption(Arm.MAKE, base)).isEqualTo("Images and clips")
+        assertThat(HomeBoard.caption(Arm.MAKE, base.copy(lastMakeKind = MakeKind.IMAGE, lastMakeAt = at(26, 9, 40))))
+            .isEqualTo("Last image 09:40")
+        assertThat(HomeBoard.caption(Arm.MAKE, base.copy(lastMakeKind = MakeKind.VIDEO, lastMakeAt = at(25, 20, 0))))
+            .isEqualTo("Last clip yesterday")
+        val busy = base.copy(busyArms = setOf(Arm.MAKE), makeKind = MakeKind.VIDEO, lastMakeAt = at(26, 9, 40))
+        assertThat(HomeBoard.caption(Arm.MAKE, busy)).isEqualTo("Rendering a clip")
+        assertThat(HomeBoard.caption(Arm.MAKE, busy.copy(makeKind = MakeKind.IMAGE))).isEqualTo("Rendering an image")
+        assertThat(HomeBoard.port(Arm.MAKE, busy).state).isEqualTo(PortState.BUSY)
+        assertThat(HomeBoard.status(busy)).isEqualTo("Make is rendering a clip.")
     }
 
     @Test fun busyArmsLightTheirPortsButUnlitArmsStayUnlit() {

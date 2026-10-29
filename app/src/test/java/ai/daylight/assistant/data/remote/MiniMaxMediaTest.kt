@@ -35,6 +35,11 @@ class MiniMaxMediaTest {
         assertThat(encoded).doesNotContain("base64")
     }
 
+    @Test fun imageRequestCarriesMakesRatio() {
+        val encoded = appJson.encodeToString(miniMaxImageRequest(model = "image-01", prompt = "a lantern", aspectRatio = "3:4"))
+        assertThat(encoded).contains("\"aspect_ratio\":\"3:4\"")
+    }
+
     @Test fun imageResponseAcceptsUrlOnlyPayload() {
         val parsed = appJson.decodeFromString<MiniMaxImageResponse>(
             """{"data":{"image_urls":["https://cdn.example.com/fox.jpg"]},"base_resp":{"status_code":0,"status_msg":"success"}}"""

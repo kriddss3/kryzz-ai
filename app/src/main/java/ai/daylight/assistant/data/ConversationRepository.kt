@@ -12,8 +12,11 @@ import ai.daylight.assistant.domain.ExportConversation
 import ai.daylight.assistant.domain.ExportConversationFolder
 import ai.daylight.assistant.domain.ExportMessage
 import ai.daylight.assistant.domain.GeneratedOutput
+import ai.daylight.assistant.domain.RecentOutput
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -24,6 +27,20 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
     suspend fun conversation(id: String) = dao.conversation(id)
     fun observeConversation(id: String): Flow<ConversationEntity?> = dao.observeConversation(id)
     fun folders(): Flow<List<ConversationFolderEntity>> = dao.observeConversationFolders()
+
+    /**
+     * C7: the newest generated files across every conversation, newest answer first, from at
+     * most [limit] answers (an answer can carry several files, kept in their own order). A
+     * row whose file list can't be read is skipped rather than failing the whole list.
+     */
+    fun recentOutputs(limit: Int = 40): Flow<List<RecentOutput>> = dao.observeRecentOutputs(limit)
+        .distinctUntilChanged()
+        .map { rows ->
+            rows.flatMap { row ->
+                val outputs = runCatching { json.decodeFromString<List<GeneratedOutput>>(row.outputsJson) }.getOrDefault(emptyList())
+                outputs.map { RecentOutput(it, row.messageId, row.conversationId, row.createdAt, row.prompt?.trim()?.takeIf(String::isNotEmpty)) }
+            }
+        }
 
     suspend fun createConversation(): String {
         val id = UUID.randomUUID().toString()
