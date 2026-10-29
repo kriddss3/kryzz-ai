@@ -177,17 +177,26 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
         }
         val importableConversations = bundle.conversations.filter { it.id.isNotBlank() }
         importableConversations.forEach { c ->
-            val importedTitle = c.title.trim().take(100).ifBlank { "Imported conversation" }
-            dao.upsertConversation(
-                ConversationEntity(
-                    c.id, importedTitle, c.createdAt, c.updatedAt, archived = false,
-                    searchDepth = c.searchDepth.coerceIn(1, 3),
-                    searchWidth = c.searchWidth.coerceIn(1, 5),
-                    pinned = c.pinned,
-                    folderId = c.folderId?.takeIf { it in importedFolderIds }
+            // C10: a chat that is still on this phone is merged, not replaced. Replacing its
+            // row deleted all of its messages (they cascade with it), so restoring on the same
+            // phone lost anything newer than the backup, Run's work log, and the links to
+            // every image and file (a backup carries no files). Such a chat keeps its own
+            // title, folder and messages and only gains the messages it doesn't have.
+            val onPhone = dao.conversation(c.id) != null
+            val have = if (onPhone) dao.messages(c.id).mapTo(HashSet()) { it.id } else emptySet()
+            if (!onPhone) {
+                val importedTitle = c.title.trim().take(100).ifBlank { "Imported conversation" }
+                dao.upsertConversation(
+                    ConversationEntity(
+                        c.id, importedTitle, c.createdAt, c.updatedAt, archived = false,
+                        searchDepth = c.searchDepth.coerceIn(1, 3),
+                        searchWidth = c.searchWidth.coerceIn(1, 5),
+                        pinned = c.pinned,
+                        folderId = c.folderId?.takeIf { it in importedFolderIds }
+                    )
                 )
-            )
-            dao.upsertMessages(c.messages.map { m ->
+            }
+            dao.upsertMessages(c.messages.filter { it.id !in have }.map { m ->
                 MessageEntity(
                     id = m.id,
                     conversationId = c.id,

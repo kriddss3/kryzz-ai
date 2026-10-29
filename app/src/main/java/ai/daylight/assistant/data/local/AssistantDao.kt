@@ -10,7 +10,10 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface AssistantDao {
     @Query("""
-        SELECT c.*, (SELECT content FROM messages m WHERE m.conversationId = c.id AND m.role != 'TOOL' ORDER BY createdAt DESC LIMIT 1) AS preview
+        SELECT c.*, (SELECT content FROM messages m WHERE m.conversationId = c.id AND m.role != 'TOOL' ORDER BY createdAt DESC LIMIT 1) AS preview,
+               (SELECT u.mode FROM messages u WHERE u.conversationId = c.id AND u.role = 'USER' ORDER BY u.createdAt DESC LIMIT 1) AS lastMode,
+               (SELECT u.capability FROM messages u WHERE u.conversationId = c.id AND u.role = 'USER' ORDER BY u.createdAt DESC LIMIT 1) AS lastCapability,
+               (SELECT b.name FROM bots b WHERE b.conversationId = c.id LIMIT 1) AS botName
         FROM conversations c
         WHERE c.archived = :archived
           AND (:query = '' OR c.title LIKE '%' || :query || '%' OR EXISTS(SELECT 1 FROM messages m WHERE m.conversationId = c.id AND m.content LIKE '%' || :query || '%'))

@@ -29,7 +29,11 @@ data class MediaFacts(val width: Int = 0, val height: Int = 0, val durationMs: L
  * calls that touch a file run off the main thread (the callers use Dispatchers.IO).
  */
 internal object MakeMedia {
-    private val thumbs = object : LruCache<String, ImageBitmap>(8 * 1024 * 1024) {
+    // The Inkwell shows tiles a third of the screen wide, so the cache holds a screenful
+    // or two of those: an eighth of the app's memory, between 8 and 32 MB.
+    private val thumbs = object : LruCache<String, ImageBitmap>(
+        (Runtime.getRuntime().maxMemory() / 8).coerceIn(8L * 1024 * 1024, 32L * 1024 * 1024).toInt()
+    ) {
         override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height * 4
     }
 
@@ -93,7 +97,7 @@ internal object MakeMedia {
         context.contentResolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } } != null
     }.getOrDefault(false)
 
-    /** The share sheet with the file itself, or its link when only a link exists. */
+    /** The share sheet with the file itself, or its link (or text) when there is no file. */
     fun share(context: Context, output: GeneratedOutput) {
         val uri = fileUri(context, output)
         val send = if (uri != null) {
@@ -103,8 +107,9 @@ internal object MakeMedia {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 .apply { clipData = ClipData.newRawUri(output.fileName, uri) }
         } else {
-            val link = output.remoteUrl ?: return
-            Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link)
+            // Only a link, or a result that exists only as text (the Inkwell shares those too).
+            val text = output.remoteUrl ?: output.content ?: return
+            Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
         }
         runCatching {
             context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

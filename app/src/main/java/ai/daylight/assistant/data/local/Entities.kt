@@ -64,7 +64,12 @@ data class ConversationSummary(
     val searchWidth: Int,
     val preview: String?,
     val pinned: Boolean = false,
-    val folderId: String? = null
+    val folderId: String? = null,
+    /** C10: the newest question's mode and capability, so the library can name the arm. */
+    val lastMode: String? = null,
+    val lastCapability: String? = null,
+    /** C10: the bot whose chat this is (Crew), or null. */
+    val botName: String? = null
 )
 
 /** One earlier chat message used for local past-chat search. */

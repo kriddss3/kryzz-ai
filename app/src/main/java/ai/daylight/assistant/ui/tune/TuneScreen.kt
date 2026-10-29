@@ -211,6 +211,8 @@ fun TuneScreen(
             onClick = { onOpen(Routes.MEMORY) }
         )
         TuneRow(R.drawable.ic_kz_skill, "Skills", "Reusable skills and tools", onClick = onSkills)
+        // C10: Routines used to open from the chat drawer's Cron button, which is gone.
+        TuneRow(R.drawable.ic_kz_routine, "Routines", "Prompts that run on a schedule", onClick = { onOpen(Routes.CRON) })
         TuneRow(R.drawable.ic_kz_log, "Model catalog", "Every model your key can use", onClick = onModelCatalog)
         TuneRow(R.drawable.ic_kz_shield, "Data and usage", "What is stored, clear local data", onClick = { onOpen(Routes.PRIVACY) })
         TuneRow(

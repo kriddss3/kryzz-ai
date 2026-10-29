@@ -61,6 +61,7 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Job
+import ai.daylight.assistant.ui.inkwell.InkwellModel
 import ai.daylight.assistant.ui.make.MakeModel
 import ai.daylight.assistant.ui.make.MakeViewModel
 import ai.daylight.assistant.ui.find.FindViewModel
@@ -84,6 +85,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -170,11 +172,24 @@ class HomeViewModel(container: AppContainer) : ViewModel() {
     val agentPlan = container.agent.agentPlan
     val makeRender = container.make.current
 
+    private val recentOutputs = container.conversations.recentOutputs(MakeModel.RECENT_LIMIT)
+        .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
+
     /** The newest image or clip in the history, for the Make port's "Last image 10:21". */
-    val lastMedia: StateFlow<RecentOutput?> = container.conversations.recentOutputs(MakeModel.RECENT_LIMIT)
+    val lastMedia: StateFlow<RecentOutput?> = recentOutputs
         .map { list -> list.firstOrNull { MakeModel.isMedia(it.output) } }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * C10: the Inkwell button's badge, the pieces made since the Inkwell last showed them
+     * ("" for none, up to "9+"). The recent window holds plenty for a badge that stops at 9+.
+     */
+    val inkBadge: StateFlow<String> = combine(recentOutputs, container.preferences.inkwellSeenAt) { list, seenAt ->
+        InkwellModel.badge(InkwellModel.newCount(list, seenAt))
+    }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 
     /** Crew's bots, who is working now, and their switched-on routines (for "next run"). */
     val crew: StateFlow<HomeCrew> = combine(container.bots.bots(), container.bots.routines(), container.crew.work) { bots, routines, work ->
@@ -310,8 +325,10 @@ class ConversationListViewModel(private val container: AppContainer) : ViewModel
     fun create(onCreated: (String) -> Unit) = viewModelScope.launch { onCreated(container.conversations.createConversation()) }
     fun rename(id: String, title: String) = viewModelScope.launch { container.conversations.rename(id, title) }
     fun pin(id: String, value: Boolean) = viewModelScope.launch { container.conversations.pin(id, value) }
-    fun createFolder(name: String) = viewModelScope.launch {
+    /** Creates a folder; with [moveConversationId] that chat moves into it straight away. */
+    fun createFolder(name: String, moveConversationId: String? = null) = viewModelScope.launch {
         runCatching { container.conversations.createFolder(name) }
+            .onSuccess { id -> if (moveConversationId != null) container.conversations.assignFolder(moveConversationId, id) }
             .onFailure { notice.value = it.message ?: "The folder could not be created." }
     }
     fun renameFolder(id: String, name: String) = viewModelScope.launch {
@@ -2183,6 +2200,7 @@ class DaylightViewModelFactory(private val container: AppContainer) : ViewModelP
         MakeViewModel::class.java -> MakeViewModel(container)
         FindViewModel::class.java -> FindViewModel(container)
         ai.daylight.assistant.ui.crew.CrewViewModel::class.java -> ai.daylight.assistant.ui.crew.CrewViewModel(container)
+        ai.daylight.assistant.ui.inkwell.InkwellViewModel::class.java -> ai.daylight.assistant.ui.inkwell.InkwellViewModel(container)
         else -> throw IllegalArgumentException("Unknown ViewModel ${modelClass.name}")
     } as T
 }

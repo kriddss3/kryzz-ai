@@ -39,7 +39,7 @@ class HomeRoutesTest {
         assertThat(InkLines.home(1)).isEqualTo(InkLine("1 ARM WORKING", live = true))
         assertThat(InkLines.home(2)).isEqualTo(InkLine("2 ARMS WORKING", live = true))
         // Every line fits the 5x7 font unchanged.
-        listOf(InkLines.home(3), InkLines.LINK, InkLines.INKWELL_NOT_YET).forEach {
+        listOf(InkLines.home(3), InkLines.LINK, InkLines.inkwell(12), InkLines.inkwell(1, "CLIP")).forEach {
             assertThat(InkLine.sanitize(it.text)).isEqualTo(it.text)
         }
     }

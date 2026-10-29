@@ -95,8 +95,12 @@ object InkLines {
     /** Link is a future project: nothing is connected. */
     val LINK = InkLine("LINK NOT CONNECTED")
 
-    /** The Inkwell button is unlit until it arrives (C10). */
-    val INKWELL_NOT_YET = InkLine("INKWELL NOT YET")
+    /** The Inkwell's line: how many pieces the feed shows, e.g. "INKWELL 9 IMAGES". */
+    fun inkwell(count: Int, noun: String = "PIECE"): InkLine = when {
+        count <= 0 -> InkLine("INKWELL EMPTY")
+        count == 1 -> InkLine("INKWELL 1 $noun")
+        else -> InkLine("INKWELL $count ${noun}S")
+    }
 
     /** Shown briefly when an unlit arm is tapped: unlit means "not yet". */
     fun notYet(arm: Arm): InkLine = InkLine("${arm.label} NOT YET".uppercase())
@@ -114,6 +118,7 @@ fun defaultInkLine(route: String?): InkLine {
         r == Routes.MAKE -> InkLine("MAKE READY")
         r == Routes.FIND -> InkLine("FIND READY")
         r == Routes.CREW || r == Routes.BOT -> InkLine("CREW READY")
+        r == Routes.INKWELL -> InkLine("INKWELL")
         r == Routes.BOOT || r == Routes.CHAT || r.startsWith("chat/") -> InkLines.talk(generating = false)
         r == Routes.SETTINGS -> InkLine("TUNE")
         r == Routes.API -> InkLine("TUNE KEYS")

@@ -4,81 +4,43 @@ import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitHorizontalDragOrCancellation
-import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.CreateNewFolder
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Upload
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -94,24 +56,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
@@ -119,12 +76,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import ai.daylight.assistant.ui.dot.DotColors
 import ai.daylight.assistant.BuildConfig
+import ai.daylight.assistant.R
 import ai.daylight.assistant.data.local.ConversationFolderEntity
 import ai.daylight.assistant.data.local.ConversationSummary
 import ai.daylight.assistant.domain.AssistantMode
+import ai.daylight.assistant.ui.crew.rememberMinuteClock
+import ai.daylight.assistant.ui.dot.DotColors
+import ai.daylight.assistant.ui.dot.DotConfirmDialog
+import ai.daylight.assistant.ui.dot.DotField
+import ai.daylight.assistant.ui.dot.DotIconButton
+import ai.daylight.assistant.ui.dot.DotSnackbarHost
+import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.library.BackupSheet
+import ai.daylight.assistant.ui.library.ChatActionsSheet
+import ai.daylight.assistant.ui.library.FolderPickSheet
+import ai.daylight.assistant.ui.library.FolderStrip
+import ai.daylight.assistant.ui.library.LibraryEmpty
+import ai.daylight.assistant.ui.library.LibraryGroupHeader
+import ai.daylight.assistant.ui.library.LibraryHeader
+import ai.daylight.assistant.ui.library.LibraryModel
+import ai.daylight.assistant.ui.library.LibraryRow
+import ai.daylight.assistant.ui.library.NameDialog
+import ai.daylight.assistant.ui.library.NewChatPill
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import java.time.ZoneId
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -480,18 +456,24 @@ private const val PANEL_OPEN_MS = 360
 private const val PANEL_CLOSE_MS = 300
 private val PANEL_ENGAGE_DP = 4.dp
 
+/**
+ * The chat library drawer (components.md section 11, C10). CHATS in dot text with the count
+ * and the backup menu, a search field, the NEW CHAT pill, folders, then the chats: pinned
+ * first, then one block per day, each row 64dp with a mono caption. The open chat
+ * ([activeConversationId]) has a 2dp yellow bar. Starting Run, Voice or Routines lives on the
+ * rail and Home now, so the drawer only holds chats.
+ */
 @Composable
 fun KryzzLibraryPanel(
     vm: ConversationListViewModel,
     onOpen: (String) -> Unit,
     onNewChat: (AssistantMode) -> Unit,
-    onNewVoice: () -> Unit,
-    onCron: () -> Unit = {},
-    onSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    activeConversationId: String? = null,
     onClose: (() -> Unit)? = null,
     onDeleteConversation: (String) -> Unit = vm::delete
 ) {
+    val c = DotTheme.c
     val conversations by vm.conversations.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
@@ -499,17 +481,21 @@ fun KryzzLibraryPanel(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var backupMenu by remember { mutableStateOf(false) }
+    var backupSheet by remember { mutableStateOf(false) }
     var pendingExport by remember { mutableStateOf("") }
+    var actionsFor by remember { mutableStateOf<ConversationSummary?>(null) }
     var renameConversation by remember { mutableStateOf<ConversationSummary?>(null) }
     var deleteConversation by remember { mutableStateOf<ConversationSummary?>(null) }
     var assignConversation by remember { mutableStateOf<ConversationSummary?>(null) }
     var selectedFolderId by rememberSaveable { mutableStateOf<String?>(null) }
-    var createFolder by remember { mutableStateOf(false) }
+    // A new folder, optionally for a chat that moves into it ("" = no chat).
+    var createFolderFor by remember { mutableStateOf<String?>(null) }
     var renameFolder by remember { mutableStateOf<ConversationFolderEntity?>(null) }
     var deleteFolder by remember { mutableStateOf<ConversationFolderEntity?>(null) }
     var logoTaps by remember { mutableStateOf(LogoTapProgress()) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
+    val now = rememberMinuteClock()
+    val zone = remember { ZoneId.systemDefault() }
 
     val createBackup = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -563,9 +549,7 @@ fun KryzzLibraryPanel(
             selectedFolderId == null || conversation.folderId == selectedFolderId
         }
     }
-    val grouped = remember(visibleConversations) {
-        visibleConversations.groupBy { conversationDateSection(it.updatedAt) }
-    }
+    val groups = remember(visibleConversations, now) { LibraryModel.groups(visibleConversations, now, zone) }
     val selectedFolder = folders.firstOrNull { it.id == selectedFolderId }
     val hostClose = LocalSidePanelClose.current
     fun closePanelThen(action: () -> Unit) {
@@ -577,363 +561,186 @@ fun KryzzLibraryPanel(
     Surface(
         modifier = modifier.fillMaxHeight().testTag("library_panel"),
         shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
-        color = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        color = c.surface,
+        contentColor = c.textPrimary,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        border = BorderStroke(1.dp, c.border)
     ) {
         Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 14.dp, top = 12.dp, end = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable {
-                            val outcome = registerLogoTap(logoTaps, SystemClock.elapsedRealtime())
-                            logoTaps = outcome.progress
-                            if (outcome.openAbout) showAbout = true
-                        }
-                        .semantics { contentDescription = "Kryzz AI logo" }
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                LibraryHeader(
+                    count = conversations.size.takeIf { query.isBlank() } ?: 0,
+                    onTitleTap = {
+                        val outcome = registerLogoTap(logoTaps, SystemClock.elapsedRealtime())
+                        logoTaps = outcome.progress
+                        if (outcome.openAbout) showAbout = true
+                    },
+                    onBackup = { backupSheet = true },
+                    onClose = if (onClose != null) ({ hostClose(); onClose() }) else null
+                )
+                DotField(
+                    value = query,
+                    onValueChange = { vm.query.value = it },
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp),
+                    placeholder = "Search chats",
+                    leadingIcon = R.drawable.ic_kz_search,
+                    trailing = if (query.isNotEmpty()) {
+                        { DotIconButton(R.drawable.ic_kz_close, "Clear search", { vm.query.value = "" }, tint = c.textTertiary, iconSize = 18.dp) }
+                    } else {
+                        null
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    fieldModifier = Modifier.testTag("library_search")
+                )
+                NewChatPill(
+                    onClick = { closePanelThen { onNewChat(AssistantMode.CHAT) } },
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 8.dp).testTag("library_new_chat")
+                )
+
+                LazyColumn(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
-                    KryzzMark(Modifier.size(32.dp), contentDescription = null)
-                    Text("KRYZZ AI", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.titleSmall)
-                }
-                Spacer(Modifier.weight(1f))
-                Box {
-                    IconButton(
-                        onClick = { backupMenu = true },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(Icons.Outlined.MoreVert, "Backup and restore")
-                    }
-                    DropdownMenu(expanded = backupMenu, onDismissRequest = { backupMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Export chat backup") },
-                            leadingIcon = { Icon(Icons.Outlined.Download, null) },
-                            onClick = {
-                                backupMenu = false
-                                vm.export { json ->
-                                    pendingExport = json
-                                    createBackup.launch("kryzz-ai-chat-backup.json")
-                                }
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Import chat backup") },
-                            leadingIcon = { Icon(Icons.Outlined.Upload, null) },
-                            onClick = {
-                                backupMenu = false
-                                openBackup.launch(arrayOf("application/json"))
-                            }
+                    item(key = "folders") {
+                        FolderStrip(
+                            folders = folders,
+                            selectedId = selectedFolderId,
+                            onSelect = { selectedFolderId = it },
+                            onCreate = { createFolderFor = "" },
+                            onRename = { renameFolder = it },
+                            onDelete = { deleteFolder = it }
                         )
                     }
-                }
-                if (onClose != null) {
-                    IconButton(onClick = { hostClose(); onClose?.invoke() }, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.Close, "Close menu", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Box(Modifier.weight(1f)) {
-                    PanelModeButton("Chat", Icons.Outlined.ChatBubbleOutline, Modifier.testTag("library_new_chat")) {
-                        closePanelThen { onNewChat(AssistantMode.CHAT) }
-                    }
-                }
-                Box(Modifier.weight(1f)) {
-                    PanelModeButton("Agent", Icons.Outlined.AutoAwesome, Modifier.testTag("library_new_agent")) {
-                        closePanelThen { onNewChat(AssistantMode.AGENT) }
-                    }
-                }
-                Box(Modifier.weight(1f)) {
-                    PanelModeButton("Voice", Icons.Outlined.Mic, Modifier.testTag("library_new_voice")) {
-                        closePanelThen(onNewVoice)
-                    }
-                }
-                Box(Modifier.weight(1f)) {
-                    PanelModeButton("Cron", Icons.Outlined.Schedule, Modifier.testTag("library_cron")) {
-                        closePanelThen(onCron)
-                    }
-                }
-            }
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = { vm.query.value = it },
-                placeholder = { Text("Search chats") },
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-                shape = RoundedCornerShape(16.dp)
-            )
-
-            LazyColumn(
-                Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(start = 20.dp, end = 8.dp, bottom = 12.dp)
-            ) {
-                item(key = "folders_header") {
-                    Row(
-                        Modifier.fillMaxWidth().padding(top = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "FOLDERS",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.weight(1f))
-                        if (selectedFolder != null) {
-                            IconButton(onClick = { renameFolder = selectedFolder }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.Edit, "Rename ${selectedFolder.name}", Modifier.size(18.dp))
+                    if (visibleConversations.isEmpty()) {
+                        item(key = "chat_panel_empty_$selectedFolderId") {
+                            val (words, body) = LibraryModel.emptyWords(query, selectedFolder?.name)
+                            val icon = when {
+                                query.isNotBlank() -> R.drawable.ic_kz_search_dot
+                                selectedFolder != null -> R.drawable.ic_kz_folder_dot
+                                else -> R.drawable.ic_kz_history_dot
                             }
-                            IconButton(onClick = { deleteFolder = selectedFolder }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.Delete, "Delete ${selectedFolder.name}", Modifier.size(18.dp))
-                            }
-                        }
-                        IconButton(onClick = { createFolder = true }, modifier = Modifier.size(48.dp).testTag("create_folder")) {
-                            Icon(Icons.Outlined.Add, "Create folder", Modifier.size(20.dp))
-                        }
-                    }
-                }
-
-                item(key = "folder_list") {
-                    if (folders.isEmpty()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { createFolder = true }.padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                            Text(
-                                "Create a folder to organise related chats.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            LibraryEmpty(icon, words, body)
                         }
                     } else {
-                        LazyRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(folders, key = { it.id }) { folder ->
-                                FilterChip(
-                                    selected = selectedFolderId == folder.id,
-                                    onClick = {
-                                        selectedFolderId = folder.id
-                                    },
-                                    leadingIcon = { Icon(Icons.Outlined.FolderOpen, null, Modifier.size(16.dp)) },
-                                    label = { Text(folder.name, maxLines = 1) }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (visibleConversations.isEmpty()) {
-                    item(key = "chat_panel_empty_$selectedFolderId") {
-                        Column(
-                            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                when {
-                                    query.isNotBlank() -> "No results"
-                                    selectedFolder != null -> "${selectedFolder.name} is empty"
-                                    else -> "Start your first chat"
-                                },
-                                style = MaterialTheme.typography.titleMedium,
-                                textAlign = TextAlign.Center
-                            )
-                            Text(
-                                when {
-                                    query.isNotBlank() -> "Try a different title or phrase."
-                                    selectedFolder != null -> "Move a chat here from its actions menu."
-                                    else -> "New conversations will appear here."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                } else {
-                    LibraryDateSection.entries.forEach { section ->
-                        val sectionItems = grouped[section].orEmpty()
-                        if (sectionItems.isNotEmpty()) {
-                            item(key = "chat_panel_section_${section.name}") {
-                                Text(
-                                    section.label,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 12.dp, bottom = 2.dp)
-                                )
-                            }
-                            items(sectionItems, key = { it.id }) { item ->
-                                ConversationRow(
+                        groups.forEach { group ->
+                            item(key = "chat_panel_group_${group.key}") { LibraryGroupHeader(group.label) }
+                            items(group.items, key = { it.id }) { item ->
+                                LibraryRow(
                                     item = item,
-                                    section = section,
+                                    caption = LibraryModel.caption(item, now, zone, withDate = item.pinned),
+                                    active = item.id == activeConversationId,
                                     onOpen = { closePanelThen { onOpen(item.id) } },
-                                    onPin = { vm.pin(item.id, !item.pinned) },
-                                    onRename = { renameConversation = item },
-                                    onMove = { assignConversation = item },
-                                    onDelete = { deleteConversation = item },
-                                    horizontalPadding = 0.dp
+                                    onActions = { actionsFor = item }
                                 )
                             }
                         }
                     }
                 }
             }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
-            PanelFooterButton(
-                Icons.Outlined.Settings,
-                "Settings",
-                { closePanelThen(onSettings) },
-                Modifier.testTag("library_settings")
-            )
-        }
-            SnackbarHost(
-                hostState = snackbar,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp, vertical = 72.dp)
+            DotSnackbarHost(
+                snackbar,
+                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 16.dp)
             )
         }
     }
 
+    actionsFor?.let { item ->
+        ChatActionsSheet(
+            item = item,
+            onPin = { vm.pin(item.id, !item.pinned) },
+            onRename = { renameConversation = item },
+            onMove = { assignConversation = item },
+            onDelete = { deleteConversation = item },
+            onDismiss = { actionsFor = null }
+        )
+    }
+    if (backupSheet) {
+        BackupSheet(
+            onExport = {
+                vm.export { json ->
+                    pendingExport = json
+                    createBackup.launch("kryzz-ai-chat-backup.json")
+                }
+            },
+            onImport = { openBackup.launch(arrayOf("application/json")) },
+            onDismiss = { backupSheet = false }
+        )
+    }
     renameConversation?.let { item ->
-        RenameDialog(initial = item.title, onDismiss = { renameConversation = null }) { newTitle ->
+        NameDialog(
+            title = "Rename chat",
+            label = "Title",
+            initial = item.title,
+            onDismiss = { renameConversation = null }
+        ) { newTitle ->
             vm.rename(item.id, newTitle)
             renameConversation = null
         }
     }
     deleteConversation?.let { item ->
-        AlertDialog(
-            onDismissRequest = { deleteConversation = null },
-            title = { Text("Delete conversation?") },
-            text = { Text("This removes “${item.title}” and its messages from this device. This cannot be undone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteConversation(item.id)
-                    deleteConversation = null
-                }) { Text("Delete") }
+        DotConfirmDialog(
+            title = "Delete this chat?",
+            body = "This removes “${item.title}” and its messages from this phone. It cannot be undone.",
+            confirm = "Delete",
+            destructive = true,
+            onConfirm = {
+                onDeleteConversation(item.id)
+                deleteConversation = null
             },
-            dismissButton = { TextButton(onClick = { deleteConversation = null }) { Text("Cancel") } }
+            onDismiss = { deleteConversation = null }
         )
     }
-    if (createFolder) {
-        FolderNameDialog(title = "Create folder", onDismiss = { createFolder = false }) { name ->
-            vm.createFolder(name)
-            createFolder = false
+    createFolderFor?.let { forChat ->
+        NameDialog(
+            title = "New folder",
+            label = "Folder name",
+            maxLength = 48,
+            onDismiss = { createFolderFor = null }
+        ) { name ->
+            vm.createFolder(name, moveConversationId = forChat.ifEmpty { null })
+            createFolderFor = null
         }
     }
     renameFolder?.let { folder ->
-        FolderNameDialog(title = "Rename folder", initial = folder.name, onDismiss = { renameFolder = null }) { name ->
+        NameDialog(
+            title = "Rename folder",
+            label = "Folder name",
+            initial = folder.name,
+            maxLength = 48,
+            onDismiss = { renameFolder = null }
+        ) { name ->
             vm.renameFolder(folder.id, name)
             renameFolder = null
         }
     }
     deleteFolder?.let { folder ->
-        AlertDialog(
-            onDismissRequest = { deleteFolder = null },
-            title = { Text("Delete ${folder.name}?") },
-            text = { Text("Chats in this folder will return to All. No conversations will be deleted.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteFolder(folder.id)
-                    selectedFolderId = null
-                    deleteFolder = null
-                }) { Text("Delete folder") }
+        DotConfirmDialog(
+            title = "Delete ${folder.name}?",
+            body = "Its chats go back to All. No chat is deleted.",
+            confirm = "Delete folder",
+            destructive = true,
+            onConfirm = {
+                vm.deleteFolder(folder.id)
+                selectedFolderId = null
+                deleteFolder = null
             },
-            dismissButton = { TextButton(onClick = { deleteFolder = null }) { Text("Cancel") } }
+            onDismiss = { deleteFolder = null }
         )
     }
     assignConversation?.let { conversation ->
-        FolderAssignmentDialog(
-            conversation = conversation,
+        FolderPickSheet(
+            currentFolderId = conversation.folderId,
             folders = folders,
+            onPick = { folderId ->
+                vm.assignFolder(conversation.id, folderId)
+                assignConversation = null
+            },
+            onNewFolder = { createFolderFor = conversation.id },
             onDismiss = { assignConversation = null }
-        ) { folderId ->
-            vm.assignFolder(conversation.id, folderId)
-            assignConversation = null
-        }
+        )
     }
     if (showAbout) GalacticAboutDialog(onDismiss = { showAbout = false })
-}
-
-@Composable
-private fun FolderNameDialog(
-    title: String,
-    initial: String = "",
-    onDismiss: () -> Unit,
-    onSave: (String) -> Unit
-) {
-    var value by remember(initial) { mutableStateOf(initial) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it.take(48) },
-                label = { Text("Folder name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(value) }, enabled = value.isNotBlank()) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
-
-@Composable
-private fun FolderAssignmentDialog(
-    conversation: ConversationSummary,
-    folders: List<ConversationFolderEntity>,
-    onDismiss: () -> Unit,
-    onSelect: (String?) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Move to folder") },
-        text = {
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
-                item(key = "no_folder") {
-                    DropdownMenuItem(
-                        text = { Text("No folder") },
-                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) },
-                        trailingIcon = {
-                            if (conversation.folderId == null) Text("Current", style = MaterialTheme.typography.labelSmall)
-                        },
-                        onClick = { onSelect(null) }
-                    )
-                }
-                items(folders, key = { it.id }) { folder ->
-                    DropdownMenuItem(
-                        text = { Text(folder.name) },
-                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) },
-                        trailingIcon = {
-                            if (conversation.folderId == folder.id) Text("Current", style = MaterialTheme.typography.labelSmall)
-                        },
-                        onClick = { onSelect(folder.id) }
-                    )
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
 }
 
 @Composable
@@ -1092,47 +899,5 @@ private fun GalacticAboutStars(progress: Float, modifier: Modifier = Modifier) {
                 )
             )
         }
-    }
-}
-
-@Composable
-private fun PanelModeButton(
-    label: String,
-    icon: ImageVector,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun PanelFooterButton(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
     }
 }

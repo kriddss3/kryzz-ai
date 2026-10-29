@@ -319,9 +319,7 @@ class MidnightSignalUiTest {
                 KryzzLibraryPanel(
                     vm = viewModel,
                     onOpen = {},
-                    onNewChat = {},
-                    onNewVoice = {},
-                    onSettings = {}
+                    onNewChat = {}
                 )
             }
         }
@@ -343,7 +341,7 @@ class MidnightSignalUiTest {
         val viewModel = ConversationListViewModel(container)
         compose.setContent {
             DaylightTheme(ThemeMode.DARK) {
-                KryzzLibraryPanel(viewModel, onOpen = {}, onNewChat = {}, onNewVoice = {}, onSettings = {})
+                KryzzLibraryPanel(viewModel, onOpen = {}, onNewChat = {})
             }
         }
 

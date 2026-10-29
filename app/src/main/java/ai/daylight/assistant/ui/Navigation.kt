@@ -69,13 +69,14 @@ import ai.daylight.assistant.ui.crew.CrewScreen
 import ai.daylight.assistant.ui.crew.CrewViewModel
 import ai.daylight.assistant.ui.find.FindScreen
 import ai.daylight.assistant.ui.find.FindViewModel
+import ai.daylight.assistant.ui.inkwell.InkwellScreen
+import ai.daylight.assistant.ui.inkwell.InkwellViewModel
 import ai.daylight.assistant.ui.make.MakeScreen
 import ai.daylight.assistant.ui.make.MakeViewModel
 import ai.daylight.assistant.ui.make.makeModel
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.ArmRail
 import ai.daylight.assistant.ui.shell.ArmRailSpec
-import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStrip
 import ai.daylight.assistant.ui.shell.InkStripState
 import ai.daylight.assistant.ui.shell.LocalInkStrip
@@ -106,6 +107,8 @@ object Routes {
     /** Crew (C9): personal bots, and one bot's page. */
     const val CREW = "crew"
     const val BOT = "crew/{botId}"
+    /** The Inkwell (C10): everything Kryzz has made. Opens from Home's button and the ink strip. */
+    const val INKWELL = "inkwell"
     const val BOOT = "boot"
     const val ONBOARDING = "onboarding"
     const val LLMS = "llms"
@@ -433,6 +436,15 @@ fun AppNavigation(
             }
         }
         /**
+         * The Inkwell opens on top of whatever is showing (a running chat keeps going under
+         * it), and Back returns there. Tapping the strip on the Inkwell itself does nothing.
+         */
+        fun openInkwell() {
+            panelOpen = false
+            if (currentRouteState.value == Routes.INKWELL) return
+            nav.navigate(Routes.INKWELL) { launchSingleTop = true }
+        }
+        /**
          * The Home composer: a new conversation opens with the text and sends it once.
          * [capability] null is Talk; IMAGE or VIDEO is the one-tap "make" switch, which
          * starts the render in Make (in its own conversation) and opens Make on it.
@@ -489,15 +501,7 @@ fun AppNavigation(
                     vm = libraryVm,
                     onOpen = ::openConversationFromLibrary,
                     onNewChat = { mode -> newConversationFromLibrary(mode) },
-                    onNewVoice = { newConversationFromLibrary(AssistantMode.CHAT, voice = true) },
-                    onCron = {
-                        panelOpen = false
-                        nav.navigate(Routes.CRON) { launchSingleTop = true }
-                    },
-                    onSettings = {
-                        panelOpen = false
-                        openTopLevel(Routes.SETTINGS)
-                    },
+                    activeConversationId = currentConversationId,
                     onClose = { panelOpen = false },
                     onDeleteConversation = ::deleteConversationFromLibrary
                 )
@@ -518,7 +522,8 @@ fun AppNavigation(
             InkStrip(
                 state = inkStrip,
                 fallback = defaultInkLine(currentRoute),
-                modifier = Modifier.padding(horizontal = 20.dp)
+                modifier = Modifier.padding(horizontal = 20.dp),
+                onClick = if (currentRoute == Routes.INKWELL) null else ::openInkwell
             )
         }
         Row(Modifier.fillMaxWidth().weight(1f)) {
@@ -570,7 +575,7 @@ fun AppNavigation(
                 onAsk = { text -> startFromHome(text, capability = null) },
                 onMake = { text, capability -> startFromHome(text, capability) },
                 onVoice = { openArm(Arm.VOICE) },
-                onInkwell = { inkStrip.flash(InkLines.INKWELL_NOT_YET) }
+                onInkwell = ::openInkwell
             )
         }
         composable(Routes.LINK) {
@@ -587,7 +592,16 @@ fun AppNavigation(
                 onModels = { purpose -> nav.navigate(Routes.models(purpose)) },
                 onLibrary = ::openLibrary,
                 onBackground = ::goHome,
-                onInkwell = { inkStrip.flash(InkLines.INKWELL_NOT_YET) }
+                onInkwell = ::openInkwell
+            )
+        }
+        composable(Routes.INKWELL) {
+            val vm: InkwellViewModel = viewModel(factory = factory)
+            InkwellScreen(
+                vm = vm,
+                onBack = { nav.popBackStack() },
+                onOpenConversation = ::openConversationFromLibrary,
+                onMake = { navigateArm(Routes.make(MakeKind.IMAGE)) }
             )
         }
         composable(Routes.FIND) {

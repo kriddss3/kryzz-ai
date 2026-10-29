@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -26,10 +28,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,7 +42,6 @@ import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
-import ai.daylight.assistant.ui.dot.dashedBorder
 import ai.daylight.assistant.ui.talk.RoundIcon
 
 internal const val HOME_PLACEHOLDER = "Ask, search, or make"
@@ -51,7 +53,7 @@ internal fun makeOfferLabel(capability: AgentCapability): String =
 /**
  * Home's "Ask, search, or make" bar and the Inkwell button beside it. Sending opens a new
  * Talk thread with the text. When the text reads like a make request, a pill above the bar
- * offers to send it to the generator instead. The Inkwell is drawn unlit until it exists.
+ * offers to send it to the generator instead. [inkBadge] counts what is new in the Inkwell.
  */
 @Composable
 fun HomeComposer(
@@ -62,7 +64,8 @@ fun HomeComposer(
     onMake: (AgentCapability) -> Unit,
     onVoice: () -> Unit,
     onInkwell: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    inkBadge: String = ""
 ) {
     val c = DotTheme.c
     val canSend = value.isNotBlank()
@@ -117,7 +120,7 @@ fun HomeComposer(
                 }
             }
             Spacer(Modifier.width(10.dp))
-            InkwellButton(onClick = onInkwell)
+            InkwellButton(badge = inkBadge, onClick = onInkwell)
         }
     }
 }
@@ -151,25 +154,42 @@ private fun MakeOfferPill(capability: AgentCapability, onClick: () -> Unit) {
 }
 
 /**
- * The Inkwell: in the kit a 56dp white button with a yellow count. It arrives in C10, so
- * until then it is unlit (a dashed ring) and says so when tapped.
+ * The Inkwell (kit `home`): a 56dp white button with the ink drop in black and, when
+ * something new was made since the last visit, a yellow count at its top right.
  */
 @Composable
-private fun InkwellButton(onClick: () -> Unit) {
+private fun InkwellButton(badge: String, onClick: () -> Unit) {
     val c = DotTheme.c
-    Box(
-        Modifier
-            .size(56.dp)
-            .clip(CircleShape)
-            .dashedBorder(c.borderStrong, radius = 28.dp)
-            .clickable(onClick = onClick)
-            .semantics {
-                contentDescription = "Inkwell"
-                stateDescription = "Not yet"
-                role = Role.Button
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(painterResource(R.drawable.ic_kz_ink), null, Modifier.size(22.dp), tint = c.textDisabled)
+    Box(Modifier.size(56.dp)) {
+        Box(
+            Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(c.textPrimary)
+                .clickable(role = Role.Button, onClick = onClick)
+                .semantics {
+                    contentDescription = "Inkwell"
+                    if (badge.isNotEmpty()) stateDescription = "$badge new"
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(painterResource(R.drawable.ic_kz_ink), null, Modifier.size(22.dp), tint = c.bg)
+        }
+        if (badge.isNotEmpty()) {
+            // Inside the button's box: the NavHost clips anything past its right edge.
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(y = (-6).dp)
+                    .heightIn(min = 22.dp)
+                    .widthIn(min = 22.dp)
+                    .background(c.accent, CircleShape)
+                    .padding(horizontal = 5.dp)
+                    .clearAndSetSemantics { },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(badge, style = DotType.Data.copy(fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium), color = c.onAccent)
+            }
+        }
     }
 }

@@ -412,8 +412,7 @@ internal fun RoundIconButton(@DrawableRes icon: Int, label: String, onClick: () 
 
 /**
  * Recent ink: the newest made files from every conversation as 56dp tiles (images and clips
- * as thumbnails, other files as their dot icon), then a "+N" tile. The "+N" tile is unlit
- * (dashed) until the Inkwell arrives in C10.
+ * as thumbnails, other files as their dot icon), then a "+N" tile that opens the Inkwell.
  */
 @Composable
 internal fun RecentInk(
@@ -435,12 +434,13 @@ internal fun RecentInk(
                     Modifier
                         .size(56.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .dashedBorder(c.borderStrong, radius = 12.dp)
+                        .background(c.surfaceRaised)
+                        .border(1.dp, c.border, RoundedCornerShape(12.dp))
                         .clickable(role = Role.Button, onClick = onMore)
-                        .semantics { contentDescription = "$more more in the Inkwell, not yet" },
+                        .semantics { contentDescription = "$more more in the Inkwell" },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("+ $more", style = DotType.Label, color = c.textTertiary)
+                    Text("+ $more", style = DotType.Label, color = c.textSecondary)
                 }
             }
         }

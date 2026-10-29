@@ -47,6 +47,7 @@ fun HomeScreen(
     val lastMedia by vm.lastMedia.collectAsStateWithLifecycle()
     val lastFindQuery by vm.lastFindQuery.collectAsStateWithLifecycle()
     val crew by vm.crew.collectAsStateWithLifecycle()
+    val inkBadge by vm.inkBadge.collectAsStateWithLifecycle()
     val strip = LocalInkStrip.current
     val busy = strip?.busyArms.orEmpty()
     // Minute clock: the date block and "last 09:12" stay right while Home is open.
@@ -109,7 +110,8 @@ fun HomeScreen(
             },
             onVoice = onVoice,
             onInkwell = onInkwell,
-            modifier = Modifier.navigationBarsPadding().imePadding()
+            modifier = Modifier.navigationBarsPadding().imePadding(),
+            inkBadge = inkBadge
         )
     }
 }

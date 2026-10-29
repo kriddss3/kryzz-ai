@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -33,6 +34,7 @@ import ai.daylight.assistant.voice.coerceVoiceSttModel
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -136,6 +138,7 @@ class AppPreferences(private val context: Context) {
         val surfaceOpacity = floatPreferencesKey("surface_opacity")
         val backgroundBlur = floatPreferencesKey("background_blur")
         val dotBackground = booleanPreferencesKey("dot_background")
+        val inkwellSeenAt = longPreferencesKey("inkwell_seen_at")
         val biometric = booleanPreferencesKey("biometric_lock")
         val memoryEnabled = booleanPreferencesKey("memory_enabled")
         val agentSwarmEnabled = booleanPreferencesKey("agent_swarm_enabled")
@@ -390,6 +393,21 @@ class AppPreferences(private val context: Context) {
     suspend fun setSurfaceOpacity(value: Float) = context.dataStore.edit { it[Keys.surfaceOpacity] = value.coerceIn(0.42f, 0.96f) }
     suspend fun setBackgroundBlur(value: Float) = context.dataStore.edit { it[Keys.backgroundBlur] = value.coerceIn(0f, 28f) }
     suspend fun setDotBackground(value: Boolean) = context.dataStore.edit { it[Keys.dotBackground] = value }
+
+    /**
+     * C10: the newest output the Inkwell has shown (the time its answer was made). Home's
+     * Inkwell badge counts outputs newer than this. 0 = the Inkwell was never opened.
+     * Kept out of [state] so it doesn't redraw every settings reader.
+     */
+    val inkwellSeenAt: Flow<Long> = context.dataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { it[Keys.inkwellSeenAt] ?: 0L }
+        .distinctUntilChanged()
+
+    /** Moves the Inkwell's seen mark forward to [at]; it never moves back. */
+    suspend fun markInkwellSeen(at: Long) = context.dataStore.edit {
+        if (at > (it[Keys.inkwellSeenAt] ?: 0L)) it[Keys.inkwellSeenAt] = at
+    }
     suspend fun setBiometricLock(value: Boolean) = context.dataStore.edit { it[Keys.biometric] = value }
     suspend fun setMemoryEnabled(value: Boolean) = context.dataStore.edit { it[Keys.memoryEnabled] = value }
     suspend fun setAgentSwarmEnabled(value: Boolean) = context.dataStore.edit { it[Keys.agentSwarmEnabled] = value }

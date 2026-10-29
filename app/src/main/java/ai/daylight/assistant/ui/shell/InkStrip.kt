@@ -1,6 +1,7 @@
 package ai.daylight.assistant.ui.shell
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
@@ -13,7 +14,10 @@ import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.ui.dot.DotPalette
 import ai.daylight.assistant.ui.dot.DotTheme
@@ -32,6 +36,9 @@ internal object InkStripSpec {
     const val FLASH_MS = 1600L
 }
 
+/** What TalkBack says a tap on the strip does. */
+private const val INK_STRIP_CLICK_LABEL = "Open the Inkwell"
+
 /** Unlit strip dots sit one step above the background (#151515 snapped to surface). */
 internal fun inkUnlitColor(c: DotPalette): Color = if (c.dark) c.surface else c.surfaceRaised
 
@@ -43,11 +50,12 @@ internal fun inkStripCapacity(cols: Int): Int =
 
 /**
  * The LED ink strip: one line of 5x7 dot text on a field of unlit dots, under the status
- * bar on every screen. A two-dot yellow mark at the start means something is live.
+ * bar on every screen. A two-dot yellow mark at the start means something is live, and a
+ * tap opens the Inkwell (C10).
  * The text is static in this phase; the column wipe and the ticker arrive in phase D.
  */
 @Composable
-fun InkStrip(state: InkStripState, fallback: InkLine, modifier: Modifier = Modifier) {
+fun InkStrip(state: InkStripState, fallback: InkLine, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val flash = state.flash
     LaunchedEffect(flash?.first) {
         val serial = flash?.first ?: return@LaunchedEffect
@@ -57,11 +65,12 @@ fun InkStrip(state: InkStripState, fallback: InkLine, modifier: Modifier = Modif
     val screenLine = state.line ?: fallback
     val shown = flash?.second ?: screenLine
     val live = shown.live || state.busyArms.isNotEmpty()
-    InkStripLine(shown.text, live, modifier)
+    InkStripLine(shown.text, live, modifier, onClick)
 }
 
+/** One strip line. With [onClick] the whole strip is a button (it opens the Inkwell). */
 @Composable
-fun InkStripLine(text: String, live: Boolean, modifier: Modifier = Modifier) {
+fun InkStripLine(text: String, live: Boolean, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val c = DotTheme.c
     val clean = remember(text) { InkLine.sanitize(text, maxChars = 64) }
     val spoken = remember(clean, live) {
@@ -69,11 +78,20 @@ fun InkStripLine(text: String, live: Boolean, modifier: Modifier = Modifier) {
         if (live && words.isNotEmpty()) "$words, live" else words
     }
     val unlit = inkUnlitColor(c)
+    val tap = if (onClick != null) Modifier.clickable(onClickLabel = INK_STRIP_CLICK_LABEL, onClick = onClick) else Modifier
     Canvas(
         modifier
             .fillMaxWidth()
             .height(InkStripSpec.Height)
-            .clearAndSetSemantics { contentDescription = spoken }
+            .then(tap)
+            .clearAndSetSemantics {
+                contentDescription = spoken
+                if (onClick != null) {
+                    role = Role.Button
+                    // `this.` picks the semantics action, not the onClick parameter.
+                    this.onClick(label = INK_STRIP_CLICK_LABEL, action = { onClick(); true })
+                }
+            }
     ) {
         drawInkLine(clean, live, on = c.textPrimary, off = unlit, accent = c.accent)
     }

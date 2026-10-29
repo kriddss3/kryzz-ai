@@ -28,6 +28,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -368,4 +370,29 @@ fun DotNotice(text: String, modifier: Modifier = Modifier, @DrawableRes icon: In
         Icon(painterResource(icon), null, Modifier.padding(top = 1.dp).size(18.dp), tint = c.textSecondary)
         Text(text, Modifier.weight(1f), style = DotType.BodySmall, color = c.textSecondary)
     }
+}
+
+/**
+ * Kit snackbar (components.md section 14): an inverted pill at least 48dp tall with mono caps
+ * text. Most status goes to the ink strip; this is for places the strip can't be seen, such
+ * as the open chat drawer.
+ */
+@Composable
+fun DotSnackbar(message: String, modifier: Modifier = Modifier) {
+    val c = DotTheme.c
+    Box(
+        modifier
+            .heightIn(min = 48.dp)
+            .background(c.textPrimary, DotRadius.Pill)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(message.uppercase(Locale.US), style = DotType.Label, color = c.bg, maxLines = 3, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A SnackbarHost that draws its messages as [DotSnackbar]s. */
+@Composable
+fun DotSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
+    SnackbarHost(state, modifier) { data -> DotSnackbar(data.visuals.message) }
 }

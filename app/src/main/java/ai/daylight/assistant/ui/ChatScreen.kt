@@ -940,7 +940,8 @@ private fun annotatedMarkdown(input: String, linkColor: Color): AnnotatedString 
     append(input.substring(cursor))
 }
 
-private suspend fun writeOutput(context: Context, uri: Uri, output: GeneratedOutput) {
+/** Writes a generated file to a place the user picked (Run's and the Inkwell's Save). */
+internal suspend fun writeOutput(context: Context, uri: Uri, output: GeneratedOutput) {
     context.contentResolver.openOutputStream(uri)?.use { destination ->
         when {
             output.localPath != null -> File(output.localPath).inputStream().use { it.copyTo(destination) }
