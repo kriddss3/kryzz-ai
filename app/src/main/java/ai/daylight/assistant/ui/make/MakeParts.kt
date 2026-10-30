@@ -69,8 +69,8 @@ import ai.daylight.assistant.domain.RecentOutput
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
-import ai.daylight.assistant.ui.dot.DotBar
 import ai.daylight.assistant.ui.dot.dashedBorder
+import ai.daylight.assistant.ui.dot.effects.DotDevelopImage
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
 import ai.daylight.assistant.ui.dot.effects.DotProgress
 import ai.daylight.assistant.ui.run.FileCardModel
@@ -337,16 +337,13 @@ internal fun FrameWithDials(aspect: Float, caption: String?, dials: List<DialSpe
  * percentage), the elapsed time in Doto, and two mono lines saying where the job is.
  */
 @Composable
-internal fun RenderProgress(elapsed: String, status: String, detail: String, motion: Boolean, modifier: Modifier = Modifier) {
+internal fun RenderProgress(elapsed: String, status: String, detail: String, modifier: Modifier = Modifier) {
     val c = DotTheme.c
     Column(modifier.fillMaxWidth()) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val count = ((maxWidth + 6.dp) / 14.dp).toInt().coerceIn(6, 24)
-            if (motion) {
-                DotProgress(progress = null, count = count, dot = 8.dp, gap = 6.dp, on = c.accent, off = c.dotOff)
-            } else {
-                DotBar(count = count, lit = 0, on = c.accent, off = c.dotOff, dot = 8.dp, gap = 6.dp)
-            }
+            // DotProgress holds a still comet when motion is off.
+            DotProgress(progress = null, count = count, dot = 8.dp, gap = 6.dp, on = c.accent, off = c.dotOff)
         }
         Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             // The 5x7 dot face: Doto has no clean colon for the clock.
@@ -373,9 +370,20 @@ internal fun ReadyRow(ready: String, made: String, modifier: Modifier = Modifier
     }
 }
 
-/** A made image at full width, its own shape, radius 16. Tap opens it in the phone's viewer. */
+/**
+ * A made image at full width, its own shape, radius 16. Tap opens it in the phone's viewer.
+ * With [develop] (it just finished while Make was open) it develops as dots, then dissolves
+ * into the photo (phase D).
+ */
 @Composable
-internal fun ImageResult(path: String, aspect: Float?, description: String, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+internal fun ImageResult(
+    path: String,
+    aspect: Float?,
+    description: String,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+    develop: Boolean = false,
+) {
     val c = DotTheme.c
     var bitmap by remember(path) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(path) { bitmap = withContext(Dispatchers.IO) { MakeMedia.decodeImage(path, 1440) } }
@@ -388,7 +396,7 @@ internal fun ImageResult(path: String, aspect: Float?, description: String, onOp
             .background(c.surface)
             .clickable(onClickLabel = "Open image", onClick = onOpen)
     ) {
-        bitmap?.let { Image(it, description, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        bitmap?.let { DotDevelopImage(it, description, develop, Modifier.fillMaxSize()) }
     }
 }
 

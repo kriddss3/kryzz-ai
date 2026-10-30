@@ -16,6 +16,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlin.random.Random
 
 /**
@@ -117,7 +118,7 @@ internal fun dotTextSpoken(text: String): String =
  *
  * Fixes over the kit: an empty string draws nothing instead of crashing, the text is
  * exposed to screen readers, colours come from the theme, and there is no reveal
- * animation unless one is asked for.
+ * animation unless one is asked for (and none at all when motion is off).
  */
 @Composable
 fun DotMatrixText(
@@ -133,9 +134,10 @@ fun DotMatrixText(
     key: Any = text,
 ) {
     val cols = DotFont5x7.columns(text)
-    val progress = remember(key) { Animatable(if (reveal == DotReveal.None) 1f else 0f) }
+    val animate = reveal != DotReveal.None && LocalKryzzMotionEnabled.current
+    val progress = remember(key) { Animatable(if (animate) 0f else 1f) }
     LaunchedEffect(key) {
-        if (reveal != DotReveal.None) progress.animateTo(1f, tween(durationMs, easing = LinearEasing))
+        if (animate) progress.animateTo(1f, tween(durationMs, easing = LinearEasing))
     }
     val seeds = remember(key, cols) {
         val r = Random(text.hashCode())

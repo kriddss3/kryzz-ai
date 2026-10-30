@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -44,6 +46,9 @@ import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.ui.dot.DotGrey
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.MonoFamily
+import ai.daylight.assistant.ui.dot.effects.DotSteps
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 /** Rail geometry from SCREENS.md "Shared chrome" (v1.2, the quieter rail). */
@@ -59,6 +64,9 @@ internal object ArmRailSpec {
     /** Dot centre from the right edge: the kit's 6dp inset plus half a dot. */
     val EndInset = 8.dp
     val LabelGap = 3.dp
+
+    /** The active bar moves one slot per step (Talk to Tune is 7 steps, about 280ms). */
+    const val BAR_STEP_MS = 40L
 }
 
 /**
@@ -88,6 +96,20 @@ fun ArmRail(
         TextStyle(fontFamily = MonoFamily, fontWeight = FontWeight.Bold, fontSize = 9.sp, letterSpacing = 0.12.em)
     }
     val pitchPx = with(density) { ArmRailSpec.Pitch.toPx() }
+    // Phase D: the yellow bar travels to a new arm one slot per step instead of jumping.
+    val motion = LocalKryzzMotionEnabled.current
+    val target = active?.ordinal ?: -1
+    val barAt = remember { mutableIntStateOf(target) }
+    LaunchedEffect(target, motion) {
+        if (target < 0 || barAt.intValue < 0 || !motion) {
+            barAt.intValue = target
+            return@LaunchedEffect
+        }
+        while (barAt.intValue != target) {
+            delay(ArmRailSpec.BAR_STEP_MS)
+            barAt.intValue = DotSteps.stepToward(barAt.intValue, target)
+        }
+    }
 
     Box(modifier.width(ArmRailSpec.Width).fillMaxHeight(), contentAlignment = Alignment.Center) {
         Column(
@@ -137,17 +159,18 @@ fun ArmRail(
                 }
                 .drawBehind {
                     val r = ArmRailSpec.Dot.toPx() / 2f
-                    val bar = ArmRailSpec.BarHeight.toPx()
+                    val barHeight = ArmRailSpec.BarHeight.toPx()
                     val cx = size.width - ArmRailSpec.EndInset.toPx()
                     val ring = 1.dp.toPx()
+                    val bar = barAt.intValue
                     arms.forEachIndexed { i, arm ->
                         val cy = pitchPx / 2f + i * pitchPx
                         val hovered = hover == i
                         when {
-                            arm == active -> drawRoundRect(
+                            i == bar -> drawRoundRect(
                                 c.accent,
-                                topLeft = Offset(cx - r, cy - bar / 2f),
-                                size = Size(r * 2f, bar),
+                                topLeft = Offset(cx - r, cy - barHeight / 2f),
+                                size = Size(r * 2f, barHeight),
                                 cornerRadius = CornerRadius(r)
                             )
                             !arm.live -> drawCircle(

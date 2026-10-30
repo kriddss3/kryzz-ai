@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -22,6 +25,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import ai.daylight.assistant.ui.dot.effects.DotSteps
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import kotlinx.coroutines.delay
 
 /** Kit sheet handle: a 32x4dp bar in borderStrong, 10dp from the top (screens/src/common.py). */
 @Composable
@@ -35,9 +41,11 @@ fun DotSheetHandle(modifier: Modifier = Modifier) {
 }
 
 /**
- * A still row of [count] dots with the first [lit] in [on]: determinate progress and meters
- * (the plan card's 24 dots, the cost line's 12). Unlike DotProgress it never animates, so a
- * finished card costs no frames. If the row is wider than the space it gets, the dots close up.
+ * A row of [count] dots with the first [lit] in [on]: determinate progress and meters (the
+ * plan card's 24 dots, the cost line's 12). It opens already filled, so a finished card
+ * costs no frames. With [stepMs] above 0 a later change of [lit] lights (or clears) one
+ * dot per step instead of jumping (phase D). If the row is wider than the space it gets,
+ * the dots close up.
  */
 @Composable
 fun DotBar(
@@ -48,14 +56,28 @@ fun DotBar(
     modifier: Modifier = Modifier,
     dot: Dp = 4.dp,
     gap: Dp = 3.dp,
+    stepMs: Int = 0,
 ) {
     if (count <= 0) return
+    val motion = LocalKryzzMotionEnabled.current
+    val shown = remember { mutableIntStateOf(lit) }
+    LaunchedEffect(lit, stepMs, motion) {
+        if (stepMs <= 0 || !motion) {
+            shown.intValue = lit
+            return@LaunchedEffect
+        }
+        while (shown.intValue != lit) {
+            delay(stepMs.toLong())
+            shown.intValue = DotSteps.stepToward(shown.intValue, lit)
+        }
+    }
     Canvas(modifier.widthIn(max = dot * count + gap * (count - 1)).fillMaxWidth().height(dot)) {
         val d = dot.toPx()
         val natural = d + gap.toPx()
         val pitch = if (count == 1) natural else minOf(natural, (size.width - d) / (count - 1))
+        val n = shown.intValue
         for (i in 0 until count) {
-            drawCircle(if (i < lit) on else off, d / 2, Offset(i * pitch + d / 2, d / 2))
+            drawCircle(if (i < n) on else off, d / 2, Offset(i * pitch + d / 2, d / 2))
         }
     }
 }

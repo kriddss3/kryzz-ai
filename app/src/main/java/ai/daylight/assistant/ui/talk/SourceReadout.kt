@@ -47,10 +47,13 @@ import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.Citation
 import ai.daylight.assistant.domain.WorkLog
 import ai.daylight.assistant.domain.WorkStepKind
+import ai.daylight.assistant.ui.dot.DotMotion
 import ai.daylight.assistant.ui.dot.DotPalette
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.MonoFamily
+import ai.daylight.assistant.ui.dot.effects.rememberDotTicker
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
@@ -158,18 +161,31 @@ private object ReadoutSpec {
     const val DOT_FRACTION = 0.68f // r = 1.7dp
     const val SEGMENT = 12
     const val GAP = 2
-    const val LIVE_LIT = 7 // static in C1; the stepped fill arrives with phase D
     val MiniWidth = 62.dp
 }
 
-private fun DotPalette.segmentColor(state: SourceState, dot: Int): Color = when (state) {
+/**
+ * The live segment's fill (phase D): one more yellow dot every 28ms until all 12 are lit,
+ * a short hold, then it starts again while the source is still being read.
+ */
+internal object ReadoutFill {
+    const val STEP_MS = DotMotion.DotStep
+    const val HOLD_STEPS = 6
+
+    /** The still frame, with motion off: a little over half. */
+    const val STILL = 7
+
+    fun lit(tick: Int): Int = (Math.floorMod(tick, ReadoutSpec.SEGMENT + HOLD_STEPS) + 1).coerceAtMost(ReadoutSpec.SEGMENT)
+}
+
+private fun DotPalette.segmentColor(state: SourceState, dot: Int, liveLit: Int): Color = when (state) {
     SourceState.READ -> textPrimary
-    SourceState.LIVE -> if (dot < ReadoutSpec.LIVE_LIT) accent else borderStrong
+    SourceState.LIVE -> if (dot < liveLit) accent else borderStrong
     SourceState.QUEUED -> border
 }
 
 /** Two rows of dots: one segment per item, segments shrink to fit the width. */
-private fun DrawScope.drawSegments(states: List<SourceState>, palette: DotPalette) {
+private fun DrawScope.drawSegments(states: List<SourceState>, palette: DotPalette, liveLit: Int) {
     if (states.isEmpty()) return
     val p = ReadoutSpec.Pitch.toPx()
     val cols = (size.width / p).toInt()
@@ -181,7 +197,7 @@ private fun DrawScope.drawSegments(states: List<SourceState>, palette: DotPalett
     for (state in states) {
         for (j in 0 until seg) {
             if (col >= cols) break
-            val color = palette.segmentColor(state, j * ReadoutSpec.SEGMENT / seg)
+            val color = palette.segmentColor(state, j * ReadoutSpec.SEGMENT / seg, liveLit)
             val list = byColor.getOrPut(color) { mutableListOf() }
             for (row in 0..1) list += Offset(col * p + p / 2f, row * p + p / 2f)
             col++
@@ -191,11 +207,17 @@ private fun DrawScope.drawSegments(states: List<SourceState>, palette: DotPalett
     byColor.forEach { (color, points) -> drawPoints(points, PointMode.Points, color, strokeWidth = d, cap = StrokeCap.Round) }
 }
 
+/** With [animate] the live segment fills in steps; the small bars in the list stay still. */
 @Composable
-private fun SegmentBar(states: List<SourceState>, modifier: Modifier = Modifier, width: Dp? = null) {
+private fun SegmentBar(states: List<SourceState>, modifier: Modifier = Modifier, width: Dp? = null, animate: Boolean = false) {
     val c = DotTheme.c
+    val motion = LocalKryzzMotionEnabled.current
+    val stepping = animate && motion && SourceState.LIVE in states
+    val tick = rememberDotTicker(ReadoutFill.STEP_MS, running = stepping)
     val m = if (width != null) modifier.width(width) else modifier.fillMaxWidth()
-    Canvas(m.height(ReadoutSpec.Pitch * 2)) { drawSegments(states, c) }
+    Canvas(m.height(ReadoutSpec.Pitch * 2)) {
+        drawSegments(states, c, if (stepping) ReadoutFill.lit(tick.intValue) else ReadoutFill.STILL)
+    }
 }
 
 /**
@@ -227,7 +249,7 @@ fun SourceReadout(
                 },
             verticalArrangement = Arrangement.Center
         ) {
-            SegmentBar(readout.items.map { it.state })
+            SegmentBar(readout.items.map { it.state }, animate = true)
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (expanded) "Sources" else readout.caption,
@@ -246,8 +268,8 @@ fun SourceReadout(
         }
         AnimatedVisibility(
             visible = expanded,
-            enter = if (motionEnabled) expandVertically(tween(220)) + fadeIn(tween(140)) else fadeIn(tween(0)),
-            exit = if (motionEnabled) shrinkVertically(tween(180)) + fadeOut(tween(80)) else fadeOut(tween(0))
+            enter = if (motionEnabled) unrollEnter else fadeIn(tween(0)),
+            exit = if (motionEnabled) unrollExit else fadeOut(tween(0))
         ) {
             Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
                 readout.items.forEach { item -> SourceRow(item, item.cite?.takeIf { it in citedNumbers }, onOpenUrl) }
@@ -299,6 +321,12 @@ private fun SourceRow(item: ReadoutItem, cite: Int?, onOpenUrl: (String) -> Unit
         }
     }
 }
+
+/** Board rows and the source list unroll with the kit's standard ease (layout motion eases). */
+internal val unrollEnter = expandVertically(tween(DotMotion.Base, easing = DotMotion.Standard), expandFrom = Alignment.Top) +
+    fadeIn(tween(DotMotion.Fast, easing = DotMotion.Standard))
+internal val unrollExit = shrinkVertically(tween(DotMotion.Fast + 40, easing = DotMotion.Standard), shrinkTowards = Alignment.Top) +
+    fadeOut(tween(DotMotion.Instant))
 
 /** Citation numerals: Space Mono Bold 11, yellow, raised (SCREENS.md section 2). */
 fun citationSuperscriptStyle(accent: Color): SpanStyle = SpanStyle(

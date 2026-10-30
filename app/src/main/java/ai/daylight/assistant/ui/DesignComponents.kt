@@ -1,7 +1,5 @@
 package ai.daylight.assistant.ui
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -9,7 +7,6 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,13 +14,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -34,9 +29,13 @@ import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.ui.dot.DotMotion
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.effects.DotMatrixText
+import ai.daylight.assistant.ui.dot.effects.DotReveal
 import ai.daylight.assistant.ui.dot.effects.dotGrid
+import ai.daylight.assistant.ui.dot.effects.flickerIn
 import ai.daylight.assistant.ui.theme.KryzzColors
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import kotlinx.coroutines.delay
 
 @Composable
 fun KryzzWordmark(
@@ -111,18 +110,23 @@ internal const val DOT_GRID_ALPHA = 0.06f
 internal fun dotGridForRoute(route: String?): Boolean =
     route == Routes.HOME || route == Routes.CHAT || route?.startsWith("chat/") == true
 
-/** Launch intro: the Kryzz mark and name on black. The dot-matrix reveal arrives in phase D. */
+/** Launch intro timing: the dot reveal, then a short hold on the full word (900ms in all). */
+internal object LaunchIntroSpec {
+    const val REVEAL_MS = DotMotion.Reveal
+    const val HOLD_MS = 300L
+    const val TOTAL_MS = REVEAL_MS + HOLD_MS
+}
+
+/**
+ * Launch intro (phase D): "KRYZZ" in 5x7 dot text that powers on with a random dot reveal
+ * and the kit's flicker, then hands over. With motion off it hands over at once.
+ */
 @Composable
 fun KryzzLaunchIntro(onFinished: () -> Unit) {
     val motionEnabled = LocalKryzzMotionEnabled.current
     val currentOnFinished by rememberUpdatedState(onFinished)
-    val progress = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        if (motionEnabled) {
-            progress.animateTo(1f, tween(520, easing = DotMotion.Standard))
-        } else {
-            progress.snapTo(1f)
-        }
+        if (motionEnabled) delay(LaunchIntroSpec.TOTAL_MS)
         currentOnFinished()
     }
 
@@ -133,24 +137,20 @@ fun KryzzLaunchIntro(onFinished: () -> Unit) {
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .padding(28.dp)
-                .graphicsLayer(alpha = progress.value.coerceIn(0f, 1f))
+            modifier = Modifier.padding(28.dp).flickerIn()
         ) {
-            KryzzMark(
-                Modifier.size(96.dp),
-                tint = c.textPrimary,
-                contentDescription = null
-            )
-            Text(
-                text = "KRYZZ AI",
-                modifier = Modifier.padding(top = 20.dp),
-                color = c.textPrimary,
-                style = DotType.DotTitle
+            DotMatrixText(
+                "KRYZZ",
+                pitch = 9.dp,
+                on = c.textPrimary,
+                off = c.dotOff,
+                reveal = DotReveal.Random,
+                durationMs = LaunchIntroSpec.REVEAL_MS,
+                contentDescription = "Kryzz AI"
             )
             Text(
                 text = "PRIVATE  /  LOCAL-FIRST",
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = 20.dp),
                 color = c.textTertiary,
                 style = DotType.Label
             )

@@ -9,6 +9,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
+import ai.daylight.assistant.ui.dot.effects.rememberDotTicker
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import java.security.MessageDigest
 
 /**
@@ -41,14 +43,21 @@ object Identicon {
     }
 
     /** The kit's live rule (s_crew.py): while a bot works, its lit dots on every third diagonal turn yellow. */
-    fun liveDot(x: Int, y: Int): Boolean = (x + y) % 3 == 0
+    fun liveDot(x: Int, y: Int): Boolean = liveDot(x, y, phase = 0)
+
+    /** The same rule [phase] steps on (phase D): the yellow diagonals move across the face. */
+    fun liveDot(x: Int, y: Int, phase: Int): Boolean = Math.floorMod(x + y - phase, 3) == 0
+
+    /** A live avatar's diagonals move one step this often. */
+    const val LIVE_STEP_MS = 240
 }
 
 /**
  * Draws a bot's identicon: lit dots white, unlit dots [off] (none when transparent). The kit
  * uses a 9dp pitch for the featured card, 7dp in rows, 11dp on the bot's page and 3dp beside
- * its chat lines. [live] turns some lit dots yellow while the bot works. Decorative: the
- * bot's name is always next to it.
+ * its chat lines. [live] turns some lit dots yellow while the bot works; with [animate] the
+ * yellow diagonals step across the face (only the one big avatar on a screen animates).
+ * Decorative: the bot's name is always next to it.
  */
 @Composable
 fun DotAvatar(
@@ -58,16 +67,20 @@ fun DotAvatar(
     modifier: Modifier = Modifier,
     live: Boolean = false,
     off: Color = DotTheme.c.surfaceRaised,
+    animate: Boolean = false,
 ) {
     val c = DotTheme.c
     val grid = remember(name, seed) { Identicon.grid(Identicon.key(name, seed)) }
+    val tick = rememberDotTicker(Identicon.LIVE_STEP_MS, running = live && animate)
+    val motion = LocalKryzzMotionEnabled.current
     Canvas(modifier.size(pitch * Identicon.SIZE).clearAndSetSemantics { }) {
         val p = pitch.toPx()
         val radius = p * 0.36f
+        val phase = if (animate && motion) tick.intValue else 0
         grid.forEachIndexed { y, row ->
             row.forEachIndexed { x, on ->
                 val colour = when {
-                    on && live && Identicon.liveDot(x, y) -> c.accent
+                    on && live && Identicon.liveDot(x, y, phase) -> c.accent
                     on -> c.textPrimary
                     else -> off
                 }

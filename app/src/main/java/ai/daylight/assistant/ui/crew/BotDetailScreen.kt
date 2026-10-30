@@ -326,7 +326,7 @@ fun BotDetailScreen(vm: BotViewModel, onBack: () -> Unit) {
 private fun BotHeader(bot: BotEntity, live: Boolean, personaOpen: Boolean, onPersona: () -> Unit) {
     val c = DotTheme.c
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 4.dp), verticalAlignment = Alignment.Top) {
-        DotAvatar(bot.name, bot.avatarSeed, pitch = 11.dp, live = live)
+        DotAvatar(bot.name, bot.avatarSeed, pitch = 11.dp, live = live, animate = true)
         Spacer(Modifier.width(18.dp))
         Column(Modifier.weight(1f)) {
             val title = bot.name.uppercase(Locale.US)

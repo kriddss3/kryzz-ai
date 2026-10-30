@@ -6,6 +6,7 @@ import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
 import ai.daylight.assistant.ui.dot.effects.ThinkingDots
+import ai.daylight.assistant.ui.dot.effects.rememberDotBlink
 import ai.daylight.assistant.ui.dot.mascot.DotSquid
 import ai.daylight.assistant.voice.VoicePhase
 import android.os.SystemClock
@@ -34,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -49,6 +51,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+
+/** The REC dot between blinks: dim, not gone, so the status line keeps its shape (EFFECTS.md #4). */
+private const val REC_OFF_ALPHA = 0.15f
 
 /** Kit voice: the line before, Geist 18/25 in the disabled grey. */
 private val PreviousLine = DotType.Answer.copy(lineHeight = 25.sp)
@@ -94,10 +99,22 @@ internal fun VoiceHeader(
                 Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // The REC dot blinks hard (600 on, 400 off) while the mic is open, in step
+                // with the strip's live mark.
+                val micLive = voiceMicLive(phase, muted)
+                val recOn = rememberDotBlink(running = micLive)
                 Box(
                     Modifier
                         .size(8.dp)
-                        .background(if (voiceMicLive(phase, muted)) c.recording else c.textDisabled, CircleShape)
+                        .drawBehind {
+                            drawCircle(
+                                when {
+                                    !micLive -> c.textDisabled
+                                    recOn.value -> c.recording
+                                    else -> c.recording.copy(alpha = REC_OFF_ALPHA)
+                                }
+                            )
+                        }
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(

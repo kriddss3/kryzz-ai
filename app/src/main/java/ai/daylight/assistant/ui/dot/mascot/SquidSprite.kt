@@ -72,7 +72,7 @@ object SquidSprite {
 }
 
 /**
- * The squid's poses. Each is one arm phase; phase D turns them into stepped frame swaps.
+ * The squid's poses. Each is one arm phase.
  * THINKING uses the voice mockup's mid-wave phase (1.2).
  */
 enum class SquidPose(val armPhase: Double) {
@@ -82,4 +82,20 @@ enum class SquidPose(val armPhase: Double) {
 
     /** Cached grid: the sprite is pure, so each pose is computed once. */
     val grid: BooleanArray by lazy { SquidSprite.grid(armPhase) }
+}
+
+/**
+ * The arm wave as LED frame swaps (phase D): [COUNT] arm phases round one full turn,
+ * starting from STANDBY, so a wave always leaves from and settles on the resting pose.
+ */
+object SquidWave {
+    const val COUNT = 8
+
+    /** How long each frame stays up. */
+    const val FRAME_MS = 140
+
+    val frames: List<BooleanArray> by lazy { List(COUNT) { SquidSprite.grid(2 * PI * it / COUNT) } }
+
+    /** The frame for [step] (any integer, it wraps). */
+    fun frame(step: Int): BooleanArray = frames[Math.floorMod(step, COUNT)]
 }

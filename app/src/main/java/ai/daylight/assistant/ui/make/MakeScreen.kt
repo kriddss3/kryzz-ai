@@ -128,6 +128,12 @@ fun MakeScreen(
 
     val running: MakeRender? = render?.takeIf { it.running }
     val shown: RecentOutput? = if (running != null || composing) null else selected ?: MakeModel.resultFor(render, recent)
+    // Phase D: a render that finishes while Make is open develops in as dots. One that
+    // finished while you were away (or one picked from recent ink) just shows.
+    var watchedSerial by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(running?.serial) { running?.serial?.let { watchedSerial = it } }
+    val developId = render?.takeIf { it.serial == watchedSerial && selected == null }
+        ?.let { MakeModel.resultFor(it, recent)?.output?.id }
     // A finished render or a picked file is about to show; don't flash the writing state first.
     val waitingForRecent = recentOrNull == null && running == null && !composing &&
         (selected != null || render?.outcome == MakeOutcome.DONE)
@@ -288,8 +294,7 @@ fun MakeScreen(
                 RenderProgress(
                     elapsed = MakeModel.elapsedLabel(now - running.startedAt),
                     status = "${MakeModel.statusWord(running.kind, liveStatus)} at ${MakeModel.providerName(miniMax)}",
-                    detail = model.substringAfter('/'),
-                    motion = motion
+                    detail = model.substringAfter('/')
                 )
                 Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -300,6 +305,7 @@ fun MakeScreen(
             shown != null -> ResultBody(
                 shown = shown,
                 facts = facts,
+                develop = motion && shown.output.id == developId,
                 saved = shown.output.id in saved,
                 onSave = { save(it) },
                 onVariant = {
@@ -387,6 +393,7 @@ fun MakeScreen(
 private fun ResultBody(
     shown: RecentOutput,
     facts: MediaFacts,
+    develop: Boolean,
     saved: Boolean,
     onSave: (GeneratedOutput) -> Unit,
     onVariant: () -> Unit,
@@ -419,7 +426,7 @@ private fun ResultBody(
             }
         }
     } else {
-        ImageResult(output.localPath.orEmpty(), aspect, shown.prompt ?: output.title, onOpen)
+        ImageResult(output.localPath.orEmpty(), aspect, shown.prompt ?: output.title, onOpen, develop = develop)
     }
     ReadyRow(
         MakeModel.readyCaption(kind),

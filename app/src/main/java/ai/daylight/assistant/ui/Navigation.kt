@@ -15,13 +15,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,6 +70,9 @@ import ai.daylight.assistant.ui.make.MakeScreen
 import ai.daylight.assistant.ui.make.MakeViewModel
 import ai.daylight.assistant.ui.make.makeModel
 import ai.daylight.assistant.ui.about.AboutScreen
+import ai.daylight.assistant.ui.dot.effects.DotEnter
+import ai.daylight.assistant.ui.dot.effects.DotExit
+import ai.daylight.assistant.ui.dot.effects.DotPopEnter
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.ArmRail
 import ai.daylight.assistant.ui.shell.ArmRailSpec
@@ -541,22 +539,12 @@ fun AppNavigation(
                 .weight(1f)
                 .fillMaxHeight()
                 .clipToBounds(),
-            enterTransition = {
-                if (!motionEnabled) EnterTransition.None
-                else slideIntoContainer(pushTowards(initialState.destination.route, targetState.destination.route), tween(240, easing = FastOutSlowInEasing)) + fadeIn(tween(140))
-            },
-            exitTransition = {
-                if (!motionEnabled) ExitTransition.None
-                else slideOutOfContainer(pushTowards(initialState.destination.route, targetState.destination.route), tween(220, easing = FastOutSlowInEasing)) + fadeOut(tween(120))
-            },
-            popEnterTransition = {
-                if (!motionEnabled) EnterTransition.None
-                else slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(240, easing = FastOutSlowInEasing)) + fadeIn(tween(140))
-            },
-            popExitTransition = {
-                if (!motionEnabled) ExitTransition.None
-                else slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(220, easing = FastOutSlowInEasing)) + fadeOut(tween(120))
-            }
+            // Phase D: the kit's page motion (EFFECTS.md #12). A new page fades in over 140ms
+            // as it rises 1/40 of its height; the old one fades out in 80ms. Back only fades.
+            enterTransition = { if (motionEnabled) DotEnter else EnterTransition.None },
+            exitTransition = { if (motionEnabled) DotExit else ExitTransition.None },
+            popEnterTransition = { if (motionEnabled) DotPopEnter else EnterTransition.None },
+            popExitTransition = { if (motionEnabled) DotExit else ExitTransition.None }
         ) {
         composable(Routes.ONBOARDING) {
             val vm: OnboardingViewModel = viewModel(factory = factory)
@@ -862,23 +850,3 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
-private fun mainTabOrder(route: String?): Int? = when (topLevelTabForRoute(route)) {
-    MainTab.CHAT -> 0
-    MainTab.SETTINGS -> 1
-    null -> null
-}
-
-/**
- * The direction a screen slides when pushed forward. Tab-to-tab movement is
- * order-relative (going to a higher-order tab comes in from the right), while any
- * detail/depth destination (a settings subpage, models, skills, a conversation)
- * always pushes in from the right and pops back out to the right.
- */
-private fun pushTowards(initialRoute: String?, targetRoute: String?): AnimatedContentTransitionScope.SlideDirection {
-    val i = mainTabOrder(initialRoute)
-    val t = mainTabOrder(targetRoute)
-    return when {
-        i != null && t != null && t < i -> AnimatedContentTransitionScope.SlideDirection.Right
-        else -> AnimatedContentTransitionScope.SlideDirection.Left
-    }
-}

@@ -263,7 +263,7 @@ private fun FeaturedBotCard(
             .testTag("crew_featured"),
         verticalAlignment = Alignment.Top
     ) {
-        DotAvatar(bot.name, bot.avatarSeed, pitch = 9.dp, modifier = Modifier.padding(4.dp), live = true)
+        DotAvatar(bot.name, bot.avatarSeed, pitch = 9.dp, modifier = Modifier.padding(4.dp), live = true, animate = true)
         Spacer(Modifier.width(14.dp))
         BotInfo(bot, routines, status, Modifier.weight(1f))
         Icon(painterResource(R.drawable.ic_kz_forward), null, Modifier.size(18.dp), tint = c.textDisabled)

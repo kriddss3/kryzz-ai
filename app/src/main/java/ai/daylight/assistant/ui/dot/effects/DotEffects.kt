@@ -5,13 +5,12 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.animateValue
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,7 +22,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -61,6 +59,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.ui.dot.DotMotion
@@ -73,7 +72,6 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -85,11 +83,17 @@ import kotlin.math.sin
  *  - DotDissolve uses hashed per-cell noise, so the pattern never repeats on large screens
  *  - DotToggle matches the Tune mockup (white track, black knob) and is a real switch for
  *    accessibility
- * Signature motion and the reduced-motion gating arrive in phase D.
+ *  - phase D: every effect holds still when motion is off (the app setting or the system
+ *    animator scale), and the stepped ones run on the DotClock ticker instead of an
+ *    infinite transition, so they stop with their screen and redraw only their canvas
  */
 
+/** Indeterminate progress: lit dots of the 3-dot comet whose head is at [head] (tail first). */
+internal fun cometDot(i: Int, head: Int): Boolean = i in (head - 3) until head
+
 /* EFFECT 2: dot progress. Determinate: lit dots = progress * count.
- * Indeterminate (progress = null): a 3-dot comet stepping across. */
+ * Indeterminate (progress = null): a 3-dot comet stepping across, 45ms a dot. With motion
+ * off the comet stands still in the middle. */
 @Composable
 fun DotProgress(
     progress: Float?,
@@ -100,26 +104,26 @@ fun DotProgress(
     on: Color = DotTheme.c.accent,
     off: Color = DotTheme.c.dotOff,
 ) {
-    val t = rememberInfiniteTransition(label = "dotprog")
-    val head by t.animateValue(
-        0, count + 3, Int.VectorConverter,
-        infiniteRepeatable(tween((count + 3) * 45, easing = LinearEasing)), label = "head"
-    )
+    val motion = LocalKryzzMotionEnabled.current
+    val tick = rememberDotTicker(45, running = progress == null)
     Canvas(modifier.height(dot).width((dot + gap) * count - gap)) {
         val d = dot.toPx(); val g = gap.toPx()
+        val head = if (motion) tick.intValue % (count + 3) else (count + 3) / 2 + 1
         for (i in 0 until count) {
-            val lit = if (progress != null) i < (progress.coerceIn(0f, 1f) * count).roundToInt() else i in (head - 3) until head
-            val tail = progress == null && i == head - 3
+            val lit = if (progress != null) i < (progress.coerceIn(0f, 1f) * count).roundToInt() else cometDot(i, head)
+            val tail = progress == null && motion && i == head - 3
             drawCircle(if (lit) on.copy(alpha = if (tail) .45f else 1f) else off, d / 2, Offset(i * (d + g) + d / 2, d / 2))
         }
     }
 }
 
-/* EFFECT 3: glyph pulse, a breathing LED dot with expanding halo rings. */
+/* EFFECT 3: glyph pulse, a breathing LED dot with expanding halo rings (still when motion is off). */
 @Composable
 fun GlyphPulse(modifier: Modifier = Modifier, size: Dp = 48.dp, color: Color = DotTheme.c.accent, periodMs: Int = DotMotion.Pulse) {
-    val t = rememberInfiniteTransition(label = "pulse")
-    val p by t.animateFloat(0f, 1f, infiniteRepeatable(tween(periodMs, easing = LinearEasing)), label = "p")
+    val p = if (LocalKryzzMotionEnabled.current) {
+        val t = rememberInfiniteTransition(label = "pulse")
+        t.animateFloat(0f, 1f, infiniteRepeatable(tween(periodMs, easing = LinearEasing)), label = "p").value
+    } else 0f
     Canvas(modifier.size(size)) {
         val r = this.size.minDimension / 2
         val breathe = 0.55f + 0.45f * (0.5f + 0.5f * cos(2 * PI.toFloat() * p))
@@ -134,10 +138,9 @@ fun GlyphPulse(modifier: Modifier = Modifier, size: Dp = 48.dp, color: Color = D
 /* EFFECT 4: recording dot, a hard blink (600 on / 400 off) plus a mono timer. */
 @Composable
 fun RecordingIndicator(elapsedSec: Int, modifier: Modifier = Modifier, color: Color = DotTheme.c.recording) {
-    val t = rememberInfiniteTransition(label = "rec")
-    val phase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(DotMotion.Blink, easing = LinearEasing)), label = "ph")
+    val lit = rememberDotBlink()
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).graphicsLayer { alpha = if (phase < .6f) 1f else .15f }.background(color, DotRadius.Pill))
+        Box(Modifier.size(10.dp).graphicsLayer { alpha = if (lit.value) 1f else .15f }.background(color, DotRadius.Pill))
         Spacer(Modifier.width(8.dp))
         Text(
             String.format(Locale.US, "REC  %02d:%02d", elapsedSec / 60, elapsedSec % 60),
@@ -236,7 +239,11 @@ internal fun waveDot(level: Float, row: Int, rows: Int, peakFrom: Int?): WaveDot
     }
 }
 
-/* EFFECT 6: thinking dots. Three dots, one more lights every 180ms, then reset (stepped). */
+/** Thinking dots lit at [tick]: 0, 1, 2, then 3, and round again. */
+internal fun thinkingLit(tick: Int): Int = Math.floorMod(tick, 4)
+
+/* EFFECT 6: thinking dots. Three dots, one more lights every 180ms, then reset (stepped).
+ * With motion off all three stay lit. */
 @Composable
 fun ThinkingDots(
     modifier: Modifier = Modifier,
@@ -244,10 +251,12 @@ fun ThinkingDots(
     on: Color = DotTheme.c.textPrimary,
     off: Color = DotTheme.c.dotOff
 ) {
-    val t = rememberInfiniteTransition(label = "think")
-    val i by t.animateValue(0, 4, Int.VectorConverter, infiniteRepeatable(tween(4 * 180, easing = LinearEasing)), label = "i")
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(dot)) {
-        repeat(3) { k -> Box(Modifier.size(dot).background(if (k < i) on else off, DotRadius.Pill)) }
+    val motion = LocalKryzzMotionEnabled.current
+    val tick = rememberDotTicker(180)
+    Canvas(modifier.size(dot * 5, dot)) {
+        val d = dot.toPx()
+        val lit = if (motion) thinkingLit(tick.intValue) else 3
+        for (k in 0 until 3) drawCircle(if (k < lit) on else off, d / 2, Offset(k * 2 * d + d / 2, d / 2))
     }
 }
 
@@ -262,11 +271,14 @@ fun Modifier.scanlines(color: Color, alpha: Float = .06f, pitch: Dp = 3.dp) = dr
     }
 }
 
-/* EFFECT 7b: power-on flicker, alpha 0 -> 1 -> .3 -> 1 -> .7 -> 1 over 360ms, once. */
+/* EFFECT 7b: power-on flicker, alpha 0 -> 1 -> .3 -> 1 -> .7 -> 1 over 360ms, once
+ * (none when motion is off). */
 @Composable
 fun Modifier.flickerIn(key: Any = Unit): Modifier {
-    val a = remember(key) { Animatable(0f) }
+    val motion = LocalKryzzMotionEnabled.current
+    val a = remember(key) { Animatable(if (motion) 0f else 1f) }
     LaunchedEffect(key) {
+        if (!motion) return@LaunchedEffect
         a.animateTo(1f, keyframes {
             durationMillis = DotMotion.Slow
             0f at 0; 1f at 60; .3f at 110; 1f at 170; .7f at 230; 1f at 360
@@ -288,15 +300,19 @@ fun Modifier.dotGrid(color: Color, pitch: Dp = 8.dp, radius: Dp = 1.dp) = drawBe
     }
 }
 
-/* EFFECT 9: ticker, an uppercase mono marquee for status lines. */
+/* EFFECT 9: ticker, an uppercase mono marquee for status lines (cut off, still, when motion is off). */
 @Composable
 fun Ticker(text: String, modifier: Modifier = Modifier) {
+    val marquee = if (LocalKryzzMotionEnabled.current) {
+        Modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = 40.dp, initialDelayMillis = 800)
+    } else Modifier
     Text(
         text.uppercase(),
         style = DotType.Label,
         color = DotTheme.c.textSecondary,
         maxLines = 1,
-        modifier = modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = 40.dp, initialDelayMillis = 800)
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.then(marquee)
     )
 }
 
@@ -312,7 +328,11 @@ private val FourSteps = Easing { (it * 4).toInt() / 4f }
 fun DotToggle(checked: Boolean, onChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val c = DotTheme.c
     val haptic = LocalHapticFeedback.current
-    val x by animateFloatAsState(if (checked) 1f else 0f, tween(DotMotion.Fast, easing = FourSteps), label = "x")
+    val x by animateFloatAsState(
+        if (checked) 1f else 0f,
+        if (LocalKryzzMotionEnabled.current) tween(DotMotion.Fast, easing = FourSteps) else snap(),
+        label = "x"
+    )
     val interactive = if (onChange == null) Modifier else Modifier.toggleable(
         value = checked,
         enabled = enabled,
@@ -384,10 +404,12 @@ fun DotButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier,
     }
 }
 
-/* EFFECT 12: page transitions. Enter: fade 140ms + a small rise. Exit: fade 80ms. */
+/* EFFECT 12: page transitions. Enter: fade 140ms + a rise of 1/40 of the height. Exit: fade
+ * 80ms. Going back, the page underneath only fades in (it was already there). */
 val DotEnter: EnterTransition = fadeIn(tween(DotMotion.Fast, easing = DotMotion.Decel)) +
     slideInVertically(tween(DotMotion.Base, easing = DotMotion.Decel)) { it / 40 }
 val DotExit: ExitTransition = fadeOut(tween(DotMotion.Instant))
+val DotPopEnter: EnterTransition = fadeIn(tween(DotMotion.Fast, easing = DotMotion.Decel))
 
 /** Deterministic 0..1 noise per cell, so a dissolve never shows a repeating tile. */
 internal fun dissolveNoise(col: Int, row: Int): Float {
@@ -405,7 +427,11 @@ fun DotDissolve(
     cover: Color = DotTheme.c.bg,
     content: @Composable () -> Unit
 ) {
-    val prog by animateFloatAsState(if (visible) 1f else 0f, tween(DotMotion.Reveal, easing = LinearEasing), label = "dis")
+    val prog by animateFloatAsState(
+        if (visible) 1f else 0f,
+        if (LocalKryzzMotionEnabled.current) tween(DotMotion.Reveal, easing = LinearEasing) else snap(),
+        label = "dis"
+    )
     Box(modifier.drawWithContent {
         drawContent()
         if (prog >= 1f) return@drawWithContent
@@ -444,16 +470,15 @@ fun PlanStepMark(state: StepState, modifier: Modifier = Modifier, size: Dp = 20.
     else SettledStepMark(state, animate = state != first, modifier = modifier, size = size)
 }
 
-/** Ten dots on a ring; three accent dots chase round it (still when motion is off). */
+/** Ten dots on a ring; three accent dots chase round it, 70ms a dot (still when motion is off). */
 @Composable
 private fun ActiveStepMark(modifier: Modifier, size: Dp) {
     val c = DotTheme.c
-    val head = if (LocalKryzzMotionEnabled.current) {
-        val t = rememberInfiniteTransition(label = "chase")
-        t.animateValue(0, 10, Int.VectorConverter, infiniteRepeatable(tween(10 * 70, easing = LinearEasing)), label = "h").value
-    } else 3
+    val motion = LocalKryzzMotionEnabled.current
+    val tick = rememberDotTicker(70)
     Canvas(modifier.size(size)) {
         val r = this.size.minDimension / 2 - 1.dp.toPx()
+        val head = if (motion) tick.intValue % 10 else 3
         for (k in 0 until 10) {
             val a = 2 * PI * k / 10 - PI / 2
             val lit = ((k - head + 10) % 10) < 3
@@ -469,14 +494,14 @@ private fun ActiveStepMark(modifier: Modifier, size: Dp) {
 @Composable
 private fun SettledStepMark(state: StepState, animate: Boolean, modifier: Modifier, size: Dp) {
     val c = DotTheme.c
-    val haptic = LocalHapticFeedback.current
+    val haptic = rememberStepHaptic()
     val motion = LocalKryzzMotionEnabled.current
     val drawn = state == StepState.Done || state == StepState.Failed
     val draw = remember(state) { Animatable(if (drawn && animate && motion) 0f else 1f) }
     LaunchedEffect(state) {
         if (!drawn || !animate) return@LaunchedEffect
         if (motion) draw.animateTo(1f, tween(DotMotion.Base * 2, easing = DotMotion.Standard))
-        if (state == StepState.Done) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        haptic(state == StepState.Done)
     }
     Canvas(modifier.size(size)) {
         val r = this.size.minDimension / 2 - 1.dp.toPx()
@@ -525,32 +550,16 @@ private fun SettledStepMark(state: StepState, animate: Boolean, modifier: Modifi
     }
 }
 
-/* EFFECT 14: dot ripple. Dots light up as a ring passes their distance from the origin. */
+/* EFFECT 14: dot ripple. Dots light up as a ring passes their distance from the origin.
+ * Nothing runs when motion is off. [Modifier.dotRipple] is the same ring behind content. */
 @Composable
 fun DotRipple(trigger: Int, modifier: Modifier = Modifier, origin: Offset? = null, pitch: Dp = 10.dp, color: Color = DotTheme.c.accent) {
+    val motion = LocalKryzzMotionEnabled.current
     val p = remember { Animatable(1f) }
     LaunchedEffect(trigger) {
-        if (trigger > 0) {
-            p.snapTo(0f); p.animateTo(1f, tween(700, easing = DotMotion.Decel))
+        if (trigger > 0 && motion) {
+            p.snapTo(0f); p.animateTo(1f, tween(RIPPLE_MS, easing = DotMotion.Decel))
         }
     }
-    Canvas(modifier) {
-        if (p.value >= 1f) return@Canvas
-        val o = origin ?: center
-        val pp = pitch.toPx()
-        val maxR = hypot(size.width, size.height)
-        val ringR = p.value * maxR
-        val band = pp * 3
-        var y = pp / 2
-        while (y < size.height) {
-            var x = pp / 2
-            while (x < size.width) {
-                val d = hypot(x - o.x, y - o.y)
-                val k = 1f - abs(d - ringR) / band
-                if (k > 0f) drawCircle(color.copy(alpha = k * (1f - p.value)), pp * .18f * (0.6f + k * .6f), Offset(x, y))
-                x += pp
-            }
-            y += pp
-        }
-    }
+    Canvas(modifier) { drawRippleDots(p.value, origin ?: center, pitch.toPx(), color) }
 }

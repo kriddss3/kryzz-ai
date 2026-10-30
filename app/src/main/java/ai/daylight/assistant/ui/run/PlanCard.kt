@@ -39,6 +39,7 @@ import ai.daylight.assistant.domain.SubagentState
 import ai.daylight.assistant.domain.SwarmPhase
 import ai.daylight.assistant.domain.SwarmStatus
 import ai.daylight.assistant.ui.dot.DotBar
+import ai.daylight.assistant.ui.dot.DotMotion
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
@@ -135,7 +136,8 @@ fun PlanCard(plan: AgentPlan, live: Boolean, activity: String?, modifier: Modifi
             on = if (live) c.accent else c.textPrimary,
             off = c.dotOff,
             dot = 6.dp,
-            gap = 5.dp
+            gap = 5.dp,
+            stepMs = DotMotion.DotStep
         )
         Spacer(Modifier.height(14.dp))
         visible.forEach { index ->

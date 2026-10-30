@@ -29,14 +29,20 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -51,6 +57,7 @@ import ai.daylight.assistant.domain.ChatAttachment
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.effects.dotRipple
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 
 /** What the reply line's placeholder says right now. */
@@ -98,12 +105,20 @@ fun ReplyLine(
     val hasText = value.isNotBlank()
     val placeholder = replyPlaceholder(generating, editing, dictating, idlePlaceholder)
     val canSend = !generating && (hasText || attachments.isNotEmpty())
+    // Phase D: a send ripples yellow dots out from the send button along the line.
+    var ripple by remember { mutableIntStateOf(0) }
+    val sendInset = with(LocalDensity.current) { Offset(24.dp.toPx(), 28.dp.toPx()) }
+    val send = {
+        ripple++
+        onSend()
+    }
     Column(
         modifier
             .fillMaxWidth()
             .navigationBarsPadding()
             .imePadding()
             .padding(start = 20.dp, end = 8.dp, bottom = verticalPadding)
+            .dotRipple(ripple, origin = { size -> Offset(size.width - sendInset.x, size.height - sendInset.y) })
     ) {
         notes()
         if (!queued.isNullOrBlank()) {
@@ -142,7 +157,7 @@ fun ReplyLine(
                     cursorBrush = SolidColor(c.accent),
                     maxLines = 6,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { if (generating) onQueue() else if (canSend) onSend() }),
+                    keyboardActions = KeyboardActions(onSend = { if (generating) onQueue() else if (canSend) send() }),
                     decorationBox = { inner ->
                         if (value.isEmpty()) {
                             Text(
@@ -165,7 +180,7 @@ fun ReplyLine(
                     }
                     StopButton(onStop)
                 }
-                canSend -> RoundIcon(R.drawable.ic_kz_send, "Send", onSend, filled = true)
+                canSend -> RoundIcon(R.drawable.ic_kz_send, "Send", send, filled = true)
                 else -> ReplyMic(active = dictating, level = dictationLevel, onClick = onDictation)
             }
         }

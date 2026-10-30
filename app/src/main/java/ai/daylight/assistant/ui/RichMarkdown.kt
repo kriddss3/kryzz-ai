@@ -36,6 +36,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import ai.daylight.assistant.ui.dot.DataMonoFamily
 import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.effects.DotSteps
+import ai.daylight.assistant.ui.dot.effects.rememberDotBlink
 import ai.daylight.assistant.ui.talk.citationSuperscriptStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -293,8 +295,14 @@ private fun RichInlineText(
     val linkColor = MaterialTheme.colorScheme.primary
     val citationUrls = LocalCitationUrls.current
     val accent = DotTheme.c.accent
-    val annotated = remember(text, linkColor, citationUrls, accent) {
-        richAnnotatedMarkdown(text, linkColor, DataMonoFamily, citationUrls, accent)
+    // Phase D: the caret blinks in hard steps. Only the paragraph holding it blinks, so a
+    // long answer is not rebuilt on every blink.
+    val caretOn = if (STREAMING_CARET in text) {
+        rememberDotBlink(onMs = DotSteps.CARET_ON, offMs = DotSteps.CARET_OFF).value
+    } else true
+    val caretColor = if (caretOn) accent else Color.Transparent
+    val annotated = remember(text, linkColor, citationUrls, accent, caretColor) {
+        richAnnotatedMarkdown(text, linkColor, DataMonoFamily, citationUrls, accent, caretColor)
     }
     ClickableText(
         text = annotated,
@@ -315,7 +323,8 @@ internal fun richAnnotatedMarkdown(
     linkColor: Color,
     codeFontFamily: FontFamily = FontFamily.Monospace,
     citationUrls: List<String> = emptyList(),
-    accent: Color = linkColor
+    accent: Color = linkColor,
+    caretColor: Color = accent
 ): AnnotatedString = buildAnnotatedString {
     val token = Regex(
         "\\[([^]]+)]\\((https?://[^)]+)\\)|\\*\\*([^*]+)\\*\\*|__([^_]+)__|~~([^~]+)~~|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|`([^`]+)`|" +
@@ -328,7 +337,7 @@ internal fun richAnnotatedMarkdown(
             append(part)
             if (index < parts.lastIndex) {
                 append("\u00A0")
-                withStyle(SpanStyle(background = accent)) { append("\u00A0\u00A0") }
+                withStyle(SpanStyle(background = caretColor)) { append("\u00A0\u00A0") }
             }
         }
     }

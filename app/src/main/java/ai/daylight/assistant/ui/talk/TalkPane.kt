@@ -4,6 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -142,6 +145,7 @@ fun TalkPane(
     var selecting by remember(conversationId) { mutableStateOf<String?>(null) }
     val lastAnswerId = messages.lastOrNull { it.role == "ASSISTANT" }?.id
     val listState = rememberLazyListState()
+    val motion = LocalKryzzMotionEnabled.current
 
     // A new question puts the last three board rows and the question on screen.
     LaunchedEffect(conversationId, exchanges.size) {
@@ -187,7 +191,7 @@ fun TalkPane(
                     onToggle = { if (focal) sourcesOpen = !sourcesOpen else localSources = !localSources },
                     citedNumbers = citedNumbers(lastAnswer?.content.orEmpty()),
                     onOpenUrl = { openUrl(context, it) },
-                    motionEnabled = LocalKryzzMotionEnabled.current
+                    motionEnabled = motion
                 )
             }
             Spacer(Modifier.height(if (focal) 18.dp else 10.dp))
@@ -238,7 +242,11 @@ fun TalkPane(
                     showRule = index != past.lastIndex || open,
                     onToggle = { unfolded = if (open) unfolded - exchange.id else unfolded + exchange.id }
                 )
-                if (open) {
+                AnimatedVisibility(
+                    visible = open,
+                    enter = if (motion) unrollEnter else EnterTransition.None,
+                    exit = if (motion) unrollExit else ExitTransition.None
+                ) {
                     Column(Modifier.padding(top = 14.dp, bottom = 18.dp)) { Exchange(exchange, focal = false) }
                 }
             }

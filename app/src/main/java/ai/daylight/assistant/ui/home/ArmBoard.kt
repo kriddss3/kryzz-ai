@@ -22,7 +22,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -45,15 +48,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
+import ai.daylight.assistant.ui.dot.DotMotion
 import ai.daylight.assistant.ui.dot.DotPalette
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.MonoFamily
 import ai.daylight.assistant.ui.dot.dashedBorder
+import ai.daylight.assistant.ui.dot.effects.rememberDotTicker
 import ai.daylight.assistant.ui.dot.mascot.SquidPose
 import ai.daylight.assistant.ui.dot.mascot.SquidSprite
+import ai.daylight.assistant.ui.dot.mascot.SquidWave
 import ai.daylight.assistant.ui.dot.mascot.drawSquid
 import ai.daylight.assistant.ui.shell.Arm
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
@@ -116,9 +125,30 @@ internal data class BoardGeometry(val pitch: Float, val rowHeight: Float) {
             return BoardGeometry(pitch, fit.coerceIn(MIN_ROW, ROW))
         }
 
-        /** Busy cables carry yellow runs: 3 lit dots in every 9 (phase D steps [phase]). */
+        /**
+         * Busy cables carry yellow runs: 3 lit dots in every 9. Each step of [phase] moves the
+         * runs one dot along, from the squid towards the port.
+         */
         fun busyDotLit(index: Int, phase: Int = 0): Boolean = Math.floorMod(index - phase, 9) < 3
     }
+}
+
+/** The board's stepped motion (phase D). One clock drives the cables and the squid. */
+internal object BoardMotion {
+    /** Lit dots move one dot along a busy cable per step (kit DotMotion.dotStep). */
+    const val STEP_MS = DotMotion.DotStep
+
+    /** The squid shows a new wave frame every this many cable steps (140ms). */
+    const val SQUID_EVERY = SquidWave.FRAME_MS / DotMotion.DotStep
+
+    /** A finished port lights up once for this long. */
+    const val FLASH_MS = 280L
+
+    fun squidStep(tick: Int): Int = tick / SQUID_EVERY
+
+    /** Arms whose port was busy in [before] and is idle in [now]: their work just finished. */
+    fun finished(before: Map<Arm, PortState>, now: List<ArmPort>): Set<Arm> =
+        now.filter { it.state == PortState.IDLE && before[it.arm] == PortState.BUSY }.map { it.arm }.toSet()
 }
 
 @DrawableRes
@@ -137,6 +167,9 @@ internal fun armIcon(arm: Arm): Int = when (arm) {
  * The arm board: the squid top left with its eight arms running on as dotted cables that
  * step down into eight ports, and the date and a status sentence beside it. One Canvas
  * draws the squid, cables and nodes; the ports are ordinary tappable rows on top.
+ *
+ * Motion (phase D), one effect on one clock: while anything runs, yellow dots step along
+ * the busy cables and the squid waves its arms; when a job finishes its port flashes once.
  */
 @Composable
 fun ArmBoard(
@@ -149,6 +182,24 @@ fun ArmBoard(
 ) {
     val c = DotTheme.c
     val density = LocalDensity.current
+    val motion = LocalKryzzMotionEnabled.current
+    val anyBusy = ports.any { it.state == PortState.BUSY }
+    val tick = rememberDotTicker(BoardMotion.STEP_MS, running = anyBusy)
+    val flashing = remember { mutableStateOf(emptySet<Arm>()) }
+    val lastStates = remember { HashMap<Arm, PortState>() }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(ports.map { it.state }) {
+        val done = BoardMotion.finished(lastStates, ports)
+        lastStates.clear()
+        ports.forEach { lastStates[it.arm] = it.state }
+        if (done.isEmpty() || !motion) return@LaunchedEffect
+        flashing.value = flashing.value + done
+        // Outside this effect, so a state change during the flash can't leave it lit.
+        scope.launch {
+            delay(BoardMotion.FLASH_MS)
+            flashing.value = flashing.value - done
+        }
+    }
     BoxWithConstraints(modifier) {
         val boardWidth = maxWidth.value
         // Rows are sized for the tallest viewport seen at this width, so opening the
@@ -159,7 +210,11 @@ fun ArmBoard(
         val geo = remember(maxWidth, viewport) { BoardGeometry.compute(maxWidth.value, viewport) }
         Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Box(Modifier.fillMaxWidth().height(geo.height.dp)) {
-                Canvas(Modifier.fillMaxSize()) { drawBoard(geo, ports, c) }
+                Canvas(Modifier.fillMaxSize()) {
+                    val phase = if (motion) tick.intValue else 0
+                    val squid = if (anyBusy && motion) SquidWave.frame(BoardMotion.squidStep(phase)) else SquidPose.STANDBY.grid
+                    drawBoard(geo, ports, c, phase, squid, flashing.value)
+                }
 
                 // Date and status beside the squid. No greeting: it says what is running.
                 Column(
@@ -206,12 +261,19 @@ fun ArmBoard(
     }
 }
 
-private fun DrawScope.drawBoard(geo: BoardGeometry, ports: List<ArmPort>, c: DotPalette) {
+private fun DrawScope.drawBoard(
+    geo: BoardGeometry,
+    ports: List<ArmPort>,
+    c: DotPalette,
+    phase: Int,
+    squid: BooleanArray,
+    flashing: Set<Arm>,
+) {
     val dp = density
     drawSquid(
         origin = Offset(0f, geo.squidTop * dp),
         pitchPx = geo.pitch * dp,
-        grid = SquidPose.STANDBY.grid,
+        grid = squid,
         on = c.textPrimary,
         eye = c.accent,
         off = c.dotOff
@@ -220,16 +282,19 @@ private fun DrawScope.drawBoard(geo: BoardGeometry, ports: List<ArmPort>, c: Dot
     val busyR = 1.8f * dp
     ports.forEachIndexed { i, port ->
         val dots = geo.cableDots(i)
-        when (port.state) {
-            PortState.BUSY -> {
+        val flash = port.arm in flashing
+        when {
+            // Just finished: the whole cable lights white once, then goes back to grey.
+            flash -> drawPoints(dots.map { it * dp }, PointMode.Points, c.textPrimary, strokeWidth = busyR * 2f, cap = StrokeCap.Round)
+            port.state == PortState.BUSY -> {
                 val lit = ArrayList<Offset>()
                 val dark = ArrayList<Offset>()
-                dots.forEachIndexed { j, o -> (if (BoardGeometry.busyDotLit(j)) lit else dark) += o * dp }
+                dots.forEachIndexed { j, o -> (if (BoardGeometry.busyDotLit(j, phase)) lit else dark) += o * dp }
                 drawPoints(dark, PointMode.Points, c.borderStrong, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
                 drawPoints(lit, PointMode.Points, c.accent, strokeWidth = busyR * 2f, cap = StrokeCap.Round)
             }
-            PortState.IDLE -> drawPoints(dots.map { it * dp }, PointMode.Points, c.borderStrong, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
-            PortState.UNLIT -> drawPoints(dots.map { it * dp }, PointMode.Points, c.surfaceRaised, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
+            port.state == PortState.IDLE -> drawPoints(dots.map { it * dp }, PointMode.Points, c.borderStrong, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
+            else -> drawPoints(dots.map { it * dp }, PointMode.Points, c.surfaceRaised, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
         }
         val ring = when (port.state) {
             PortState.BUSY -> c.accent
@@ -237,7 +302,12 @@ private fun DrawScope.drawBoard(geo: BoardGeometry, ports: List<ArmPort>, c: Dot
             PortState.IDLE -> c.textPrimary
         }
         val stroke = 1.5f * dp
-        drawCircle(ring, radius = 4f * dp - stroke / 2f, center = Offset(geo.nodeX * dp, geo.portCentre(i) * dp), style = Stroke(stroke))
+        val node = Offset(geo.nodeX * dp, geo.portCentre(i) * dp)
+        if (flash) {
+            drawCircle(c.textPrimary, radius = 4f * dp, center = node)
+        } else {
+            drawCircle(ring, radius = 4f * dp - stroke / 2f, center = node, style = Stroke(stroke))
+        }
     }
 }
 
