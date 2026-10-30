@@ -130,7 +130,7 @@ internal fun PromptCard(
                         .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                         .semantics { contentDescription = "Prompt" },
                     textStyle = body.copy(color = c.textPrimary),
-                    cursorBrush = SolidColor(c.accent),
+                    cursorBrush = SolidColor(c.accentText),
                     minLines = 2,
                     maxLines = 8,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -343,7 +343,7 @@ internal fun RenderProgress(elapsed: String, status: String, detail: String, mod
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val count = ((maxWidth + 6.dp) / 14.dp).toInt().coerceIn(6, 24)
             // DotProgress holds a still comet when motion is off.
-            DotProgress(progress = null, count = count, dot = 8.dp, gap = 6.dp, on = c.accent, off = c.dotOff)
+            DotProgress(progress = null, count = count, dot = 8.dp, gap = 6.dp, on = c.accentText, off = c.dotOff)
         }
         Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             // The 5x7 dot face: Doto has no clean colon for the clock.

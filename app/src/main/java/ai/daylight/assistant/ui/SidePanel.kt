@@ -84,9 +84,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** The drawer is intentionally solid so text and folders remain readable over every background. */
-internal fun panelSurfaceOpacity(@Suppress("UNUSED_PARAMETER") preferred: Float): Float = 1f
-
 internal data class LogoTapProgress(val count: Int = 0, val lastTapAtMs: Long = 0L)
 internal data class LogoTapOutcome(val progress: LogoTapProgress, val openAbout: Boolean)
 

@@ -110,7 +110,13 @@ fun DepartureRow(
     modifier: Modifier = Modifier,
 ) {
     val c = DotTheme.c
-    val dotColor = if (newest) c.textPrimary else DotGrey.G600
+    // Older rows dim: grey-600 on black (7.7:1). On light that grey is 2.5:1, so they use the
+    // tertiary grey there instead (4.5:1).
+    val dotColor = when {
+        newest -> c.textPrimary
+        c.dark -> DotGrey.G600
+        else -> c.textTertiary
+    }
     val timeColor = if (newest) c.textPrimary else c.textTertiary
     Column(modifier.fillMaxWidth()) {
         Row(

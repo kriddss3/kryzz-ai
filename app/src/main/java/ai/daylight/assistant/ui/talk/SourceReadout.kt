@@ -284,7 +284,7 @@ private fun SourceRow(item: ReadoutItem, cite: Int?, onOpenUrl: (String) -> Unit
     val url = item.url
     val labelColor = when (item.state) {
         SourceState.READ -> c.textTertiary
-        SourceState.LIVE -> c.accent
+        SourceState.LIVE -> c.accentText
         SourceState.QUEUED -> c.textDisabled
     }
     val titleColor = if (item.state == SourceState.QUEUED) c.textDisabled else c.textPrimary
@@ -308,7 +308,7 @@ private fun SourceRow(item: ReadoutItem, cite: Int?, onOpenUrl: (String) -> Unit
                     buildAnnotatedString {
                         append(item.title)
                         if (cite != null) {
-                            withStyle(citationSuperscriptStyle(c.accent)) { append(cite.toString()) }
+                            withStyle(citationSuperscriptStyle(c.accentText)) { append(cite.toString()) }
                         }
                     },
                     Modifier.padding(top = 2.dp),

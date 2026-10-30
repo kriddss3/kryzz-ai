@@ -5,11 +5,8 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -17,29 +14,19 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -59,15 +46,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.ui.dot.DotMotion
-import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
-import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
-import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -101,7 +84,7 @@ fun DotProgress(
     count: Int = 24,
     dot: Dp = 4.dp,
     gap: Dp = 3.dp,
-    on: Color = DotTheme.c.accent,
+    on: Color = DotTheme.c.accentText,
     off: Color = DotTheme.c.dotOff,
 ) {
     val motion = LocalKryzzMotionEnabled.current
@@ -114,39 +97,6 @@ fun DotProgress(
             val tail = progress == null && motion && i == head - 3
             drawCircle(if (lit) on.copy(alpha = if (tail) .45f else 1f) else off, d / 2, Offset(i * (d + g) + d / 2, d / 2))
         }
-    }
-}
-
-/* EFFECT 3: glyph pulse, a breathing LED dot with expanding halo rings (still when motion is off). */
-@Composable
-fun GlyphPulse(modifier: Modifier = Modifier, size: Dp = 48.dp, color: Color = DotTheme.c.accent, periodMs: Int = DotMotion.Pulse) {
-    val p = if (LocalKryzzMotionEnabled.current) {
-        val t = rememberInfiniteTransition(label = "pulse")
-        t.animateFloat(0f, 1f, infiniteRepeatable(tween(periodMs, easing = LinearEasing)), label = "p").value
-    } else 0f
-    Canvas(modifier.size(size)) {
-        val r = this.size.minDimension / 2
-        val breathe = 0.55f + 0.45f * (0.5f + 0.5f * cos(2 * PI.toFloat() * p))
-        for (k in 0..1) {
-            val q = (p + k * .5f) % 1f
-            drawCircle(color.copy(alpha = (1 - q) * .35f), r * (.25f + .75f * q), style = Stroke(1.dp.toPx()))
-        }
-        drawCircle(color.copy(alpha = breathe), r * .22f)
-    }
-}
-
-/* EFFECT 4: recording dot, a hard blink (600 on / 400 off) plus a mono timer. */
-@Composable
-fun RecordingIndicator(elapsedSec: Int, modifier: Modifier = Modifier, color: Color = DotTheme.c.recording) {
-    val lit = rememberDotBlink()
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).graphicsLayer { alpha = if (lit.value) 1f else .15f }.background(color, DotRadius.Pill))
-        Spacer(Modifier.width(8.dp))
-        Text(
-            String.format(Locale.US, "REC  %02d:%02d", elapsedSec / 60, elapsedSec % 60),
-            style = DotType.Label,
-            color = DotTheme.c.textPrimary
-        )
     }
 }
 
@@ -165,7 +115,7 @@ fun VoiceDotWave(
     cols: Int? = null,
     peakFrom: Int? = null,
     on: Color = DotTheme.c.textPrimary,
-    peak: Color = DotTheme.c.accent,
+    peak: Color = DotTheme.c.accentText,
     off: Color = DotTheme.c.dotOff
 ) = VoiceDotWave({ levels }, modifier, rows, dot, gap, cols, peakFrom, on, peak, off)
 
@@ -180,7 +130,7 @@ fun VoiceDotWave(
     cols: Int? = null,
     peakFrom: Int? = null,
     on: Color = DotTheme.c.textPrimary,
-    peak: Color = DotTheme.c.accent,
+    peak: Color = DotTheme.c.accentText,
     off: Color = DotTheme.c.dotOff
 ) {
     val sized = if (cols != null) modifier.fillMaxWidth().aspectRatio(cols.toFloat() / rows)
@@ -300,22 +250,6 @@ fun Modifier.dotGrid(color: Color, pitch: Dp = 8.dp, radius: Dp = 1.dp) = drawBe
     }
 }
 
-/* EFFECT 9: ticker, an uppercase mono marquee for status lines (cut off, still, when motion is off). */
-@Composable
-fun Ticker(text: String, modifier: Modifier = Modifier) {
-    val marquee = if (LocalKryzzMotionEnabled.current) {
-        Modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = 40.dp, initialDelayMillis = 800)
-    } else Modifier
-    Text(
-        text.uppercase(),
-        style = DotType.Label,
-        color = DotTheme.c.textSecondary,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier.then(marquee)
-    )
-}
-
 /** Four discrete steps: the toggle thumb moves mechanically. */
 private val FourSteps = Easing { (it * 4).toInt() / 4f }
 
@@ -369,38 +303,6 @@ fun DotToggle(checked: Boolean, onChange: ((Boolean) -> Unit)?, modifier: Modifi
             else -> c.textDisabled
         }
         drawCircle(knobColour, knob, Offset(start + x * (end - start), size.height / 2f))
-    }
-}
-
-/* EFFECT 11: button press, 80ms scale to .96 + fill inverts while pressed + haptic tick. */
-@Composable
-fun DotButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, primary: Boolean = true) {
-    val c = DotTheme.c
-    val src = remember { MutableInteractionSource() }
-    val pressed by src.collectIsPressedAsState()
-    val haptic = LocalHapticFeedback.current
-    val s by animateFloatAsState(if (pressed) .96f else 1f, tween(DotMotion.Instant), label = "s")
-    val bg = when {
-        primary && pressed -> c.textPrimary
-        primary -> c.accent
-        pressed -> c.surfaceHigh
-        else -> Color.Transparent
-    }
-    val fg = if (primary) c.onAccent else c.textPrimary
-    Box(
-        modifier
-            .scale(s)
-            .heightIn(min = 48.dp)
-            .background(bg, DotRadius.Pill)
-            .then(if (primary) Modifier else Modifier.border(1.dp, c.borderStrong, DotRadius.Pill))
-            .clickable(src, null, role = Role.Button) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onClick()
-            }
-            .padding(horizontal = 24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, style = DotType.Button, color = fg)
     }
 }
 
@@ -483,7 +385,7 @@ private fun ActiveStepMark(modifier: Modifier, size: Dp) {
             val a = 2 * PI * k / 10 - PI / 2
             val lit = ((k - head + 10) % 10) < 3
             drawCircle(
-                if (lit) c.accent else c.textTertiary.copy(alpha = .35f),
+                if (lit) c.accentText else c.textTertiary.copy(alpha = .35f),
                 1.3.dp.toPx(),
                 Offset(center.x + r * cos(a).toFloat(), center.y + r * sin(a).toFloat())
             )
@@ -553,7 +455,7 @@ private fun SettledStepMark(state: StepState, animate: Boolean, modifier: Modifi
 /* EFFECT 14: dot ripple. Dots light up as a ring passes their distance from the origin.
  * Nothing runs when motion is off. [Modifier.dotRipple] is the same ring behind content. */
 @Composable
-fun DotRipple(trigger: Int, modifier: Modifier = Modifier, origin: Offset? = null, pitch: Dp = 10.dp, color: Color = DotTheme.c.accent) {
+fun DotRipple(trigger: Int, modifier: Modifier = Modifier, origin: Offset? = null, pitch: Dp = 10.dp, color: Color = DotTheme.c.accentText) {
     val motion = LocalKryzzMotionEnabled.current
     val p = remember { Animatable(1f) }
     LaunchedEffect(trigger) {

@@ -133,7 +133,7 @@ fun PlanCard(plan: AgentPlan, live: Boolean, activity: String?, modifier: Modifi
         DotBar(
             count = PlanCardModel.PROGRESS_DOTS,
             lit = PlanCardModel.litDots(plan, live),
-            on = if (live) c.accent else c.textPrimary,
+            on = if (live) c.accentText else c.textPrimary,
             off = c.dotOff,
             dot = 6.dp,
             gap = 5.dp,
@@ -217,7 +217,7 @@ private fun CardHeader(@DrawableRes icon: Int, title: String, trailing: String, 
         Icon(painterResource(icon), null, Modifier.size(16.dp), tint = c.textPrimary)
         Spacer(Modifier.width(10.dp))
         Text(title.uppercase(Locale.US), Modifier.weight(1f), style = DotType.Label, color = c.textPrimary)
-        Text(trailing, style = DotType.Caption, color = if (trailingLive) c.accent else c.textSecondary, maxLines = 1)
+        Text(trailing, style = DotType.Caption, color = if (trailingLive) c.accentText else c.textSecondary, maxLines = 1)
     }
 }
 
@@ -257,7 +257,7 @@ private fun StepRow(title: String, state: StepState, detail: String?, connector:
                     detail.uppercase(Locale.getDefault()),
                     Modifier.padding(top = 4.dp),
                     style = DotType.Caption,
-                    color = c.accent,
+                    color = c.accentText,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

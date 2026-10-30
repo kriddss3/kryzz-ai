@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -36,7 +35,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -71,14 +69,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -96,11 +87,8 @@ import ai.daylight.assistant.domain.AgentPlan
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ConversationUsage
 import ai.daylight.assistant.domain.GeneratedOutput
-import ai.daylight.assistant.domain.MessageStatus
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
-import ai.daylight.assistant.domain.SwarmPhase
-import ai.daylight.assistant.domain.SwarmStatus
 import androidx.compose.ui.res.painterResource
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotColors
@@ -127,10 +115,7 @@ import ai.daylight.assistant.ui.shell.LocalInkStrip
 import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStripEffect
 import ai.daylight.assistant.ui.dot.DotColorsLight
-import ai.daylight.assistant.ui.dot.DataMonoFamily
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
-import ai.daylight.assistant.ui.agent.BotMood
-import ai.daylight.assistant.ui.agent.MascotState
 import ai.daylight.assistant.voice.VoicePhase
 import java.io.File
 import java.util.Locale
@@ -172,41 +157,6 @@ internal fun agentPrimaryColor(darkBackground: Boolean): Color =
 
 internal fun agentOnPrimaryColor(darkBackground: Boolean): Color =
     if (darkBackground) DotColors.Bg else DotColorsLight.Surface
-
-internal fun agentBotMood(
-    mode: AssistantMode,
-    generating: Boolean,
-    error: String?,
-    activities: List<String>,
-    swarmStatus: SwarmStatus?,
-    streamingHasText: Boolean = false
-): BotMood {
-    if (mode != AssistantMode.AGENT) return BotMood.IDLE
-    if (error != null || swarmStatus?.phase == SwarmPhase.FAILED) return BotMood.ERROR
-    if (!generating && swarmStatus?.phase == SwarmPhase.DONE) return BotMood.SUCCESS
-    val swarmActive = swarmStatus?.phase in setOf(SwarmPhase.PLANNING, SwarmPhase.RUNNING, SwarmPhase.SYNTHESIZING)
-    if (generating && (activities.isNotEmpty() || swarmActive)) return BotMood.TOOLING
-    // Once the model is actively streaming words into the bubble it is "speaking";
-    // before any text lands (or while waiting on the first token) it is "thinking".
-    if (generating && streamingHasText) return BotMood.SPEAKING
-    return if (generating) BotMood.THINKING else BotMood.IDLE
-}
-
-/**
- * Picks the mascot GIF state for a single agent-mode assistant bubble, based on the row's
- * lifecycle: thinking before any text lands (or while tools run), speaking while the answer
- * streams out, and standby once the row is finished.
- */
-internal fun agentMessageMascotState(message: MessageEntity): MascotState = when {
-    message.role != "ASSISTANT" -> MascotState.STANDBY
-    message.status == MessageStatus.STREAMING.name && message.content.isBlank() -> MascotState.THINKING
-    message.status == MessageStatus.STREAMING.name -> MascotState.SPEAKING
-    message.status == MessageStatus.ERROR.name -> MascotState.THINKING
-    else -> MascotState.STANDBY
-}
-
-internal fun nextTypeOnLength(current: Int, target: Int): Int =
-    minOf(target, current + 8)
 
 internal fun formatLatencyMs(value: Long?): String =
     value?.let { String.format(Locale.US, "%.2f s", it / 1_000.0) } ?: "Not available"
@@ -928,37 +878,6 @@ private fun CodeBlock(language: String, content: String) {
     }
 }
 
-@Composable
-private fun MarkdownParagraph(text: String, contentColor: Color) {
-    val context = LocalContext.current
-    val annotated = annotatedMarkdown(text, MaterialTheme.colorScheme.primary)
-    ClickableText(
-        text = annotated,
-        style = MaterialTheme.typography.bodyLarge.merge(TextStyle(color = contentColor)),
-        onClick = { offset ->
-            annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it.item))) } }
-        }
-    )
-}
-
-private fun annotatedMarkdown(input: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
-    val token = Regex("\\[([^]]+)]\\((https?://[^)]+)\\)|\\*\\*([^*]+)\\*\\*|`([^`]+)`")
-    var cursor = 0
-    token.findAll(input).forEach { match ->
-        append(input.substring(cursor, match.range.first))
-        when {
-            match.groupValues[1].isNotEmpty() -> {
-                pushStringAnnotation("URL", match.groupValues[2]); pushStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
-                append(match.groupValues[1]); pop(); pop()
-            }
-            match.groupValues[3].isNotEmpty() -> { pushStyle(SpanStyle(fontWeight = FontWeight.Bold)); append(match.groupValues[3]); pop() }
-            else -> { pushStyle(SpanStyle(fontFamily = DataMonoFamily)); append(match.groupValues[4]); pop() }
-        }
-        cursor = match.range.last + 1
-    }
-    append(input.substring(cursor))
-}
-
 /** Writes a generated file to a place the user picked (Run's and the Inkwell's Save). */
 internal suspend fun writeOutput(context: Context, uri: Uri, output: GeneratedOutput) {
     context.contentResolver.openOutputStream(uri)?.use { destination ->
@@ -1119,7 +1038,7 @@ private fun VoiceChatOverlay(
                 rows = rows,
                 cols = VOICE_WAVE_COLS,
                 peakFrom = peakFrom,
-                peak = if (peakFrom != null) c.accent else c.textPrimary,
+                peak = if (peakFrom != null) c.accentText else c.textPrimary,
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
                     .widthIn(max = 420.dp)
@@ -1144,7 +1063,7 @@ private fun VoiceChatOverlay(
                     Modifier
                         .size(ring)
                         .clip(CircleShape)
-                        .border(1.5.dp, c.accent, CircleShape)
+                        .border(1.5.dp, c.accentText, CircleShape)
                         .clickable(onClick = onTap)
                         .testTag("voice_primary_action")
                         .semantics {

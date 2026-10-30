@@ -2,7 +2,6 @@ package ai.daylight.assistant.ui
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import ai.daylight.assistant.ui.theme.effectiveSurfaceOpacity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,13 +11,6 @@ import kotlin.math.max
 import kotlin.math.min
 
 class UiReviewContractTest {
-    @Test
-    fun glassOpacityMatchesThePersistedAndDisplayedValue() {
-        assertEquals(0.42f, effectiveSurfaceOpacity(0.42f), 0.0001f)
-        assertEquals(0.74f, effectiveSurfaceOpacity(0.74f), 0.0001f)
-        assertEquals(0.96f, effectiveSurfaceOpacity(0.96f), 0.0001f)
-    }
-
     @Test
     fun darkAgentPrimaryGraphicContrastMeetsThreeToOne() {
         val foreground = agentOnPrimaryColor(darkBackground = true)
@@ -87,13 +79,6 @@ class UiReviewContractTest {
 
         assertTrue(source.contains(".statusBarsPadding()"))
         assertTrue(source.contains(".navigationBarsPadding()"))
-    }
-
-    @Test
-    fun sidePanelIsFullyOpaqueAtEveryGlassSetting() {
-        assertEquals(1f, panelSurfaceOpacity(0.42f), 0.0001f)
-        assertEquals(1f, panelSurfaceOpacity(0.68f), 0.0001f)
-        assertEquals(1f, panelSurfaceOpacity(0.99f), 0.0001f)
     }
 
     private fun contrastRatio(first: Color, second: Color): Float {

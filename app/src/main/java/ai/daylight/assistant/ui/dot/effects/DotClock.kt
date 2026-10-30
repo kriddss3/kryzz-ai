@@ -162,7 +162,7 @@ fun Modifier.dotRipple(
     color: Color? = null,
 ): Modifier = composed {
     val motion = LocalKryzzMotionEnabled.current
-    val accent = color ?: DotTheme.c.accent
+    val accent = color ?: DotTheme.c.accentText
     val p = remember { Animatable(1f) }
     LaunchedEffect(trigger) {
         if (trigger > 0 && motion) {

@@ -53,7 +53,9 @@ object DotColorsLight {
     val DotOff = Color(0xFFDCDCDC)
     val TextPrimary = Color(0xFF000000)
     val TextSecondary = Color(0xFF595A5A)
-    val TextTertiary = Color(0xFF858787)
+    // Kit grey-800, one step darker than the kit's light tertiary (#858787, 3.3:1 on Bg):
+    // mono captions are small, so they need 4.5:1 to stay readable.
+    val TextTertiary = Color(0xFF6F7070)
     val TextDisabled = Color(0xFF9B9D9D) // kit grey-600
     val Accent = Color(0xFFFFC700) // fills only on light
     val AccentText = Color(0xFF7A5900)

@@ -239,7 +239,7 @@ fun DotField(
                     minLines = minLines,
                     maxLines = maxLines,
                     textStyle = DotType.Body.copy(color = if (enabled) c.textPrimary else c.textTertiary),
-                    cursorBrush = SolidColor(c.accent),
+                    cursorBrush = SolidColor(c.accentText),
                     visualTransformation = visualTransformation,
                     keyboardOptions = keyboardOptions,
                     keyboardActions = keyboardActions,

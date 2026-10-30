@@ -78,7 +78,7 @@ internal fun QuestionCard(
                 if (answeredWith != null) "ANSWERED" else "KRYZZ ASKS",
                 Modifier.weight(1f),
                 style = DotType.Label,
-                color = if (waiting) c.accent else c.textTertiary
+                color = if (waiting) c.accentText else c.textTertiary
             )
             Box(
                 Modifier
@@ -152,7 +152,7 @@ internal fun QuestionCard(
                 enabled = enabled,
                 singleLine = true,
                 textStyle = DotType.Body.copy(color = c.textPrimary),
-                cursorBrush = SolidColor(c.accent),
+                cursorBrush = SolidColor(c.accentText),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { if (freeText.isNotBlank()) onAnswer(freeText.trim()) }),
                 modifier = Modifier

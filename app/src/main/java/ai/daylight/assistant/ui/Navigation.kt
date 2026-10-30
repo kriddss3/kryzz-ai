@@ -54,8 +54,6 @@ import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.ModelPurpose
-import ai.daylight.assistant.domain.BackgroundStyle
-import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.ui.home.HomeScreen
 import ai.daylight.assistant.ui.link.LinkScreen
 import ai.daylight.assistant.ui.crew.BotDetailScreen
@@ -143,9 +141,6 @@ internal fun topLevelTabForRoute(route: String?): MainTab? = when {
 fun AppNavigation(
     container: AppContainer,
     onboardingComplete: Boolean,
-    backgroundStyle: BackgroundStyle = BackgroundStyle.CONSTELLATION,
-    backgroundBlur: Float = 0f,
-    colouredGradient: GradientPalette = GradientPalette.OCEAN,
     dotBackground: Boolean = false
 ) {
     key(onboardingComplete) {
@@ -481,17 +476,7 @@ fun AppNavigation(
                 }
             }
         }
-        val rootBackgroundStyle = if (currentRoute == Routes.CHAT || currentRoute?.startsWith("chat/") == true) {
-            backgroundStyle
-        } else {
-            backgroundStyle
-        }
-        DaylightBackground(
-            style = rootBackgroundStyle,
-            blurRadius = backgroundBlur,
-            colouredGradient = colouredGradient,
-            dotGrid = dotBackground && dotGridForRoute(currentRoute)
-        ) {
+        DaylightBackground(dotGrid = dotBackground && dotGridForRoute(currentRoute)) {
         KryzzSidePanelHost(
             open = panelOpen,
             onClose = { panelOpen = false },
@@ -720,7 +705,9 @@ fun AppNavigation(
                             if (exists) id else container.conversations.createConversation()
                         }
                         rememberedChatRoutes[agentConversationId] = AssistantMode.AGENT to AgentCapability.AUTO
-                        openSingleConversation(Routes.chat(agentConversationId, AssistantMode.AGENT))
+                        withContext(Dispatchers.Main.immediate) {
+                            openSingleConversation(Routes.chat(agentConversationId, AssistantMode.AGENT))
+                        }
                     }
                     true
                 },
@@ -730,9 +717,11 @@ fun AppNavigation(
                     scope.launch {
                         container.conversations.deleteEmptyExcept(chatDraftConversationIds())
                         val newId = container.conversations.createConversation()
-                        activeConversationId = newId
-                        rememberedChatRoutes[newId] = mode to AgentCapability.AUTO
-                        openSingleConversation(Routes.chat(newId, mode))
+                        withContext(Dispatchers.Main.immediate) {
+                            activeConversationId = newId
+                            rememberedChatRoutes[newId] = mode to AgentCapability.AUTO
+                            openSingleConversation(Routes.chat(newId, mode))
+                        }
                     }
                 },
                 onComposerFocusChanged = {},

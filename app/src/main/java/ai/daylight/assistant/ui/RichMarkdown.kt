@@ -294,7 +294,7 @@ private fun RichInlineText(
     val context = LocalContext.current
     val linkColor = MaterialTheme.colorScheme.primary
     val citationUrls = LocalCitationUrls.current
-    val accent = DotTheme.c.accent
+    val accent = DotTheme.c.accentText
     // Phase D: the caret blinks in hard steps. Only the paragraph holding it blinks, so a
     // long answer is not rebuilt on every blink.
     val caretOn = if (STREAMING_CARET in text) {

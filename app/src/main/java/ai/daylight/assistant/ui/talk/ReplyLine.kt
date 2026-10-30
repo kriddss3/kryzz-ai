@@ -154,7 +154,7 @@ fun ReplyLine(
                         .onFocusChanged { onFocusChanged(it.isFocused) }
                         .semantics { contentDescription = placeholder },
                     textStyle = DotType.Answer.copy(color = c.textPrimary),
-                    cursorBrush = SolidColor(c.accent),
+                    cursorBrush = SolidColor(c.accentText),
                     maxLines = 6,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { if (generating) onQueue() else if (canSend) send() }),
@@ -195,7 +195,7 @@ internal fun NoteRow(label: String, text: String, action: String, onAction: () -
         Modifier.fillMaxWidth().heightIn(min = 40.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = DotType.Label, color = if (accent) c.accent else c.textTertiary)
+        Text(label, style = DotType.Label, color = if (accent) c.accentText else c.textTertiary)
         Spacer(Modifier.width(10.dp))
         Text(
             text.replace('\n', ' '),

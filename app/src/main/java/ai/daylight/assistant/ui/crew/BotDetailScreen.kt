@@ -441,7 +441,7 @@ private fun RunCard(run: BotRun, now: Long, zone: ZoneId, onOpen: () -> Unit) {
             Text(
                 CrewModel.runTag(run.state),
                 style = DotType.Caption,
-                color = if (run.state == RunState.RUNNING) c.accent else c.textTertiary
+                color = if (run.state == RunState.RUNNING) c.accentText else c.textTertiary
             )
         }
         Row(Modifier.heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -487,7 +487,7 @@ private fun RunMark(state: RunState) {
 private fun UserTurn(message: MessageEntity, now: Long, zone: ZoneId) {
     val c = DotTheme.c
     Row(Modifier.fillMaxWidth()) {
-        Box(Modifier.padding(top = 8.dp).size(7.dp).background(c.accent, CircleShape))
+        Box(Modifier.padding(top = 8.dp).size(7.dp).background(c.accentText, CircleShape))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(message.content, style = DotType.Title.copy(lineHeight = 23.sp), color = c.textPrimary)
@@ -693,7 +693,7 @@ private fun BotRuns(runs: List<BotRun>, now: Long, zone: ZoneId, routinesEmpty: 
                             "${CrewModel.whenLabel(run.at, now, zone)} ${CrewModel.runTag(run.state)}".uppercase(Locale.US),
                             Modifier.padding(top = 2.dp),
                             style = DotType.Caption.copy(fontSize = 10.sp),
-                            color = if (run.state == RunState.RUNNING) c.accent else c.textTertiary
+                            color = if (run.state == RunState.RUNNING) c.accentText else c.textTertiary
                         )
                         val answer = run.answer
                         if (answer != null) {
@@ -753,7 +753,7 @@ private fun BotComposer(
                 onValueChange = onValueChange,
                 modifier = Modifier.fillMaxWidth().testTag("bot_message").semantics { contentDescription = placeholder },
                 textStyle = DotType.Body.copy(fontSize = 16.sp, color = c.textPrimary),
-                cursorBrush = SolidColor(c.accent),
+                cursorBrush = SolidColor(c.accentText),
                 maxLines = 5,
                 decorationBox = { inner ->
                     if (value.isEmpty()) {

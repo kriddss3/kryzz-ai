@@ -124,7 +124,7 @@ fun QualityPill(quality: AgentQuality, onClick: () -> Unit, modifier: Modifier =
         ) {
             Icon(painterResource(RunQuality.icon(quality)), null, Modifier.size(14.dp), tint = c.textPrimary)
             Text(quality.label.uppercase(Locale.US), style = DotType.Label, color = c.textSecondary)
-            SignalDots(RunQuality.signal(quality), if (RunQuality.accentSignal(quality)) c.accent else c.textPrimary)
+            SignalDots(RunQuality.signal(quality), if (RunQuality.accentSignal(quality)) c.accentText else c.textPrimary)
         }
     }
 }

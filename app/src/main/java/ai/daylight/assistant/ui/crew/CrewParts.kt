@@ -47,7 +47,7 @@ import kotlinx.coroutines.delay
 /** The kit's live mark: a yellow ring with a yellow dot inside (`.lv`). */
 @Composable
 internal fun LiveRing(modifier: Modifier = Modifier, size: Dp = 12.dp) {
-    val accent = DotTheme.c.accent
+    val accent = DotTheme.c.accentText
     Canvas(modifier.size(size).clearAndSetSemantics { }) {
         val stroke = 1.5.dp.toPx()
         val r = this.size.minDimension / 2f
@@ -71,7 +71,7 @@ private fun HollowDot(modifier: Modifier = Modifier) {
 internal fun BotStatusLine(status: BotStatus, modifier: Modifier = Modifier) {
     val c = DotTheme.c
     val colour = when (status.kind) {
-        BotStatusKind.RUNNING -> c.accent
+        BotStatusKind.RUNNING -> c.accentText
         BotStatusKind.NEXT -> c.textSecondary
         BotStatusKind.IDLE -> c.textTertiary
     }

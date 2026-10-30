@@ -291,13 +291,13 @@ private fun DrawScope.drawBoard(
                 val dark = ArrayList<Offset>()
                 dots.forEachIndexed { j, o -> (if (BoardGeometry.busyDotLit(j, phase)) lit else dark) += o * dp }
                 drawPoints(dark, PointMode.Points, c.borderStrong, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
-                drawPoints(lit, PointMode.Points, c.accent, strokeWidth = busyR * 2f, cap = StrokeCap.Round)
+                drawPoints(lit, PointMode.Points, c.accentText, strokeWidth = busyR * 2f, cap = StrokeCap.Round)
             }
             port.state == PortState.IDLE -> drawPoints(dots.map { it * dp }, PointMode.Points, c.borderStrong, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
             else -> drawPoints(dots.map { it * dp }, PointMode.Points, c.surfaceRaised, strokeWidth = idleR * 2f, cap = StrokeCap.Round)
         }
         val ring = when (port.state) {
-            PortState.BUSY -> c.accent
+            PortState.BUSY -> c.accentText
             PortState.UNLIT -> c.border
             PortState.IDLE -> c.textPrimary
         }

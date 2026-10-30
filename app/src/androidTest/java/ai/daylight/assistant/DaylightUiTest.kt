@@ -3,6 +3,7 @@ package ai.daylight.assistant
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -66,19 +67,25 @@ class DaylightUiTest {
             container.preferences.setAnimationsEnabled(false)
         }
         compose.activityRule.scenario.recreate()
+        // Home is the start screen: the composer and one port per arm on the board.
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("Message Kryzz…").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(hasContentDescription("Ask, search, or make")).fetchSemanticsNodes().isNotEmpty()
+        }
+        listOf("Talk", "Make", "Find", "Crew", "Run", "Voice", "Link", "Tune").forEach { arm ->
+            compose.onNode(hasContentDescription("$arm, ", substring = true)).assertIsDisplayed()
         }
 
-        // The shell is a left chat menu now: the chat header opens it and the
-        // panel surfaces the conversation list plus the settings entry.
-        compose.onNodeWithContentDescription("Open menu").performClick()
+        // Talk's title opens the chat library drawer.
+        compose.onNode(hasContentDescription("Talk, ", substring = true)).performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasContentDescription("Talk. Open chat library")).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithContentDescription("Talk. Open chat library").performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("library_panel").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("library_panel").assertIsDisplayed()
         compose.onNodeWithText("Search chats").assertIsDisplayed()
         compose.onNodeWithTag("library_new_chat").assertIsDisplayed()
-        compose.onNodeWithTag("library_settings").assertIsDisplayed()
     }
 }

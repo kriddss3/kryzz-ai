@@ -135,11 +135,11 @@ private fun ComingLaterStamp(modifier: Modifier = Modifier) {
     Column(
         modifier
             .rotate(-4f)
-            .dashedBorder(c.accent, width = 1.5.dp, radius = 8.dp, dash = 4.dp, gap = 3.dp)
+            .dashedBorder(c.accentText, width = 1.5.dp, radius = 8.dp, dash = 4.dp, gap = 3.dp)
             .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp)
             .semantics(mergeDescendants = true) {}
     ) {
-        DotMatrixText("COMING LATER", pitch = 2.6.dp, on = c.accent, off = Color.Transparent, contentDescription = "Coming later")
+        DotMatrixText("COMING LATER", pitch = 2.6.dp, on = c.accentText, off = Color.Transparent, contentDescription = "Coming later")
         Spacer(Modifier.height(6.dp))
         Text(
             "FUTURE PROJECT, NOT BUILT YET",
@@ -168,7 +168,7 @@ private fun FlowNode(step: LinkStep) {
             Icon(painterResource(step.icon), null, Modifier.size(22.dp), tint = c.textDisabled)
         }
         Column(Modifier.weight(1f)) {
-            Text(step.title, style = DotType.Title.copy(fontSize = 16.sp, lineHeight = 20.sp), color = DotGrey.G600)
+            Text(step.title, style = DotType.Title.copy(fontSize = 16.sp, lineHeight = 20.sp), color = if (c.dark) DotGrey.G600 else c.textTertiary)
             Spacer(Modifier.height(3.dp))
             Text(step.detail, style = DotType.BodySmall, color = c.textDisabled)
         }
@@ -207,7 +207,7 @@ private fun PreviewRow() {
             Icon(painterResource(R.drawable.ic_kz_voice_wave), null, Modifier.size(18.dp), tint = c.textDisabled)
         }
         Column(Modifier.weight(1f)) {
-            Text("Voice note, 0:42", style = DotType.Title.copy(fontSize = 16.sp, lineHeight = 20.sp), color = DotGrey.G600)
+            Text("Voice note, 0:42", style = DotType.Title.copy(fontSize = 16.sp, lineHeight = 20.sp), color = if (c.dark) DotGrey.G600 else c.textTertiary)
             Spacer(Modifier.height(3.dp))
             Text("would become: 3 to-dos for a Crew bot", style = DotType.BodySmall, color = c.textDisabled)
         }

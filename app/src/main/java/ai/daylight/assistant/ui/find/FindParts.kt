@@ -169,7 +169,7 @@ internal fun FindQueryField(
                 enabled = enabled,
                 singleLine = true,
                 textStyle = DotType.Body.copy(fontSize = 16.sp, color = if (enabled) c.textPrimary else c.textTertiary),
-                cursorBrush = SolidColor(c.accent),
+                cursorBrush = SolidColor(c.accentText),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onSearch() }),
                 interactionSource = source,
@@ -222,12 +222,12 @@ internal fun FilterPill(
             Modifier
                 .height(28.dp)
                 .background(c.surfaceRaised, DotRadius.Pill)
-                .border(1.dp, if (on) c.accent else c.border, DotRadius.Pill)
+                .border(1.dp, if (on) c.accentText else c.border, DotRadius.Pill)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            if (icon != null) Icon(painterResource(icon), null, Modifier.size(14.dp), tint = if (on) c.accent else c.textSecondary)
+            if (icon != null) Icon(painterResource(icon), null, Modifier.size(14.dp), tint = if (on) c.accentText else c.textSecondary)
             Text(
                 label.uppercase(Locale.US),
                 style = DotType.Caption,

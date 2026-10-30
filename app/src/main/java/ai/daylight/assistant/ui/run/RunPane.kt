@@ -126,7 +126,10 @@ fun RunPane(
     var selecting by remember(conversationId) { mutableStateOf<String?>(null) }
     var openLog by remember { mutableStateOf<WorkLog?>(null) }
     val lastAnswerId = messages.lastOrNull { it.role == "ASSISTANT" }?.id
-    val listState = rememberLazyListState()
+    // A new run puts the newest earlier run's row and the new goal at the top. The list starts
+    // there, so a page the pager composes while it measures never has to scroll.
+    val runTarget = (past.size - 1).coerceAtLeast(0)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = runTarget)
 
     // The answer row a run's log hangs on is replaced between tool rounds, so hold on to the
     // last log seen for the run in progress instead of letting its chips blink out.
@@ -136,9 +139,9 @@ fun RunPane(
     LaunchedEffect(generating) { if (generating) heldLog = null }
     val focalLog = currentLog ?: heldLog
 
-    // A new run puts the newest earlier run's row and the new goal at the top.
     LaunchedEffect(conversationId, exchanges.size) {
-        if (exchanges.isNotEmpty()) listState.scrollToItem((past.size - 1).coerceAtLeast(0))
+        val there = listState.firstVisibleItemIndex == runTarget && listState.firstVisibleItemScrollOffset == 0
+        if (exchanges.isNotEmpty() && !there) listState.scrollToItem(runTarget)
     }
 
     @Composable

@@ -281,7 +281,7 @@ fun InkStripLine(text: String, live: Boolean, modifier: Modifier = Modifier, onC
                         for (col in InkStripSpec.LIVE_COLS) for (row in InkStripSpec.LIVE_ROWS) {
                             mark += Offset(col * p + p / 2f, top + row * p + p / 2f)
                         }
-                        drawPoints(mark, PointMode.Points, c.accent, strokeWidth = d, cap = StrokeCap.Round)
+                        drawPoints(mark, PointMode.Points, c.accentText, strokeWidth = d, cap = StrokeCap.Round)
                     }
                 }
             }

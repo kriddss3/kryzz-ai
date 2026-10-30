@@ -80,7 +80,7 @@ fun DotAvatar(
         grid.forEachIndexed { y, row ->
             row.forEachIndexed { x, on ->
                 val colour = when {
-                    on && live && Identicon.liveDot(x, y, phase) -> c.accent
+                    on && live && Identicon.liveDot(x, y, phase) -> c.accentText
                     on -> c.textPrimary
                     else -> off
                 }

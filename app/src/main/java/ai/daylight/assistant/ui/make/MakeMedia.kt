@@ -44,10 +44,6 @@ internal object MakeMedia {
     /** True when the gallery can take the file directly (Android 10+). Older phones use the file picker. */
     val canSaveToGallery: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
-    /** The folder a gallery save lands in, as the user sees it. */
-    fun galleryFolder(output: GeneratedOutput): String =
-        if (output.kind == OutputKind.VIDEO) "Movies/Kryzz" else "Pictures/Kryzz"
-
     /** A file name for the gallery: "kryzz-image-20261029-1021.jpg". */
     fun galleryName(output: GeneratedOutput, now: Long = System.currentTimeMillis()): String {
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(now))

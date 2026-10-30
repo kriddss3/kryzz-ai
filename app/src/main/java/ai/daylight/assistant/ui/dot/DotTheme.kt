@@ -53,7 +53,12 @@ data class DotPalette(
     val textSecondary: Color,
     val textTertiary: Color,
     val textDisabled: Color,
+    /** Yellow fills: buttons, badges, the voice core, the squid's eyes. Black goes on top. */
     val accent: Color,
+    /**
+     * Yellow for text and small marks (dots, hairlines, bars, cursors). The same yellow on
+     * dark; dark gold on light, where yellow text and dots would vanish (1.4:1 on the page).
+     */
     val accentText: Color,
     val accentPressed: Color,
     val accentDim: Color,

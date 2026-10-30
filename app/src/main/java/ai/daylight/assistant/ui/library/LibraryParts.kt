@@ -251,7 +251,7 @@ internal fun LibraryRow(
             DotIconButton(R.drawable.ic_kz_more_vertical, "Actions for ${item.title}", onActions, tint = c.textTertiary, iconSize = 20.dp)
         }
         if (active) {
-            Box(Modifier.align(Alignment.CenterStart).width(2.dp).height(32.dp).background(c.accent))
+            Box(Modifier.align(Alignment.CenterStart).width(2.dp).height(32.dp).background(c.accentText))
         }
         HorizontalDivider(
             Modifier.align(Alignment.BottomStart).padding(start = 20.dp),

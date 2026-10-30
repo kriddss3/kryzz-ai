@@ -94,7 +94,7 @@ fun CostLine(readout: CostReadout, modifier: Modifier = Modifier) {
             DotBar(
                 count = RunCost.DOTS,
                 lit = readout.lit,
-                on = if (readout.warn) c.accent else c.textPrimary,
+                on = if (readout.warn) c.accentText else c.textPrimary,
                 off = c.dotOff,
                 modifier = Modifier.width(81.dp)
             )

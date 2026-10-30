@@ -51,26 +51,22 @@ class MainActivity : FragmentActivity() {
             }
             LaunchedEffect(settings.animationsEnabled) { if (!settings.animationsEnabled) showIntro = false }
             DaylightTheme(
-                settings.themeMode,
-                settings.appPalette,
-                settings.textPalette,
-                settings.fontStyle,
-                settings.fontScale,
-                settings.surfaceOpacity,
-                settings.animationsEnabled
+                mode = settings.themeMode,
+                fontScale = settings.fontScale,
+                animationsEnabled = settings.animationsEnabled
             ) {
                 val gate = LockModel.gate(loaded, settings.biometricLock, unlocked)
                 if (showIntro) {
                     KryzzLaunchIntro { showIntro = false }
                 } else if (gate == LockModel.Gate.WAIT) {
                     // A blank frame while the stored settings load (a few milliseconds).
-                    DaylightBackground(style = settings.backgroundStyle) {}
+                    DaylightBackground {}
                 } else if (gate == LockModel.Gate.LOCKED) {
-                    DaylightBackground(style = settings.backgroundStyle, blurRadius = settings.backgroundBlur, colouredGradient = settings.colouredGradient) {
+                    DaylightBackground {
                         LockScreen(unlockMethod, lockMessage, ::authenticate, ::openSecuritySettings)
                     }
                 } else {
-                        AppNavigation(container, settings.onboardingComplete, settings.backgroundStyle, settings.backgroundBlur, settings.colouredGradient, settings.dotBackground)
+                    AppNavigation(container, settings.onboardingComplete, settings.dotBackground)
                 }
             }
         }

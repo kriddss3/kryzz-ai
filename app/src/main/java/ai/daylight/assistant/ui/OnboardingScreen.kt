@@ -313,7 +313,7 @@ private fun StepDots(index: Int) {
     ) {
         repeat(OnboardingFlow.count) { i ->
             val current = i == index
-            Box(Modifier.size(if (current) 8.dp else 6.dp).background(if (current) c.accent else c.dotOff, CircleShape))
+            Box(Modifier.size(if (current) 8.dp else 6.dp).background(if (current) c.accentText else c.dotOff, CircleShape))
         }
     }
 }

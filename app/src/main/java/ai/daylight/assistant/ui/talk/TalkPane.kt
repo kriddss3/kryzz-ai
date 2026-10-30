@@ -144,12 +144,16 @@ fun TalkPane(
     var actionTarget by remember { mutableStateOf<ActionTarget?>(null) }
     var selecting by remember(conversationId) { mutableStateOf<String?>(null) }
     val lastAnswerId = messages.lastOrNull { it.role == "ASSISTANT" }?.id
-    val listState = rememberLazyListState()
+    // A new question puts the last three board rows and the question on screen. The list
+    // starts on that row, so a page the pager composes while it measures never has to
+    // scroll (a scroll there forces a nested measure).
+    val boardTarget = (past.size - 3).coerceAtLeast(0)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = boardTarget)
     val motion = LocalKryzzMotionEnabled.current
 
-    // A new question puts the last three board rows and the question on screen.
     LaunchedEffect(conversationId, exchanges.size) {
-        if (exchanges.isNotEmpty()) listState.scrollToItem((past.size - 3).coerceAtLeast(0))
+        val there = listState.firstVisibleItemIndex == boardTarget && listState.firstVisibleItemScrollOffset == 0
+        if (exchanges.isNotEmpty() && !there) listState.scrollToItem(boardTarget)
     }
 
     @Composable

@@ -168,7 +168,7 @@ fun ArmRail(
                         val hovered = hover == i
                         when {
                             i == bar -> drawRoundRect(
-                                c.accent,
+                                c.accentText,
                                 topLeft = Offset(cx - r, cy - barHeight / 2f),
                                 size = Size(r * 2f, barHeight),
                                 cornerRadius = CornerRadius(r)
@@ -188,7 +188,7 @@ fun ArmRail(
                     val arm = arms[shownIndex]
                     val layout = measurer.measure(
                         arm.label.uppercase(),
-                        labelStyle.copy(color = if (arm.live) c.accent else c.textTertiary)
+                        labelStyle.copy(color = if (arm.live) c.accentText else c.textTertiary)
                     )
                     val w = layout.size.width.toFloat()
                     val h = layout.size.height.toFloat()

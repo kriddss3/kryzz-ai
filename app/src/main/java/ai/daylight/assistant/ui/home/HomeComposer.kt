@@ -95,7 +95,7 @@ fun HomeComposer(
                             .fillMaxWidth()
                             .semantics { contentDescription = HOME_PLACEHOLDER },
                         textStyle = DotType.Body.copy(fontSize = 16.sp, lineHeight = 22.sp, color = c.textPrimary),
-                        cursorBrush = SolidColor(c.accent),
+                        cursorBrush = SolidColor(c.accentText),
                         maxLines = 4,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),

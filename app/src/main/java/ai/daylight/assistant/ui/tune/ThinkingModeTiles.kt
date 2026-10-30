@@ -88,7 +88,7 @@ private fun ModeTile(quality: AgentQuality, chosen: Boolean, onClick: () -> Unit
             lit = RunQuality.signal(quality),
             on = when {
                 chosen -> c.bg
-                RunQuality.accentSignal(quality) -> c.accent
+                RunQuality.accentSignal(quality) -> c.accentText
                 else -> c.textPrimary
             },
             // Unlit dots: #3C3C3C on the dark tile, a light grey on the white one (mockup #C9C9C9).

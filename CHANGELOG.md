@@ -2,6 +2,84 @@
 
 Public GitHub versions. Internal Kryzz build numbers are in parentheses.
 
+## v2.0 — 2026-10-30 (internal 5.12.14, versionCode 99)
+
+A new look and a new layout. The whole app moves to a Nothing-style dot-matrix design ("Eight Arms"): black and white, one yellow accent, LED type and stepped motion. Chats, keys, memory, skills and settings carry over. Internal drops 5.12.0 through 5.12.14 are included.
+
+### Layout
+
+- **Home** is a board of eight arms (Talk, Make, Find, Crew, Run, Voice, Link, Tune). Each port shows what that arm is doing, and lit cables show which jobs are running. The dot-matrix squid in the middle replaces the old GIF mascot. Link is a preview of a future bridge from Nothing's Essential Space and is not connected yet.
+- **Arm rail.** An 8-dot rail on the right edge switches arms from any screen. Drag along it to scrub between arms.
+- **Ink strip.** An LED line at the top says what the screen is doing ("RUN 3 OF 5", "VOICE LISTENING"). Tap it to open the Inkwell.
+- **Chat library** in a left drawer: swipe in from the left or tap a screen title. Pinned chats, day groups, folders, search, rename, move, delete, and backup.
+
+### Talk (was Chat)
+
+- Questions and answers read as a departure board. Each answer can show a short gist and a source readout; citations are yellow superscripts.
+- The reply line queues a follow-up while an answer is still streaming.
+- "+" opens Talk options: attach an image, photo or file, web search, model, voice, chats, new chat.
+
+### Run (was Agent)
+
+- Run header with Fast / Balanced / Max, a live plan card, work chips with a full work log, file cards with save and share, and a cost line.
+- Stop is always on the bottom bar while a run works. A finished run keeps its plan card.
+
+### Voice
+
+- Full-screen voice with the squid, a 44 × 15 LED waveform, a REC timer and a transcript of the last turns. New mute pill. Barge-in and automatic turn-taking work as before.
+
+### New: Make
+
+- An image and video studio. Pick a ratio the provider actually supports, render, then save to the gallery (`Pictures/Kryzz`, `Movies/Kryzz`) or share.
+- A render keeps going when you leave Make. A "recent ink" row shows the newest files Kryzz made in any chat; clips get a frame scrubber.
+
+### New: Find
+
+- Search **Wikimedia Commons** for images you are free to reuse, with file type, licence and size filters.
+- Saves and shares carry the credit line (title, author, licence, source). Save also copies the credit to the clipboard.
+- Off whenever *Allow web search* is off. No key needed.
+
+### New: Crew
+
+- Personal bots with a name, persona and dot avatar. Each bot has its own chat.
+- Routines run on a schedule inside the bot's chat, so the bot remembers its runs. "Run now" runs one at once.
+
+### New: Inkwell
+
+- One feed of everything Kryzz made: images, clips and files, with filters and a NEW badge for pieces you have not seen.
+
+### Tune (was Settings)
+
+- One page with thinking mode tiles (Fast / Balanced / Max), the per-turn cost cap on a 24-dot slider, and rows for keys, persona, tools, privacy, appearance, voice, memory, skills, models, catalog, routines and About.
+- Appearance: Dark, Light or Auto, plus an optional dot-grid background.
+
+### Onboarding, lock and About
+
+- Four-step onboarding: local first, keys, memory, privacy. Only an OpenRouter key is required.
+- The lock screen can fall back to the phone's screen lock when no fingerprint is enrolled.
+- About is a page with the version, credits and the font licences (Doto, Geist, Geist Mono and Space Mono, all SIL OFL 1.1).
+
+### Motion
+
+- LED things move in steps (strip wipe, rail, busy cables, caret blink, REC blink, a dot "develop" on fresh renders). Everything else eases.
+- Turning animations off in Tune, or the system animator scale to 0, makes everything still.
+
+### Fixes
+
+- Restoring a backup on the same phone no longer deletes newer messages, tool steps and file links. A chat already on the phone is merged; a deleted chat comes back in full.
+- The biometric lock could be skipped on a slow cold start. Settings now load before the lock decides.
+- A swipe on the drawer no longer also taps the row under your finger.
+- Bot routines no longer retry after a key, credit, or context-length error (a retry re-sent the prompt).
+- Dialogs on Android 11+ no longer cut off their buttons or misplace the keyboard.
+- Light theme: citation numbers, live dots, meters and other small yellow marks turn dark gold, and grey captions are a step darker, so they stay readable on white.
+
+### Build
+
+- Database version 13 (new `bots` table, `scheduled_tasks.botId`). It migrates in place from v1.1.2.
+- Removed the aurora background videos and the GIF mascot (about 13 MB of raw assets). The release APK is about 7 MB (v1.1.2: about 19 MB).
+- The release build is checked with R8 shrinking, including a run of the minified app on an emulator.
+- Unit tests: 780, 0 failures. Instrumented tests: 41 of 41 passing on an API 35 emulator.
+
 ## v1.1.2 — 2026-09-28 (internal 5.11.0, versionCode 84)
 
 Source and debug APK for the Agent Auto rework that landed after public v1.1 (internal 5.7.2). Internal drops 5.8 through 5.11 are included. There is no public v1.1.1.

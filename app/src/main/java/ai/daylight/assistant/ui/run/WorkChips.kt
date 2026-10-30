@@ -189,14 +189,14 @@ private fun WorkChipPill(chip: WorkChip) {
         Modifier
             .heightIn(min = 32.dp)
             .background(c.surfaceRaised, DotRadius.Pill)
-            .border(1.dp, if (chip.running) c.accent else c.border, DotRadius.Pill)
+            .border(1.dp, if (chip.running) c.accentText else c.border, DotRadius.Pill)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         chip.glyph?.let { glyph ->
             val tint = when {
                 chip.failed -> c.error
-                chip.running -> c.accent
+                chip.running -> c.accentText
                 else -> c.textSecondary
             }
             Icon(painterResource(chipIcon(glyph)), null, Modifier.size(if (glyph == ChipGlyph.CHECK) 12.dp else 14.dp), tint = tint)

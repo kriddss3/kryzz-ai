@@ -259,7 +259,7 @@ internal fun DotScrubber(
             if (i == head) {
                 val w = 4.dp.toPx()
                 val h = 18.dp.toPx()
-                drawRoundRect(c.accent, Offset(x - w / 2, cy - h / 2), Size(w, h), CornerRadius(w / 2, w / 2))
+                drawRoundRect(c.accentText, Offset(x - w / 2, cy - h / 2), Size(w, h), CornerRadius(w / 2, w / 2))
             } else {
                 drawCircle(if (i < head) c.textPrimary else c.borderStrong, dot / 2, Offset(x, cy))
             }
