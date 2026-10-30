@@ -35,6 +35,7 @@ import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.ChatAttachment
 import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.ChatProvider
+import ai.daylight.assistant.domain.VoiceAudioUnsupported
 import ai.daylight.assistant.domain.ConversationUsage
 import ai.daylight.assistant.domain.FontStyle
 import ai.daylight.assistant.domain.GradientPalette
@@ -47,6 +48,10 @@ import ai.daylight.assistant.domain.WorkLogBuilder
 import ai.daylight.assistant.domain.WorkLogRow
 import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.AdaptiveEndOfSpeechDetector
+import ai.daylight.assistant.voice.MicReading
+import ai.daylight.assistant.voice.SensitivityProfile
+import ai.daylight.assistant.voice.VoiceHearing
+import ai.daylight.assistant.voice.trimWavSilence
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoicePhase
 import ai.daylight.assistant.voice.patchWavHeader
@@ -103,6 +108,20 @@ private data class ChatDraftSnapshot(
     val editingFrom: Long? = null,
     val attachments: List<ChatAttachment> = emptyList()
 )
+
+/** v2.1: how one voice turn came out before anything is spoken. */
+private sealed interface VoiceTurnOutcome {
+    /** The clip held no speech for Kryzz (direct hearing said so): listen again quietly. */
+    data object NoSpeech : VoiceTurnOutcome
+
+    /** The transcriber heard nothing it could write down. */
+    data object Unclear : VoiceTurnOutcome
+
+    /** The model answered with nothing to say. */
+    data object Empty : VoiceTurnOutcome
+
+    data class Answer(val text: String) : VoiceTurnOutcome
+}
 
 private data class VoicePlaybackPlan(
     val settings: SettingsState,
@@ -163,7 +182,7 @@ data class HomeCrew(
 )
 
 /** Home board data: threads from the chat library list, settings, the agent's live plan and Make. */
-class HomeViewModel(container: AppContainer) : ViewModel() {
+class HomeViewModel(private val container: AppContainer) : ViewModel() {
     val threads: StateFlow<HomeThreads> = container.conversations.conversations(archived = false, query = "")
         .map { list -> HomeThreads(list.size, list.maxOfOrNull { it.updatedAt }) }
         .distinctUntilChanged()
@@ -208,6 +227,28 @@ class HomeViewModel(container: AppContainer) : ViewModel() {
         .map { it.query }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.find.state.value.query)
+
+    // v2.1: hold the composer to dictate into it.
+    private val dictation = DictationSession(container, viewModelScope)
+    val dictating: StateFlow<Boolean> = dictation.active
+    val dictationLevel: StateFlow<Float> = dictation.level
+    val dictationTranscribing: StateFlow<Boolean> = dictation.transcribing
+
+    fun beginDictation(onError: (String) -> Unit) {
+        dictation.begin().onFailure { onError(it.message ?: "Could not open the microphone.") }
+    }
+
+    fun finishDictation(onText: (String) -> Unit, onError: (String) -> Unit) = dictation.finish(onText, onError)
+
+    fun cancelDictation() = dictation.cancel()
+
+    /** v2.1: the first-run tour was seen (or skipped). */
+    fun dismissTour() = viewModelScope.launch { container.preferences.setTourPending(false) }
+
+    override fun onCleared() {
+        dictation.cancel()
+        super.onCleared()
+    }
 }
 
 internal fun transferChatDraft(fromConversationId: String, toConversationId: String) {
@@ -306,6 +347,8 @@ class OnboardingViewModel(private val container: AppContainer) : ViewModel() {
         if (fish.isNotEmpty()) container.credentials.setFishKey(fish)
         container.preferences.setMemoryEnabled(memoryEnabled.value)
         container.preferences.setLocationEnabled(locationEnabled.value && container.location.hasPermission())
+        // v2.1: a fresh install gets the short tour on Home.
+        container.preferences.setTourPending(true)
         container.preferences.completeOnboarding()
         onDone()
     }
@@ -725,6 +768,26 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
      */
     private val bargeDetector = AdaptiveEndOfSpeechDetector(allowImmediateSpeechDuringCalibration = false)
     private val softBargeDetector = AdaptiveEndOfSpeechDetector(allowImmediateSpeechDuringCalibration = false)
+    /** v2.1: the user's Voice sensitivity, applied to the detectors and the mic's voice check. */
+    private var voiceProfile = SensitivityProfile.of(ai.daylight.assistant.voice.VoiceSensitivity.NORMAL)
+
+    private fun applyVoiceSensitivity(sensitivity: ai.daylight.assistant.voice.VoiceSensitivity) {
+        voiceProfile = SensitivityProfile.of(sensitivity)
+        voiceEndDetector.configure(voiceProfile)
+        bargeDetector.configure(voiceProfile)
+        softBargeDetector.configure(voiceProfile)
+        container.voiceRecorder.minPeriodicity = voiceProfile.minPeriodicity
+    }
+
+    // Here, after the detectors: initialisers run in order, and the collector may run at once.
+    init {
+        viewModelScope.launch {
+            container.preferences.state
+                .map { it.voiceSensitivity }
+                .distinctUntilChanged()
+                .collect { applyVoiceSensitivity(it) }
+        }
+    }
     /** File captured during the SPEAKING monitor phase that holds the user's barge-in words. */
     private var pendingBargePrefix: java.io.File? = null
     /** Length in bytes of [pendingBargePrefix]; the WAV header is patched in [stopVoiceRecording]. */
@@ -756,18 +819,27 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         if (!preserveMute) voiceMicMuted.value = false
         voiceJob = viewModelScope.launch {
             while (voicePhase.value == VoicePhase.LISTENING) {
-                val level = if (voiceMicMuted.value) 0 else container.voiceRecorder.level()
                 val now = SystemClock.elapsedRealtime()
                 if (voiceMicMuted.value) {
                     // Keep the end-of-speech detector fed with silence so a stale high level
                     // from before the mute doesn't immediately count as speech the moment the
                     // user unmutes.
-                    voiceEndDetector.observe(0, now)
+                    container.voiceRecorder.poll()
+                    voiceEndDetector.observe(0, now, voiceLike = false)
                     voiceLevel.value = 0f
                 } else {
-                    val activity = voiceEndDetector.observe(level, now)
-                    voiceLevel.value = activity.level
-                    if (activity.stopReason != null) {
+                    // v2.1: only frames that sound like a voice (pitched, above the wind
+                    // band) can open or hold a turn. A poll that caught no new audio frames
+                    // carries no news, so it is skipped rather than read as silence.
+                    val reading = container.voiceRecorder.poll()
+                    if (reading.frames > 0) {
+                        val activity = voiceEndDetector.observe(reading.peak, now, reading.voiceLike)
+                        voiceLevel.value = activity.level
+                        if (activity.stopReason != null) {
+                            stopVoiceRecording(automatic = true)
+                            return@launch
+                        }
+                    } else if (now - voiceStartedAt >= VoiceConfig.MAX_RECORD_MS) {
                         stopVoiceRecording(automatic = true)
                         return@launch
                     }
@@ -892,55 +964,29 @@ voiceLevel.value = 0f
     }
 
     // ── Dictation ─────────────────────────────────────────────────────────────
-    val dictating = MutableStateFlow(false)
-    val dictationLevel = MutableStateFlow(0f)
-    private var dictationJob: Job? = null
+    // v2.1: the mic button or a hold on the reply line (see DictationSession).
+    private val dictation = DictationSession(container, viewModelScope)
+    val dictating: StateFlow<Boolean> = dictation.active
+    val dictationLevel: StateFlow<Float> = dictation.level
+    val dictationTranscribing: StateFlow<Boolean> = dictation.transcribing
 
     fun beginDictation() {
         if (voicePhase.value != VoicePhase.IDLE || dictating.value) return
-        dictationLevel.value = 0f
-        container.warmOpenRouter()
-        container.voiceRecorder.start().onFailure {
-            error.value = it.message ?: "Could not open the microphone."
-            return
-        }
-        dictating.value = true
-        dictationJob = viewModelScope.launch {
-            while (dictating.value) {
-                dictationLevel.value = container.voiceRecorder.level().toFloat() / 32_767f
-                delay(40)
-            }
-        }
+        dictation.begin().onFailure { error.value = it.message ?: "Could not open the microphone." }
     }
 
     fun stopDictation() {
-        if (!dictating.value) return
-        dictationJob?.cancel()
-        dictationJob = null
-        dictating.value = false
-        dictationLevel.value = 0f
-        val file = container.voiceRecorder.stop()
-        if (file == null || file.length() < 2_000) {
-            file?.delete()
-            return
-        }
-        viewModelScope.launch {
-            try {
-                val settings = container.preferences.state.first()
-                val text = container.transcribeVoice(file, settings.voiceSttModel).trim()
-                file.delete()
-                if (text.isNotBlank()) {
-                    composer.value = (composer.value.trimEnd() + " " + text).trimStart()
-                    persistDraft()
-                } else {
-                    error.value = "Could not hear anything clear. Try dictation again."
-                }
-            } catch (t: Throwable) {
-                file.delete()
-                error.value = t.message ?: "Dictation failed."
-            }
-        }
+        dictation.finish(
+            onText = { text ->
+                composer.value = DictationSession.append(composer.value, text)
+                persistDraft()
+            },
+            onError = { error.value = it }
+        )
     }
+
+    /** A hold on the reply line slid away: the recording is dropped. */
+    fun cancelDictation() = dictation.cancel()
 
     fun cancelVoice() {
         voiceJob?.cancel()
@@ -1012,38 +1058,34 @@ voiceLevel.value = 0f
                         TtsProvider.OPENROUTER -> !container.credentials.openRouterKey().isNullOrBlank()
                     }
                 }
-                val text = container.transcribeVoice(file, settings.voiceSttModel).trim()
+                // v2.1: a reply model that hears audio gets the recording itself (one request,
+                // no transcriber). Otherwise, or when it refuses audio, the transcriber runs first.
+                val direct = settings.voiceDirectAudio && VoiceHearing.hearsAudio(voiceReplyModelOf(settings))
+                val outcome = (if (direct) askByAudio(file, settings, provider) else null)
+                    ?: askByTranscript(file, settings, provider)
                 file.delete()
-                if (text.isBlank()) {
-                    // Nothing intelligible was captured (e.g. an accidental barge-in):
-                    // stay in the voice session and listen again instead of ending it.
-                    error.value = "Could not hear anything clear. Try again and speak a little closer to the phone."
-                    generating.value = false
-                    rearmVoice()
-                    return@launch
-                }
-                voiceTranscript.value = text.take(200)
-                // While the agent runs (and may invoke parallel_search), play quick filler
-                // phrases ("Checking online, give me a sec") so the user isn't sitting in
-                // silence during the search round-trip. The job is cancelled once the real
-                // reply is ready so speakAnswer starts cleanly.
-                val fillerJob = startVoiceFillerListener(settings, provider)
-                val answer = try {
-                    container.agent.send(
-                        conversationId,
-                        text,
-                        AssistantMode.CHAT,
-                        AgentCapability.AUTO,
-                        voiceMode = true
-                    )
-                } finally {
-                    voiceSearching.value = false
-                    fillerJob.cancel()
-                } ?: run {
-                    runCatching { container.voicePlayer.stop() }
-                    voicePhase.value = VoicePhase.IDLE
-                    error.value = "The model returned no usable reply. Try again."
-                    return@launch
+                val answer = when (outcome) {
+                    VoiceTurnOutcome.NoSpeech -> {
+                        // Wind, a cough, someone else talking: not for Kryzz. Keep listening, quietly.
+                        generating.value = false
+                        rearmVoice()
+                        return@launch
+                    }
+                    VoiceTurnOutcome.Unclear -> {
+                        // Nothing intelligible was captured (e.g. an accidental barge-in):
+                        // stay in the voice session and listen again instead of ending it.
+                        error.value = "Could not hear anything clear. Try again and speak a little closer to the phone."
+                        generating.value = false
+                        rearmVoice()
+                        return@launch
+                    }
+                    VoiceTurnOutcome.Empty -> {
+                        runCatching { container.voicePlayer.stop() }
+                        voicePhase.value = VoicePhase.IDLE
+                        error.value = "The model returned no usable reply. Try again."
+                        return@launch
+                    }
+                    is VoiceTurnOutcome.Answer -> outcome.text
                 }
                 title.value = container.conversations.conversation(conversationId)?.title ?: title.value
                 speakAnswer(
@@ -1063,6 +1105,52 @@ voiceLevel.value = 0f
                 generating.value = false
             }
         }
+    }
+
+    /** The model that writes voice replies, as AgentExecutor resolves it. */
+    private fun voiceReplyModelOf(settings: SettingsState): String = settings.voiceReplyModel.ifBlank {
+        if (settings.chatProvider == ChatProvider.OPENROUTER) settings.defaultModel else VoiceConfig.DEFAULT_LLM_MODEL
+    }.ifBlank { VoiceConfig.DEFAULT_LLM_MODEL }
+
+    /**
+     * v2.1 direct hearing: the clip goes to the reply model as audio. Returns null when the
+     * model would not take audio, so the caller falls back to the transcriber.
+     */
+    private suspend fun askByAudio(file: File, settings: SettingsState, provider: TtsProvider): VoiceTurnOutcome? {
+        val prepared = withContext(Dispatchers.IO) { runCatching { trimWavSilence(file) }.getOrDefault(file) }
+        // While the agent runs (and may invoke parallel_search), play quick filler phrases so
+        // the user isn't sitting in silence during the search round-trip.
+        val fillerJob = startVoiceFillerListener(settings, provider)
+        val reply = try {
+            container.agent.sendVoiceAudio(conversationId, prepared) { heard ->
+                if (heard.isNotBlank()) voiceTranscript.value = heard.take(200)
+            }
+        } catch (_: VoiceAudioUnsupported) {
+            return null
+        } finally {
+            voiceSearching.value = false
+            fillerJob.cancel()
+        }
+        return when {
+            reply.noSpeech -> VoiceTurnOutcome.NoSpeech
+            reply.answer.isNullOrBlank() -> VoiceTurnOutcome.Empty
+            else -> VoiceTurnOutcome.Answer(reply.answer)
+        }
+    }
+
+    /** The transcriber hears the clip, then the reply model answers the words. */
+    private suspend fun askByTranscript(file: File, settings: SettingsState, provider: TtsProvider): VoiceTurnOutcome {
+        val text = container.transcribeVoice(file, settings.voiceSttModel).trim()
+        if (text.isBlank()) return VoiceTurnOutcome.Unclear
+        voiceTranscript.value = text.take(200)
+        val fillerJob = startVoiceFillerListener(settings, provider)
+        val answer = try {
+            container.agent.send(conversationId, text, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true)
+        } finally {
+            voiceSearching.value = false
+            fillerJob.cancel()
+        }
+        return if (answer.isNullOrBlank()) VoiceTurnOutcome.Empty else VoiceTurnOutcome.Answer(answer)
     }
 
     /**
@@ -1311,7 +1399,8 @@ voiceLevel.value = 0f
                 if (phaseNow != VoicePhase.SPEAKING && !(bargeArmed && phaseNow == VoicePhase.LISTENING)) break
                 val now = SystemClock.elapsedRealtime()
                 val playerLevel = container.voicePlayer.level()
-                val micRaw = if (recorderLive) container.voiceRecorder.level() else 0
+                val reading = if (recorderLive) container.voiceRecorder.poll() else MicReading.SILENT
+                val micRaw = reading.peak
                 val micLevel = (micRaw / 32_767f).coerceIn(0f, 1f)
 
                 if (phaseNow == VoicePhase.SPEAKING) {
@@ -1321,9 +1410,11 @@ voiceLevel.value = 0f
                     //   2. "soft barge" — mic sustains above absolute floor for longer. Catches the
                     //      case where the speaker is loud and the user's voice can't outshout it
                     //      after echo cancellation (the previously broken case).
-                    val micOutshoutsReply = recorderLive &&
+                    // v2.1: both gates also need the mic to sound like a voice, so wind or a
+                    // bump on the phone no longer cuts Kryzz off.
+                    val micOutshoutsReply = recorderLive && reading.voiceLike &&
                         micLevel > maxOf(playerLevel * BARGE_MIC_MARGIN + BARGE_MIC_FLOOR, BARGE_MIC_MIN)
-                    val micSustainedSoft = recorderLive && micLevel >= BARGE_SOFT_MIN
+                    val micSustainedSoft = recorderLive && reading.voiceLike && micLevel >= BARGE_SOFT_MIN
                     val activity = when {
                         micOutshoutsReply -> bargeDetector.observe(micRaw, now)
                         micSustainedSoft -> softBargeDetector.observe(micRaw, now)
@@ -1331,10 +1422,10 @@ voiceLevel.value = 0f
                     }
                     voiceLevel.value = maxOf(playerLevel, activity?.level ?: 0f)
                     val hardTrigger = activity != null && activity.hasSpeech &&
-                        activity.voicedDurationMs >= VoiceConfig.BARGE_TRIGGER_MS
+                        activity.voicedDurationMs >= voiceProfile.bargeTriggerMs
                     val softTrigger = micSustainedSoft &&
                         activity != null && activity.hasSpeech &&
-                        activity.voicedDurationMs >= BARGE_SOFT_TRIGGER_MS
+                        activity.voicedDurationMs >= voiceProfile.bargeSoftTriggerMs
                     if (!bargeArmed && (hardTrigger || softTrigger)) {
                         bargeArmed = true
                         val voicedMs = activity?.voicedDurationMs ?: 0L
@@ -1372,8 +1463,8 @@ voiceLevel.value = 0f
                         bargeDetector.reset(now)
                         voicePhase.value = VoicePhase.LISTENING
                     }
-                } else {
-                    val activity = voiceEndDetector.observe(micRaw, now)
+                } else if (reading.frames > 0 || !recorderLive) {
+                    val activity = voiceEndDetector.observe(micRaw, now, reading.voiceLike)
                     voiceLevel.value = activity.level
                     if (activity.stopReason != null) {
                         stopVoiceRecording(automatic = true)
@@ -1542,6 +1633,7 @@ voiceLevel.value = 0f
     }
 
     override fun onCleared() {
+        dictation.cancel()
         voiceJob?.cancel()
         voicePipelineJob?.cancel()
         voicePipelineJob = null
@@ -1579,7 +1671,6 @@ voiceLevel.value = 0f
          * is the "noise floor" defence — a single TV syllable won't arm; a sentence will.
          */
         const val BARGE_SOFT_MIN = 0.04f
-        const val BARGE_SOFT_TRIGGER_MS = 700L
     }
 
     fun setMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setMemoryEnabled(value) }
@@ -1826,6 +1917,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setFishSpeed(value: Float) = viewModelScope.launch { container.preferences.setFishSpeed(value) }
     fun setVoiceEmotions(value: Boolean) = viewModelScope.launch { container.preferences.setVoiceEmotions(value) }
     fun setVoiceFishStreaming(value: Boolean) = viewModelScope.launch { container.preferences.setVoiceFishStreaming(value) }
+    fun setVoiceDirectAudio(value: Boolean) = viewModelScope.launch { container.preferences.setVoiceDirectAudio(value) }
+    fun setVoiceSensitivity(value: ai.daylight.assistant.voice.VoiceSensitivity) = viewModelScope.launch { container.preferences.setVoiceSensitivity(value) }
+    /** v2.1: Tune > Tour opens the first-run tour again. */
+    fun showTour() = viewModelScope.launch { container.preferences.setTourPending(true) }
 
     fun testVoice() = viewModelScope.launch {
         val current = settings.value

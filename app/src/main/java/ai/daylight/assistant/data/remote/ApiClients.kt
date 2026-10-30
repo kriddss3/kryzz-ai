@@ -337,7 +337,10 @@ class OpenRouterClient(private val http: OkHttpClient, private val json: Json) :
                                     )
                                 }
                             }
-                            if (text.isNotEmpty() || calls.isNotEmpty()) trySend(StreamEvent.Delta(text, calls))
+                            val reasoning = choice.delta.reasoningText()
+                            if (text.isNotEmpty() || calls.isNotEmpty() || reasoning.isNotEmpty()) {
+                                trySend(StreamEvent.Delta(text, calls, reasoning))
+                            }
                         }
                         chunk.usage?.let { trySend(StreamEvent.UsageUpdate(it)) }
                     }
@@ -689,7 +692,10 @@ class MiniMaxClient(private val http: OkHttpClient, private val json: Json) : Te
                                     )
                                 }
                             }
-                            if (text.isNotEmpty() || calls.isNotEmpty()) trySend(StreamEvent.Delta(text, calls))
+                            val reasoning = choice.delta.reasoningText()
+                            if (text.isNotEmpty() || calls.isNotEmpty() || reasoning.isNotEmpty()) {
+                                trySend(StreamEvent.Delta(text, calls, reasoning))
+                            }
                         }
                         chunk.usage?.let { trySend(StreamEvent.UsageUpdate(it)) }
                     }

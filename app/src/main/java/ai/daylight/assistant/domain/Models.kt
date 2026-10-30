@@ -185,7 +185,9 @@ data class ExportMessage(
     val capability: String? = null,
     val outputs: List<GeneratedOutput> = emptyList(),
     val attachments: List<ChatAttachment> = emptyList(),
-    val cachedInputTokens: Int? = null
+    val cachedInputTokens: Int? = null,
+    /** v2.1: the answer's thinking trace; older backups have none. */
+    val thinking: List<ThoughtStep> = emptyList()
 )
 
 data class ConversationUsage(

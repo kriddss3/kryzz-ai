@@ -22,9 +22,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -42,6 +50,10 @@ import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.talk.HoldNote
+import ai.daylight.assistant.ui.talk.HoldToTalkModel
+import ai.daylight.assistant.ui.talk.HoldToTalkSurface
+import ai.daylight.assistant.ui.talk.ReplyMic
 import ai.daylight.assistant.ui.talk.RoundIcon
 
 internal const val HOME_PLACEHOLDER = "Ask, search, or make"
@@ -65,11 +77,26 @@ fun HomeComposer(
     onVoice: () -> Unit,
     onInkwell: () -> Unit,
     modifier: Modifier = Modifier,
-    inkBadge: String = ""
+    inkBadge: String = "",
+    dictating: Boolean = false,
+    dictationLevel: Float = 0f,
+    transcribing: Boolean = false,
+    onHoldStart: (() -> Unit)? = null,
+    onHoldEnd: ((cancelled: Boolean) -> Unit)? = null,
 ) {
     val c = DotTheme.c
     val canSend = value.isNotBlank()
+    // v2.1 hold-to-talk, as on the reply line.
+    val requester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var focused by remember { mutableStateOf(false) }
+    var holding by remember { mutableStateOf(false) }
+    var cancelZone by remember { mutableStateOf(false) }
+    val holdEnabled = onHoldStart != null && onHoldEnd != null
     Column(modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp)) {
+        HoldToTalkModel.note(holding, cancelZone, dictating, transcribing)?.let { (label, hint) ->
+            HoldNote(label, hint, Modifier.padding(start = 4.dp, bottom = 4.dp))
+        }
         if (makeOffer != null) {
             MakeOfferPill(makeOffer, onClick = { onMake(makeOffer) })
             Spacer(Modifier.height(8.dp))
@@ -93,6 +120,8 @@ fun HomeComposer(
                         onValueChange = onValueChange,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .focusRequester(requester)
+                            .onFocusChanged { focused = it.isFocused }
                             .semantics { contentDescription = HOME_PLACEHOLDER },
                         textStyle = DotType.Body.copy(fontSize = 16.sp, lineHeight = 22.sp, color = c.textPrimary),
                         cursorBrush = SolidColor(c.accentText),
@@ -102,7 +131,7 @@ fun HomeComposer(
                         decorationBox = { inner ->
                             if (value.isEmpty()) {
                                 Text(
-                                    HOME_PLACEHOLDER,
+                                    if (dictating) "Listening…" else HOME_PLACEHOLDER,
                                     style = DotType.Body.copy(fontSize = 16.sp, lineHeight = 22.sp),
                                     color = c.textTertiary,
                                     maxLines = 1,
@@ -112,11 +141,31 @@ fun HomeComposer(
                             inner()
                         }
                     )
+                    if (holdEnabled && !focused) {
+                        HoldToTalkSurface(
+                            onTap = {
+                                runCatching { requester.requestFocus() }
+                                keyboard?.show()
+                            },
+                            onHoldStart = {
+                                holding = true
+                                cancelZone = false
+                                onHoldStart?.invoke()
+                            },
+                            onCancelZone = { cancelZone = it },
+                            onHoldEnd = { cancelled ->
+                                holding = false
+                                cancelZone = false
+                                onHoldEnd?.invoke(cancelled)
+                            },
+                            modifier = Modifier.matchParentSize()
+                        )
+                    }
                 }
-                if (canSend) {
-                    RoundIcon(R.drawable.ic_kz_send, "Send", onSend, filled = true)
-                } else {
-                    RoundIcon(R.drawable.ic_kz_mic, "Voice", onVoice, filled = false)
+                when {
+                    dictating -> ReplyMic(active = true, level = dictationLevel, onClick = { onHoldEnd?.invoke(false) })
+                    canSend -> RoundIcon(R.drawable.ic_kz_send, "Send", onSend, filled = true)
+                    else -> RoundIcon(R.drawable.ic_kz_mic, "Voice", onVoice, filled = false)
                 }
             }
             Spacer(Modifier.width(10.dp))

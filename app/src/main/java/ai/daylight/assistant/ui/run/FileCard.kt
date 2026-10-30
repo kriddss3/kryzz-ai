@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -43,7 +45,11 @@ import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.GeneratedOutput
 import ai.daylight.assistant.domain.OutputKind
+import ai.daylight.assistant.ui.dot.DotButtonStyle
+import ai.daylight.assistant.ui.dot.DotPillButton
 import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.make.MakeMedia
+import ai.daylight.assistant.ui.make.RoundIconButton
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import java.io.File
@@ -70,6 +76,13 @@ object FileCardModel {
 
     /** Only files on the phone or at a link can be opened; text-only results are saved instead. */
     fun canOpen(output: GeneratedOutput): Boolean = output.localPath != null || output.remoteUrl != null
+
+    /** v2.1: a made image or clip on the phone gets a "Save to phone" button under it. */
+    fun savesToGallery(output: GeneratedOutput): Boolean =
+        output.localPath != null && (output.kind == OutputKind.IMAGE || output.kind == OutputKind.VIDEO)
+
+    /** The save button's words. */
+    fun saveLabel(saved: Boolean): String = if (saved) "Saved to phone" else "Save to phone"
 
     /** The kit's dot file icons. A deliverable that fell back to plain text gets the plain file. */
     @DrawableRes
@@ -104,8 +117,11 @@ fun FileCard(
     onSave: (GeneratedOutput) -> Unit,
     onOpen: (GeneratedOutput) -> Unit,
     modifier: Modifier = Modifier,
+    saved: Boolean = false,
 ) {
     val c = DotTheme.c
+    val context = LocalContext.current
+    val media = FileCardModel.savesToGallery(output)
     var size by remember(output.id) { mutableStateOf<Long?>(null) }
     LaunchedEffect(output.localPath, output.content) {
         size = withContext(Dispatchers.IO) {
@@ -115,11 +131,29 @@ fun FileCard(
     }
     val openable = FileCardModel.canOpen(output)
     Column(modifier.fillMaxWidth().padding(top = 10.dp)) {
-        if (output.kind == OutputKind.IMAGE && output.localPath != null) {
-            ImagePreview(output.localPath, output.title) { onOpen(output) }
-            Spacer(Modifier.height(8.dp))
+        val imagePreview = output.kind == OutputKind.IMAGE && output.localPath != null
+        if (imagePreview) {
+            ImagePreview(output.localPath.orEmpty(), output.title) { onOpen(output) }
+            Spacer(Modifier.height(10.dp))
         }
-        Row(
+        // v2.1: a made image or clip saves straight to the gallery from here.
+        if (media) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = if (imagePreview) 0.dp else 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DotPillButton(
+                    label = FileCardModel.saveLabel(saved),
+                    onClick = { onSave(output) },
+                    modifier = Modifier.weight(1f),
+                    style = if (saved) DotButtonStyle.Ghost else DotButtonStyle.Accent,
+                    icon = if (saved) R.drawable.ic_kz_check else R.drawable.ic_kz_download
+                )
+                RoundIconButton(R.drawable.ic_kz_share, "Share ${output.fileName}", { MakeMedia.share(context, output) })
+            }
+        }
+        if (!imagePreview) Row(
             Modifier
                 .fillMaxWidth()
                 .height(72.dp)
@@ -155,15 +189,19 @@ fun FileCard(
                     maxLines = 1
                 )
             }
-            Box(
-                Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .clickable { onSave(output) }
-                    .semantics { contentDescription = "Save ${output.fileName}"; role = Role.Button },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(painterResource(R.drawable.ic_kz_download), null, Modifier.size(22.dp), tint = c.textSecondary)
+            if (!media) {
+                Box(
+                    Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .clickable { onSave(output) }
+                        .semantics { contentDescription = "Save ${output.fileName}"; role = Role.Button },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(painterResource(R.drawable.ic_kz_download), null, Modifier.size(22.dp), tint = c.textSecondary)
+                }
+            } else {
+                Spacer(Modifier.width(12.dp))
             }
         }
     }

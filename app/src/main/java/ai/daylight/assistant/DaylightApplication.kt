@@ -88,7 +88,8 @@ class AppContainer(private val application: Application) {
             AssistantDatabase.MIGRATION_9_10,
             AssistantDatabase.MIGRATION_10_11,
             AssistantDatabase.MIGRATION_11_12,
-            AssistantDatabase.MIGRATION_12_13
+            AssistantDatabase.MIGRATION_12_13,
+            AssistantDatabase.MIGRATION_13_14
         )
         .build()
     val preferences = AppPreferences(application)

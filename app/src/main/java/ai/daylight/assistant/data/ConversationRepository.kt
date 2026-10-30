@@ -14,6 +14,7 @@ import ai.daylight.assistant.domain.ExportBundle
 import ai.daylight.assistant.domain.ExportConversation
 import ai.daylight.assistant.domain.ExportConversationFolder
 import ai.daylight.assistant.domain.ExportMessage
+import ai.daylight.assistant.domain.ThinkingTrace
 import ai.daylight.assistant.domain.GeneratedOutput
 import ai.daylight.assistant.domain.RecentOutput
 import java.util.UUID
@@ -143,7 +144,8 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
                             m.mode, m.capability,
                             outputs(m).map { it.portableForExport() },
                             attachments(m).map { it.copy(localPath = null) },
-                            cachedInputTokens = m.cachedInputTokens
+                            cachedInputTokens = m.cachedInputTokens,
+                            thinking = ThinkingTrace.decode(m.thinkingJson)
                         )
                     },
                     searchDepth = c.searchDepth,
@@ -212,7 +214,8 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
                     capability = m.capability,
                     outputsJson = json.encodeToString(m.outputs.map { it.copy(localPath = null) }),
                     attachmentsJson = json.encodeToString(m.attachments.map { it.copy(localPath = null) }),
-                    cachedInputTokens = m.cachedInputTokens
+                    cachedInputTokens = m.cachedInputTokens,
+                    thinkingJson = ThinkingTrace.encode(m.thinking)
                 )
             })
         }

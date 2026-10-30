@@ -55,6 +55,13 @@ data class HomeSnapshot(
 
 /** Captions, the status sentence and the strip line for Home (SCREENS.md section 1). */
 object HomeBoard {
+    /** v2.1: a dictation problem as a short ink-strip line. */
+    fun dictationProblem(message: String): String = when (message) {
+        ai.daylight.assistant.ui.DictationSession.TOO_SHORT -> "HOLD LONGER TO TALK"
+        ai.daylight.assistant.ui.DictationSession.NOTHING_HEARD -> "NOTHING HEARD"
+        else -> "DICTATION FAILED"
+    }
+
     private val CLOCK = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH)
     private val WEEKDAY = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH)
     private val DAY_MONTH = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)

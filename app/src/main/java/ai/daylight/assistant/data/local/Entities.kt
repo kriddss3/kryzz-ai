@@ -50,7 +50,9 @@ data class MessageEntity(
     val attachmentsJson: String = "[]",
     val cachedInputTokens: Int? = null,
     val firstTokenLatencyMs: Long? = null,
-    val totalGenerationTimeMs: Long? = null
+    val totalGenerationTimeMs: Long? = null,
+    /** v2.1 (Room 14): the answer's thinking trace, a JSON list of ThoughtStep. */
+    val thinkingJson: String = "[]"
 )
 
 data class ConversationSummary(

@@ -58,6 +58,14 @@ class DaylightUiTest {
         val container = (compose.activity.application as DaylightApplication).container
         compose.waitUntil(10_000) { runBlocking { container.preferences.state.first().onboardingComplete } }
         assertEquals("sk-or-ui-test", container.credentials.openRouterKey())
+
+        // v2.1: a fresh install lands on the tour; Skip clears it and Home's board shows.
+        compose.waitUntil(15_000) { compose.onAllNodesWithContentDescription("Tour, page 1 of 7").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("tour_skip").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasContentDescription("Ask, search, or make")).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.waitUntil(10_000) { runBlocking { !container.preferences.state.first().tourPending } }
     }
 
     @Test fun completedOnboardingShowsUsablePhoneNavigation() {

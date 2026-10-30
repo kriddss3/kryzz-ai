@@ -7,6 +7,7 @@ import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.data.remote.MediaModel
 import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.MakeRender
+import ai.daylight.assistant.domain.MakeStyle
 import ai.daylight.assistant.domain.MediaJobStatus
 import ai.daylight.assistant.domain.RecentOutput
 import kotlinx.coroutines.Dispatchers
@@ -72,14 +73,17 @@ class MakeViewModel(private val container: AppContainer) : ViewModel() {
         studio.ratios.update { it + (kind to ratio) }
     }
 
+    /** v2.1: Plain or the Nothing OS style; kept in settings, so it stays on. */
+    fun setStyle(style: MakeStyle) = viewModelScope.launch { container.preferences.setMakeStyle(style) }
+
     /** Starts a render of the draft prompt. */
     fun run(ratio: String?) {
         val kind = kind.value
         val text = prompt.value.trim()
         if (text.isEmpty()) return
         viewModelScope.launch {
-            val model = container.preferences.state.first().makeModel(kind)
-            if (studio.start(kind, text, ratio, model)) {
+            val settings = container.preferences.state.first()
+            if (studio.start(kind, text, ratio, settings.makeModel(kind), style = settings.makeStyle)) {
                 selected.value = null
                 composing.value = false
             }
@@ -91,8 +95,8 @@ class MakeViewModel(private val container: AppContainer) : ViewModel() {
         val kind = MakeModel.kindOf(result.output) ?: return
         val text = result.prompt ?: return
         viewModelScope.launch {
-            val model = container.preferences.state.first().makeModel(kind)
-            if (studio.start(kind, text, ratio, model, result.conversationId)) {
+            val settings = container.preferences.state.first()
+            if (studio.start(kind, text, ratio, settings.makeModel(kind), result.conversationId, settings.makeStyle)) {
                 studio.kind.value = kind
                 studio.draft.value = text
                 selected.value = null

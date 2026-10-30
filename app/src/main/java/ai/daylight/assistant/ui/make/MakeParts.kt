@@ -315,17 +315,25 @@ internal fun FrameWithDials(aspect: Float, caption: String?, dials: List<DialSpe
         )
     }
     if (MakeModel.wideFrame(aspect)) {
+        // v2.1: under a wide frame the model gets a row of its own and the other dials go two
+        // a row. Five dials in one row (MiniMax video) left each about 44dp and cut their words.
+        val (wide, small) = dials.partition { it.share > 1f }
         Column(modifier.fillMaxWidth()) {
             RenderFrame(aspect, caption, Modifier.fillMaxWidth())
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                dials.forEach { DialFor(it, Modifier.weight(it.share)) }
+            Spacer(Modifier.height(6.dp))
+            wide.forEach { DialFor(it, Modifier.fillMaxWidth()) }
+            small.chunked(2).forEach { pair ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    pair.forEach { DialFor(it, Modifier.weight(1f)) }
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
             }
         }
     } else {
         Row(modifier.fillMaxWidth()) {
             RenderFrame(aspect, caption, Modifier.weight(1f))
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.width(104.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.width(120.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 dials.forEach { DialFor(it, Modifier) }
             }
         }

@@ -5,6 +5,7 @@ import ai.daylight.assistant.data.remote.bareMiniMaxModel
 import ai.daylight.assistant.domain.DEFAULT_MEDIA_RATIO
 import ai.daylight.assistant.domain.GeneratedOutput
 import ai.daylight.assistant.domain.MakeKind
+import ai.daylight.assistant.domain.MakeStyle
 import ai.daylight.assistant.domain.MakeOutcome
 import ai.daylight.assistant.domain.MakeRender
 import ai.daylight.assistant.domain.MediaJobStatus
@@ -180,6 +181,9 @@ object MakeModel {
      * The spec pills under a result's prompt, read from the file itself: a clip's length,
      * the ratio and its height ("720p"); an image's ratio and pixel size.
      */
+    /** v2.1: the pill on a running render's prompt when it is dressed in a style. */
+    fun styleSpecs(style: MakeStyle): List<String> = if (style == MakeStyle.PLAIN) emptyList() else listOf("${style.label} style")
+
     fun specs(kind: MakeKind, durationMs: Long?, width: Int, height: Int): List<String> = buildList {
         if (kind == MakeKind.VIDEO) durationMs?.takeIf { it > 0 }?.let { add(durationLabel(it)) }
         ratioLabel(width, height)?.let(::add)

@@ -455,9 +455,9 @@ fun AppNavigation(
             if (makeKind != null) {
                 scope.launch {
                     val studio = container.make
-                    val model = container.preferences.state.first().makeModel(makeKind)
+                    val settings = container.preferences.state.first()
                     // Busy with another render: keep the words as Make's draft instead.
-                    if (!studio.start(makeKind, text, studio.ratios.value[makeKind], model)) {
+                    if (!studio.start(makeKind, text, studio.ratios.value[makeKind], settings.makeModel(makeKind), style = settings.makeStyle)) {
                         studio.draft.value = text
                     }
                     withContext(Dispatchers.Main.immediate) { navigateArm(Routes.make(makeKind)) }
@@ -745,7 +745,8 @@ fun AppNavigation(
                 onChats = ::openLibrary,
                 onLlms = { nav.navigate(Routes.LLMS) },
                 onSkills = { nav.navigate(Routes.SKILLS) },
-                onOpen = { route -> nav.navigate(route) }
+                onOpen = { route -> nav.navigate(route) },
+                onHome = ::goHome
             )
         }
         composable(Routes.API) {

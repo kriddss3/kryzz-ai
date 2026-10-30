@@ -36,3 +36,28 @@ internal fun String.scrubThinkTags(): String {
         .replace(Regex("\\r?\\n\\s*\\r?\\n\\s*\\r?\\n+"), "\n\n")
         .trim()
 }
+
+/**
+ * v2.1: the reasoning inside `<think>…</think>` blocks (the opposite of [scrubThinkTags]), so
+ * models that inline their thinking still fill the answer's thinking trace. A block whose
+ * closing tag has not arrived yet is included as far as it goes.
+ */
+internal fun String.thinkText(): String {
+    if (!contains("<think>")) return ""
+    val builder = StringBuilder()
+    var cursor = 0
+    while (true) {
+        val openStart = indexOf("<think>", cursor)
+        if (openStart < 0) break
+        val openEnd = openStart + "<think>".length
+        val closeStart = indexOf("</think>", openEnd)
+        if (builder.isNotEmpty()) builder.append("\n\n")
+        if (closeStart < 0) {
+            builder.append(substring(openEnd))
+            break
+        }
+        builder.append(substring(openEnd, closeStart))
+        cursor = closeStart + "</think>".length
+    }
+    return builder.toString().trim()
+}

@@ -79,6 +79,8 @@ internal data class VoiceLines(
 internal fun voiceTurns(messages: List<MessageEntity>, limit: Int = 4): List<VoiceTurn> =
     messages.asReversed().asSequence()
         .filter { it.role == "USER" || it.role == "ASSISTANT" }
+        // v2.1: a direct-hearing turn reads "Voice message" until Gemini says what it heard.
+        .filterNot { it.role == "USER" && it.content == ai.daylight.assistant.voice.VoiceHearing.PLACEHOLDER }
         .map { VoiceTurn(fromUser = it.role == "USER", text = voiceDisplayText(it.content)) }
         .filter { it.text.isNotBlank() }
         .take(limit)

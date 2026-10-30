@@ -20,6 +20,7 @@ import ai.daylight.assistant.domain.BackgroundStyle
 import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.FontStyle
 import ai.daylight.assistant.domain.GradientPalette
+import ai.daylight.assistant.domain.MakeStyle
 import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
@@ -27,6 +28,7 @@ import ai.daylight.assistant.domain.TextPalette
 import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoiceReplyModels
+import ai.daylight.assistant.voice.VoiceSensitivity
 import ai.daylight.assistant.voice.FishCustomVoice
 import ai.daylight.assistant.voice.FishEngines
 import ai.daylight.assistant.voice.OpenRouterTtsModels
@@ -99,7 +101,15 @@ data class SettingsState(
     val fishCustomVoices: List<FishCustomVoice> = emptyList(),
     val fishSpeed: Float = 1f,
     val voiceEmotions: Boolean = true,
-    val voiceFishStreaming: Boolean = true
+    val voiceFishStreaming: Boolean = true,
+    /** v2.1: a reply model that hears audio (Gemini) gets the recording itself; no transcriber step. */
+    val voiceDirectAudio: Boolean = true,
+    /** v2.1: how readily the voice mic takes a sound for speech. */
+    val voiceSensitivity: VoiceSensitivity = VoiceSensitivity.NORMAL,
+    /** v2.1: Make's look (Plain or the Nothing OS style). */
+    val makeStyle: MakeStyle = MakeStyle.PLAIN,
+    /** v2.1: set when onboarding finishes; Home shows the tour once, then clears it. */
+    val tourPending: Boolean = false
 )
 
 class AppPreferences(private val context: Context) {
@@ -159,6 +169,10 @@ class AppPreferences(private val context: Context) {
         val fishSpeed = floatPreferencesKey("fish_speed")
         val voiceEmotions = booleanPreferencesKey("voice_emotions")
         val voiceFishStreaming = booleanPreferencesKey("voice_fish_streaming")
+        val voiceDirectAudio = booleanPreferencesKey("voice_direct_audio")
+        val voiceSensitivity = stringPreferencesKey("voice_sensitivity")
+        val makeStyle = stringPreferencesKey("make_style")
+        val tourPending = booleanPreferencesKey("tour_pending")
     }
 
     val state: Flow<SettingsState> = context.dataStore.data
@@ -226,7 +240,11 @@ class AppPreferences(private val context: Context) {
                 fishCustomVoices = decodeFishCustomVoices(p[Keys.fishCustomVoices]),
                 fishSpeed = (p[Keys.fishSpeed] ?: 1f).coerceIn(0.5f, 2f),
                 voiceEmotions = p[Keys.voiceEmotions] ?: true,
-                voiceFishStreaming = p[Keys.voiceFishStreaming] ?: true
+                voiceFishStreaming = p[Keys.voiceFishStreaming] ?: true,
+                voiceDirectAudio = p[Keys.voiceDirectAudio] ?: true,
+                voiceSensitivity = VoiceSensitivity.from(p[Keys.voiceSensitivity]),
+                makeStyle = MakeStyle.from(p[Keys.makeStyle]),
+                tourPending = p[Keys.tourPending] ?: false
             )
         }
 
@@ -445,6 +463,10 @@ class AppPreferences(private val context: Context) {
     suspend fun setFishSpeed(value: Float) = context.dataStore.edit { it[Keys.fishSpeed] = value.coerceIn(0.5f, 2f) }
     suspend fun setVoiceEmotions(value: Boolean) = context.dataStore.edit { it[Keys.voiceEmotions] = value }
     suspend fun setVoiceFishStreaming(value: Boolean) = context.dataStore.edit { it[Keys.voiceFishStreaming] = value }
+    suspend fun setVoiceDirectAudio(value: Boolean) = context.dataStore.edit { it[Keys.voiceDirectAudio] = value }
+    suspend fun setVoiceSensitivity(value: VoiceSensitivity) = context.dataStore.edit { it[Keys.voiceSensitivity] = value.name }
+    suspend fun setMakeStyle(value: MakeStyle) = context.dataStore.edit { it[Keys.makeStyle] = value.name }
+    suspend fun setTourPending(value: Boolean) = context.dataStore.edit { it[Keys.tourPending] = value }
     suspend fun clear() = context.dataStore.edit { it.clear() }
 
     private companion object {

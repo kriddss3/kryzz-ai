@@ -39,6 +39,7 @@ data class MakeRender(
     val outcome: MakeOutcome = MakeOutcome.RUNNING,
     val finishedAt: Long? = null,
     val error: String? = null,
+    val style: MakeStyle = MakeStyle.PLAIN,
 ) {
     val running: Boolean get() = outcome == MakeOutcome.RUNNING
 }
@@ -79,16 +80,23 @@ class MakeStudio(
      * otherwise in a new conversation. Returns false when the prompt is blank or a render is
      * already running.
      */
-    fun start(kind: MakeKind, prompt: String, ratio: String?, model: String, conversationId: String? = null): Boolean {
+    fun start(
+        kind: MakeKind,
+        prompt: String,
+        ratio: String?,
+        model: String,
+        conversationId: String? = null,
+        style: MakeStyle = MakeStyle.PLAIN,
+    ): Boolean {
         val clean = prompt.trim()
         if (clean.isEmpty() || _current.value?.running == true) return false
         val id = ++serial
-        _current.value = MakeRender(id, kind, clean, ratio, model, clock(), conversationId)
+        _current.value = MakeRender(id, kind, clean, ratio, model, clock(), conversationId, style = style)
         job = scope.launch {
             try {
                 val conversation = conversationId ?: newConversation()
                 change(id) { it.copy(conversationId = conversation) }
-                render(conversation, clean, kind, MediaOptions(ratio))
+                render(conversation, clean, kind, MediaOptions(ratio, style))
                 change(id) { it.copy(outcome = MakeOutcome.DONE, finishedAt = clock()) }
             } catch (stop: CancellationException) {
                 change(id) { it.copy(outcome = MakeOutcome.STOPPED, finishedAt = clock()) }

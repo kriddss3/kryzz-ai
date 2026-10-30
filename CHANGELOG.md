@@ -2,6 +2,33 @@
 
 Public GitHub versions. Internal Kryzz build numbers are in parentheses.
 
+## v2.1 — 2026-10-30 (internal 5.13.0, versionCode 100)
+
+Fixes and additions from phone testing of v2.0. The database moves to version 14 in place (answers gain a thinking trace); nothing is lost.
+
+### Voice
+
+- **Far less sensitive to wind and noise.** The mic now only counts sound that has the pitch of a voice: it filters out the low rumble of wind first, then checks each 20 ms for a voice's periodicity. Gusts, bumps, rustling and traffic no longer start a turn or cut Kryzz off. The phone's own noise suppressor and echo canceller are switched on when it has them.
+- **Mic sensitivity** in Tune > Voice: Low (outdoors, wind), Normal, High (quiet rooms).
+- **Gemini hears you directly.** With Gemini 2.5 Flash Lite as the reply model (the default), the recording goes straight to Gemini, then Fish Audio speaks the answer. No separate transcriber step, so replies start sooner. Gemini also writes down what it heard, which becomes your message in the chat. If a clip holds no speech for Kryzz, it says so and Kryzz just keeps listening. Turn it off in Tune > Voice > Hearing; other reply models still use the transcriber.
+
+### Talk and Run
+
+- **Thinking you can see.** Every answer has a THINKING row while it is being worked out (with the seconds so far and its newest thought). Tap it to read every step: the model's reasoning, what it said before it went to work, and each search or tool it ran. Nothing disappears between steps any more. Finished answers keep a "THOUGHT FOR 12S · 3 STEPS" row.
+- **Hold to talk.** Hold the reply line (or Home's "Ask, search, or make" bar) to dictate. Let go and the words land in the field; slide up to cancel. A tap still opens the keyboard, and once the field is focused a long-press still pastes.
+- **Save to phone.** A made image or clip in a chat has a Save to phone button that puts it straight in the gallery (Pictures/Kryzz, Movies/Kryzz), plus Share.
+- A stopped answer is now marked as stopped instead of looking like it is still writing.
+
+### Make
+
+- **Nothing style.** A Style switch (Plain / Nothing) dresses your prompt in the Nothing OS look: black, white and one red, dot-matrix lettering and patterns, Glyph light strips, see-through industrial parts. Your prompt is saved as you wrote it.
+- **Roomier video layout.** Under a wide frame the model gets its own row and the other dials go two a row, so nothing is cut off. "Run in background", Cancel, Save to phone and Make a variant each have room for their words, and the Image/Video switch fills the title row.
+
+### First run
+
+- **Tour.** A fresh install gets a seven-page tour on Home: the arms, the rail, the chat drawer, Talk and Run, Voice and hold-to-talk, Make/Find/Crew, and your keys. Open it again from Tune > Tour.
+- **Get a key links** for OpenRouter (openrouter.ai/settings/keys), Fish Audio (fish.audio/app/api-keys) and Parallel in onboarding, the tour and Tune > Keys.
+
 ## v2.0 — 2026-10-30 (internal 5.12.14, versionCode 99)
 
 A new look and a new layout. The whole app moves to a Nothing-style dot-matrix design ("Eight Arms"): black and white, one yellow accent, LED type and stepped motion. Chats, keys, memory, skills and settings carry over. Internal drops 5.12.0 through 5.12.14 are included.

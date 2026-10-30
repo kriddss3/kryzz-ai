@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [ConversationEntity::class, ConversationFolderEntity::class, MessageEntity::class, SkillEntity::class, MemoryEntity::class, ScheduledTaskEntity::class, BotEntity::class],
-    version = 13,
+    version = 14,
     exportSchema = true
 )
 abstract class AssistantDatabase : RoomDatabase() {
@@ -149,6 +149,13 @@ abstract class AssistantDatabase : RoomDatabase() {
                     "UPDATE scheduled_tasks SET daysOfWeek = CAST(dayOfWeek AS TEXT) " +
                         "WHERE dayOfWeek IS NOT NULL AND recurrence = 'WEEKLY'"
                 )
+            }
+        }
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // v2.1: an answer keeps its thinking (reasoning, what it said between steps,
+                // the tools it called). Additive; every existing answer starts with none.
+                db.execSQL("ALTER TABLE messages ADD COLUMN thinkingJson TEXT NOT NULL DEFAULT '[]'")
             }
         }
         val MIGRATION_12_13 = object : Migration(12, 13) {

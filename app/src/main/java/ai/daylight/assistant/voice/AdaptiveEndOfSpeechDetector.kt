@@ -38,8 +38,8 @@ internal data class VoiceActivitySample(
 internal class AdaptiveEndOfSpeechDetector(
     private val maxRecordMs: Long = VoiceConfig.MAX_RECORD_MS,
     private val trailingSilenceMs: Long = VoiceConfig.SILENCE_STOP_MS,
-    private val minVoicedMs: Long = VoiceConfig.MIN_SPEECH_MS,
-    private val speechConfirmMs: Long = VoiceConfig.SPEECH_CONFIRM_MS,
+    private var minVoicedMs: Long = VoiceConfig.MIN_SPEECH_MS,
+    private var speechConfirmMs: Long = VoiceConfig.SPEECH_CONFIRM_MS,
     private val calibrationMs: Long = VoiceConfig.NOISE_CALIBRATION_MS,
     private val minimumGate: Int = VoiceConfig.SPEECH_THRESHOLD,
     private val allowImmediateSpeechDuringCalibration: Boolean = true
@@ -58,6 +58,17 @@ internal class AdaptiveEndOfSpeechDetector(
     private var candidateStartedAtMs: Long? = null
     private var lastVoiceAtMs: Long? = null
     private var noiseFloor = INITIAL_NOISE_FLOOR
+    private var gateScale = 1f
+
+    /**
+     * v2.1: applies the user's Voice sensitivity. Low lifts the loudness gate and asks for
+     * longer voice before a turn starts or is sent; High lowers both.
+     */
+    fun configure(profile: SensitivityProfile) {
+        gateScale = profile.gateScale
+        minVoicedMs = profile.minSpeechMs
+        speechConfirmMs = profile.confirmMs
+    }
 
     fun reset(startedAtMs: Long) {
         this.startedAtMs = startedAtMs
@@ -79,7 +90,13 @@ internal class AdaptiveEndOfSpeechDetector(
         candidateStartedAtMs = null
     }
 
-    fun observe(amplitude: Int, nowMs: Long): VoiceActivitySample {
+    /**
+     * [voiceLike] is false when the mic's frames since the last poll had no pitched (voiced)
+     * sound in them (see [SpeechFrameAnalyzer]). Such a sample never counts as speech, however
+     * loud it is; before speech starts it only teaches the detector the noise floor, so a
+     * steady wind raises the gate instead of opening the turn.
+     */
+    fun observe(amplitude: Int, nowMs: Long, voiceLike: Boolean = true): VoiceActivitySample {
         if (startedAtMs == null) reset(nowMs)
         val startedAt = checkNotNull(startedAtMs)
         val previousSampleAt = lastSampleAtMs ?: nowMs
@@ -91,7 +108,7 @@ internal class AdaptiveEndOfSpeechDetector(
         val releaseGate = releaseGate()
         val calibrating = !hasSpeech && nowMs - startedAt <= calibrationMs
         val immediateSpeech = safeAmplitude >= (activationGate * IMMEDIATE_SPEECH_MULTIPLIER).toInt()
-        var voiceActive = if (hasSpeech) safeAmplitude >= releaseGate else safeAmplitude >= activationGate
+        var voiceActive = voiceLike && if (hasSpeech) safeAmplitude >= releaseGate else safeAmplitude >= activationGate
 
         if (!hasSpeech) {
             if (voiceActive && (!calibrating || (allowImmediateSpeechDuringCalibration && immediateSpeech))) {
@@ -134,12 +151,12 @@ internal class AdaptiveEndOfSpeechDetector(
     }
 
     private fun activationGate(): Int =
-        max(minimumGate.toFloat(), noiseFloor * ACTIVATION_NOISE_RATIO + ACTIVATION_HEADROOM)
+        (max(minimumGate.toFloat(), noiseFloor * ACTIVATION_NOISE_RATIO + ACTIVATION_HEADROOM) * gateScale)
             .coerceAtMost(MAX_ADAPTIVE_GATE)
             .toInt()
 
     private fun releaseGate(): Int =
-        max(minimumGate * RELEASE_MINIMUM_RATIO, noiseFloor * RELEASE_NOISE_RATIO + RELEASE_HEADROOM)
+        (max(minimumGate * RELEASE_MINIMUM_RATIO, noiseFloor * RELEASE_NOISE_RATIO + RELEASE_HEADROOM) * gateScale)
             .coerceAtMost(MAX_ADAPTIVE_GATE)
             .toInt()
 

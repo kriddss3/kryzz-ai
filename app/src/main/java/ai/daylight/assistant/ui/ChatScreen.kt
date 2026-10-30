@@ -112,6 +112,9 @@ import ai.daylight.assistant.ui.run.WorkChips
 import ai.daylight.assistant.ui.home.HomeBoard
 import ai.daylight.assistant.ui.shell.InkLine
 import ai.daylight.assistant.ui.shell.LocalInkStrip
+import kotlinx.coroutines.withContext
+import ai.daylight.assistant.ui.run.FileCardModel
+import ai.daylight.assistant.ui.make.MakeMedia
 import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStripEffect
 import ai.daylight.assistant.ui.dot.DotColorsLight
@@ -207,6 +210,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var pendingOutput by remember { mutableStateOf<GeneratedOutput?>(null) }
+    var savedOutputs by remember(vm.conversationId) { mutableStateOf(setOf<String>()) }
     var usageMessage by remember { mutableStateOf<MessageEntity?>(null) }
     var showAiControls by remember(vm.conversationId) { mutableStateOf(false) }
     var showCapabilityPicker by remember(vm.conversationId) { mutableStateOf(false) }
@@ -220,6 +224,7 @@ fun ChatScreen(
     var replyFocusRequests by remember { mutableIntStateOf(0) }
     val dictating by vm.dictating.collectAsStateWithLifecycle()
     val dictationLevel by vm.dictationLevel.collectAsStateWithLifecycle()
+    val dictationTranscribing by vm.dictationTranscribing.collectAsStateWithLifecycle()
     val speakingMessageId by vm.speakingMessageId.collectAsStateWithLifecycle()
     val synthesizingMessageId by vm.synthesizingMessageId.collectAsStateWithLifecycle()
     val keyboard = LocalSoftwareKeyboardController.current
@@ -238,6 +243,11 @@ fun requestVoice() {
     val dictationMicPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) vm.beginDictation() else vm.error.value = "Microphone permission is needed for dictation."
     }
+    val inkStrip = LocalInkStrip.current
+    // A hold that needed the mic permission first: the finger has gone, so just say to hold again.
+    val holdMicPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) inkStrip?.flash(InkLine("HOLD AGAIN TO TALK")) else vm.error.value = "Microphone permission is needed for dictation."
+    }
     fun requestDictation() {
         if (vm.dictating.value) {
             vm.stopDictation()
@@ -249,6 +259,17 @@ fun requestVoice() {
         } else {
             dictationMicPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+    // v2.1: hold the reply line to dictate; letting go writes the words into it.
+    fun holdToTalkStart() {
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            vm.beginDictation()
+        } else {
+            holdMicPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    fun holdToTalkEnd(cancelled: Boolean) {
+        if (cancelled) vm.cancelDictation() else vm.stopDictation()
     }
     LaunchedEffect(replyFocusRequests) {
         if (replyFocusRequests == 0) return@LaunchedEffect
@@ -449,7 +470,6 @@ fun requestVoice() {
     var showTalkOptions by remember(vm.conversationId) { mutableStateOf(false) }
     var showRunOptions by remember(vm.conversationId) { mutableStateOf(false) }
     var showQualitySheet by remember(vm.conversationId) { mutableStateOf(false) }
-    val inkStrip = LocalInkStrip.current
     fun launchImagePicker() = pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     fun launchCamera() {
         cameraFile.value = File(context.cacheDir, "kryzz-camera-${System.currentTimeMillis()}.jpg")
@@ -462,13 +482,24 @@ fun requestVoice() {
         onRegenerate = vm::regenerate,
         onSpeak = vm::speakMessage,
         onShowUsage = { usageMessage = it },
-        onSaveOutput = {
-            pendingOutput = it
-            saveOutput.launch(it.fileName)
+        onSaveOutput = { output ->
+            // v2.1: made images and clips go straight to the gallery (Pictures/Kryzz,
+            // Movies/Kryzz); other files, and Android 9, still ask where to save.
+            if (FileCardModel.savesToGallery(output) && MakeMedia.canSaveToGallery) {
+                scope.launch {
+                    val ok = withContext(Dispatchers.IO) { MakeMedia.saveToGallery(context.applicationContext, output) }
+                    if (ok) savedOutputs = savedOutputs + output.id
+                    inkStrip?.flash(InkLine(if (ok) "SAVED TO GALLERY" else "SAVE FAILED"))
+                }
+            } else {
+                pendingOutput = output
+                saveOutput.launch(output.fileName)
+            }
         },
         onOpenOutput = { openOutput(context, it) },
         onQuestionAnswer = vm::sendQuestionAnswer,
-        onCreateSkill = vm::createSkillFromConversation
+        onCreateSkill = vm::createSkillFromConversation,
+        isSaved = { it in savedOutputs }
     )
     val baseColors = MaterialTheme.colorScheme
     val darkBackground = baseColors.background.luminance() < 0.45f
@@ -526,7 +557,10 @@ fun requestVoice() {
                             },
                             onRemoveAttachment = vm::removeAttachment,
                             onFocusChanged = onComposerFocusChanged,
-                            focusRequester = replyFocus
+                            focusRequester = replyFocus,
+                            transcribing = dictationTranscribing,
+                            onHoldStart = ::holdToTalkStart,
+                            onHoldEnd = ::holdToTalkEnd
                         ) else if (generating) RunActions(
                             // The agent has no pause, so Pause only says it is not here yet.
                             onPause = { inkStrip?.flash(InkLine("PAUSE NOT YET")) },
@@ -559,6 +593,9 @@ fun requestVoice() {
                             focusRequester = replyFocus,
                             idlePlaceholder = if (messages.isEmpty()) "Give Kryzz a task" else "Follow up",
                             optionsLabel = "Run options",
+                            transcribing = dictationTranscribing,
+                            onHoldStart = ::holdToTalkStart,
+                            onHoldEnd = ::holdToTalkEnd,
                             notes = {
                                 if (agentModelNotice.visible) {
                                     KryzzAgentModelNoticeCard(

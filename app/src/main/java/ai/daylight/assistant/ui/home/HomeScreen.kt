@@ -1,6 +1,10 @@
 package ai.daylight.assistant.ui.home
 
 import ai.daylight.assistant.data.CronSchedulePresets
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,10 +19,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.daylight.assistant.domain.AgentCapability
+import ai.daylight.assistant.ui.DictationSession
 import ai.daylight.assistant.ui.HomeViewModel
+import ai.daylight.assistant.ui.onboarding.TourScreen
+import ai.daylight.assistant.ui.shell.InkLine
 import ai.daylight.assistant.ui.make.MakeModel
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.InkLines
@@ -78,7 +86,38 @@ fun HomeScreen(
     )
     InkStripEffect(InkLines.home(busy.size))
 
+    // v2.1: a fresh install sees the tour here once (Tune > Tour shows it again).
+    if (settings.tourPending) {
+        TourScreen(onDone = vm::dismissTour, modifier = Modifier.padding(start = 16.dp))
+        return
+    }
+
+    val context = LocalContext.current
+    val dictating by vm.dictating.collectAsStateWithLifecycle()
+    val dictationLevel by vm.dictationLevel.collectAsStateWithLifecycle()
+    val transcribing by vm.dictationTranscribing.collectAsStateWithLifecycle()
+    val holdMicPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        strip?.flash(InkLine(if (granted) "HOLD AGAIN TO TALK" else "MIC NOT ALLOWED"))
+    }
+
     var draft by rememberSaveable { mutableStateOf("") }
+    fun holdStart() {
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            vm.beginDictation(onError = { strip?.flash(InkLine("MIC UNAVAILABLE")) })
+        } else {
+            holdMicPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    fun holdEnd(cancelled: Boolean) {
+        if (cancelled) {
+            vm.cancelDictation()
+            return
+        }
+        vm.finishDictation(
+            onText = { words -> draft = DictationSession.append(draft, words) },
+            onError = { message -> strip?.flash(InkLine(HomeBoard.dictationProblem(message))) }
+        )
+    }
     val offer = HomeBoard.makeOffer(draft)
     fun ask() {
         val text = draft.trim()
@@ -111,7 +150,12 @@ fun HomeScreen(
             onVoice = onVoice,
             onInkwell = onInkwell,
             modifier = Modifier.navigationBarsPadding().imePadding(),
-            inkBadge = inkBadge
+            inkBadge = inkBadge,
+            dictating = dictating,
+            dictationLevel = dictationLevel,
+            transcribing = transcribing,
+            onHoldStart = ::holdStart,
+            onHoldEnd = ::holdEnd
         )
     }
 }

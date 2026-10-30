@@ -69,6 +69,8 @@ class TuneActions(
     val onDotBackground: (Boolean) -> Unit = {},
     val onExportChats: () -> Unit = {},
     val onImportChats: () -> Unit = {},
+    /** v2.1: shows the first-run tour again, on Home. */
+    val onTour: () -> Unit = {},
 )
 
 /**
@@ -217,6 +219,7 @@ fun TuneScreen(
             R.drawable.ic_kz_export, "Backup", state.backupNotice ?: "Export or import your chats",
             onClick = { showBackup = true }
         )
+        TuneRow(R.drawable.ic_kz_squid, "Tour", "How Kryzz works, and where to get keys", onClick = actions.onTour)
         TuneRow(R.drawable.ic_kz_info, "About", "Version ${BuildConfig.VERSION_NAME}", onClick = { onOpen(Routes.ABOUT) })
         Spacer(Modifier.height(28.dp))
         TuneCaption(

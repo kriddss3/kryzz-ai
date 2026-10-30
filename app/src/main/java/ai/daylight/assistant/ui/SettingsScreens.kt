@@ -49,6 +49,8 @@ import ai.daylight.assistant.domain.AssistantPreset
 import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.ui.dot.DotButtonStyle
+import ai.daylight.assistant.ui.onboarding.GetKeyLink
+import ai.daylight.assistant.ui.onboarding.KeyLinks
 import ai.daylight.assistant.ui.dot.DotConfirmDialog
 import ai.daylight.assistant.ui.dot.DotField
 import ai.daylight.assistant.ui.dot.DotIconButton
@@ -83,6 +85,8 @@ import ai.daylight.assistant.ui.tune.TuneTrailing
 import ai.daylight.assistant.voice.FishEngines
 import ai.daylight.assistant.voice.FishVoices
 import ai.daylight.assistant.voice.VoiceConfig
+import ai.daylight.assistant.voice.VoiceHearing
+import ai.daylight.assistant.voice.VoiceSensitivity
 import ai.daylight.assistant.voice.VoiceReplyModels
 import ai.daylight.assistant.voice.VoiceSttModels
 import kotlinx.coroutines.Dispatchers
@@ -126,7 +130,8 @@ fun TuneRoute(
     onChats: () -> Unit,
     onLlms: () -> Unit,
     onSkills: () -> Unit,
-    onOpen: (String) -> Unit
+    onOpen: (String) -> Unit,
+    onHome: () -> Unit = {}
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val keys by vm.keyTails.collectAsStateWithLifecycle()
@@ -208,7 +213,11 @@ fun TuneRoute(
                     createBackup.launch("kryzz-ai-chat-backup.json")
                 }
             },
-            onImportChats = { openBackup.launch(arrayOf("application/json")) }
+            onImportChats = { openBackup.launch(arrayOf("application/json")) },
+            onTour = {
+                vm.showTour()
+                onHome()
+            }
         )
     }
     SettingsHomeScreen(
@@ -278,11 +287,11 @@ fun AppearanceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
 }
 
 /** The four keys Kryzz can hold. Each is tested with one small call before it is saved. */
-private enum class KeyProvider(val id: String, val label: String, val detail: String) {
-    OPENROUTER("openrouter", "OpenRouter", "Chat, image, video, audio and speech models."),
+private enum class KeyProvider(val id: String, val label: String, val detail: String, val link: String? = null) {
+    OPENROUTER("openrouter", "OpenRouter", "Chat, image, video, audio and speech models.", KeyLinks.OPENROUTER),
     MINIMAX("minimax", "MiniMax", "Chat, image, video and audio from MiniMax."),
-    PARALLEL("parallel", "Parallel Search", "Web search for Run and research."),
-    FISH("fish", "Fish Audio", "The voice of spoken replies."),
+    PARALLEL("parallel", "Parallel Search", "Web search for Run and research.", KeyLinks.PARALLEL),
+    FISH("fish", "Fish Audio", "The voice of spoken replies.", KeyLinks.FISH_AUDIO),
 }
 
 /**
@@ -415,6 +424,7 @@ private fun KeyEditor(
     var reveal by rememberSaveable(provider) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(start = 34.dp, bottom = 20.dp)) {
         Text(provider.detail, style = DotType.BodySmall, color = c.textTertiary)
+        provider.link?.let { GetKeyLink(it, Modifier.padding(top = 4.dp)) }
         Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 TuneSubpageModel.maskedKey(stored, tail) ?: "No key stored",
@@ -615,8 +625,40 @@ fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         )
         Spacer(Modifier.height(28.dp))
 
+        // v2.1: how Kryzz hears you.
+        TuneSection("Hearing")
+        val replyHears = VoiceHearing.hearsAudio(
+            settings.voiceReplyModel.ifBlank { settings.defaultModel }.ifBlank { VoiceConfig.DEFAULT_LLM_MODEL }
+        )
+        TuneRow(
+            R.drawable.ic_kz_voice_wave, "Gemini hears you directly",
+            detail = if (replyHears) {
+                "Your voice goes straight to the reply model, with no transcriber step. Faster, and it hears your tone."
+            } else {
+                "Needs a Gemini reply model. With this one the transcriber below writes down what you say first."
+            },
+            trailing = TuneTrailing.Switch(settings.voiceDirectAudio, vm::setVoiceDirectAudio),
+            modifier = Modifier.testTag("voice_direct_audio_toggle")
+        )
+        Text(
+            "MIC SENSITIVITY",
+            Modifier.padding(top = 18.dp, bottom = 8.dp),
+            style = DotType.Label,
+            color = c.textTertiary
+        )
+        DotSegments(
+            options = VoiceSensitivity.entries.map { SegmentOption(it.label, tag = "voice_sensitivity_${it.name.lowercase()}") },
+            selected = settings.voiceSensitivity.ordinal,
+            onSelect = { vm.setVoiceSensitivity(VoiceSensitivity.entries[it]) }
+        )
+        TuneDetail(
+            "${settings.voiceSensitivity.detail}. Kryzz only listens to sounds that have the pitch of a voice, so wind and bumps are left out. Low also needs you a little closer.",
+            Modifier.padding(top = 8.dp)
+        )
+        Spacer(Modifier.height(28.dp))
+
         TuneSection("Transcriber")
-        TuneDetail("Which model hears you. All run through OpenRouter.", Modifier.padding(bottom = 10.dp))
+        TuneDetail("Which model writes down what you say for dictation, and for voice chat when the reply model cannot hear audio. All run through OpenRouter.", Modifier.padding(bottom = 10.dp))
         VoiceSttModels.options.forEach { choice ->
             TuneChoiceRow(
                 title = choice.name,
@@ -655,7 +697,7 @@ fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         )
         Spacer(Modifier.height(28.dp))
         DotNotice(
-            "Your voice is recorded only while voice chat is open, sent to OpenRouter for the transcriber you picked, then deleted from this phone. Fish Audio makes the reply audio, which is deleted after playback. No recordings are kept in chat history.",
+            "Your voice is recorded only while voice chat is open, sent through OpenRouter to the reply model (or the transcriber you picked), then deleted from this phone. Fish Audio makes the reply audio, which is deleted after playback. No recordings are kept in chat history.",
             icon = R.drawable.ic_kz_shield
         )
     }

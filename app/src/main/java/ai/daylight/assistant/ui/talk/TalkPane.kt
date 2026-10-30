@@ -90,6 +90,8 @@ class TalkCallbacks(
     val onQuestionAnswer: (question: String, answer: String) -> Unit,
     /** Run only: save a finished run as a reusable skill. */
     val onCreateSkill: (MessageEntity) -> Unit = {},
+    /** v2.1: images and clips already saved to the gallery in this visit. */
+    val isSaved: (String) -> Boolean = { false },
 )
 
 /** What a long-press opened its action sheet on. */
@@ -218,7 +220,8 @@ fun TalkPane(
                         onLongPress = {
                             actionTarget = ActionTarget.Answer(answer, canRegenerate = answer.id == lastAnswerId && !generating)
                         },
-                        callbacks = callbacks
+                        callbacks = callbacks,
+                        working = focal && (generating || activities.isNotEmpty())
                     )
                 }
                 if (focal && generating && exchange.answers.isEmpty()) ThinkingDots(Modifier.padding(vertical = 8.dp))
@@ -374,9 +377,9 @@ internal fun FileChip(name: String) {
 }
 
 /**
- * One answer with no bubble: type-on reveal, yellow citations, the streaming caret, inline
- * question cards, file cards and a STOPPED / FAILED mark. Run reuses it with
- * [showThinking] off, because its work chips already say what is happening.
+ * One answer with no bubble: its thinking row (v2.1), type-on reveal, yellow citations, the
+ * streaming caret, inline question cards, file cards and a STOPPED / FAILED mark. Talk and
+ * Run both use it.
  */
 @Composable
 internal fun AnswerBody(
@@ -387,7 +390,7 @@ internal fun AnswerBody(
     onDoneSelecting: () -> Unit,
     onLongPress: () -> Unit,
     callbacks: TalkCallbacks,
-    showThinking: Boolean = true,
+    working: Boolean = false,
 ) {
     val c = DotTheme.c
     val motion = LocalKryzzMotionEnabled.current
@@ -418,9 +421,8 @@ internal fun AnswerBody(
             .fillMaxWidth()
             .talkLongPress("Answer actions", enabled = !selecting, onLongPress = onLongPress)
     ) {
-        if (segments.isEmpty() && streaming) {
-            if (showThinking) ThinkingDots(Modifier.padding(vertical = 8.dp))
-        } else {
+        ThinkingBlock(message, working, Modifier.padding(bottom = if (segments.isEmpty()) 0.dp else 10.dp))
+        if (segments.isNotEmpty() || !streaming) {
             CompositionLocalProvider(LocalCitationUrls provides citations.map { it.url }) {
                 MaterialTheme(typography = MaterialTheme.typography.copy(bodyLarge = DotType.Answer)) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -454,7 +456,7 @@ internal fun AnswerBody(
                 color = c.textPrimary
             )
         }
-        outputs.forEach { FileCard(it, callbacks.onSaveOutput, callbacks.onOpenOutput) }
+        outputs.forEach { FileCard(it, callbacks.onSaveOutput, callbacks.onOpenOutput, saved = callbacks.isSaved(it.id)) }
         when (message.status) {
             MessageStatus.CANCELLED.name -> Text("STOPPED", Modifier.padding(top = 10.dp), style = DotType.Label, color = c.textTertiary)
             MessageStatus.ERROR.name -> Text("FAILED", Modifier.padding(top = 10.dp), style = DotType.Label, color = c.error)

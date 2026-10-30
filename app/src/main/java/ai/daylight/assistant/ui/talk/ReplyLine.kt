@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +44,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -67,6 +69,9 @@ internal fun replyPlaceholder(generating: Boolean, editing: Boolean, dictating: 
     generating -> "Queue a follow-up"
     else -> idle
 }
+
+/** v2.1: the idle placeholder says the field can be held to talk. */
+internal fun holdPlaceholder(idle: String): String = "$idle, or hold to talk"
 
 /**
  * Talk's reply line: no box, just a hairline and the text. Idle it shows "Reply" and the
@@ -100,10 +105,21 @@ fun ReplyLine(
     idlePlaceholder: String = "Reply",
     optionsLabel: String = "Talk options",
     notes: @Composable ColumnScope.() -> Unit = {},
+    transcribing: Boolean = false,
+    onHoldStart: (() -> Unit)? = null,
+    onHoldEnd: ((cancelled: Boolean) -> Unit)? = null,
 ) {
     val c = DotTheme.c
     val hasText = value.isNotBlank()
     val placeholder = replyPlaceholder(generating, editing, dictating, idlePlaceholder)
+    // v2.1 hold-to-talk: while the field is not focused a hold dictates into it.
+    val ownRequester = remember { FocusRequester() }
+    val requester = focusRequester ?: ownRequester
+    val keyboard = LocalSoftwareKeyboardController.current
+    var focused by remember { mutableStateOf(false) }
+    var holding by remember { mutableStateOf(false) }
+    var cancelZone by remember { mutableStateOf(false) }
+    val holdEnabled = onHoldStart != null && onHoldEnd != null
     val canSend = !generating && (hasText || attachments.isNotEmpty())
     // Phase D: a send ripples yellow dots out from the send button along the line.
     var ripple by remember { mutableIntStateOf(0) }
@@ -127,6 +143,7 @@ fun ReplyLine(
         if (editing) {
             NoteRow(label = "EDITING", text = "An earlier message", action = "Cancel", onAction = onCancelEdit)
         }
+        HoldToTalkModel.note(holding, cancelZone, dictating, transcribing)?.let { (label, hint) -> HoldNote(label, hint) }
         if (attachments.isNotEmpty()) {
             LazyRow(
                 Modifier.padding(bottom = 8.dp),
@@ -150,8 +167,11 @@ fun ReplyLine(
                     onValueChange = onValueChange,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                        .onFocusChanged { onFocusChanged(it.isFocused) }
+                        .focusRequester(requester)
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            onFocusChanged(it.isFocused)
+                        }
                         .semantics { contentDescription = placeholder },
                     textStyle = DotType.Answer.copy(color = c.textPrimary),
                     cursorBrush = SolidColor(c.accentText),
@@ -161,18 +181,40 @@ fun ReplyLine(
                     decorationBox = { inner ->
                         if (value.isEmpty()) {
                             Text(
-                                placeholder,
+                                if (holdEnabled && !focused && !dictating && !editing && !generating) holdPlaceholder(idlePlaceholder) else placeholder,
                                 style = DotType.Answer,
                                 color = c.textTertiary,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         inner()
                     }
                 )
+                if (holdEnabled && !focused) {
+                    HoldToTalkSurface(
+                        onTap = {
+                            runCatching { requester.requestFocus() }
+                            keyboard?.show()
+                        },
+                        onHoldStart = {
+                            holding = true
+                            cancelZone = false
+                            onHoldStart?.invoke()
+                        },
+                        onCancelZone = { cancelZone = it },
+                        onHoldEnd = { cancelled ->
+                            holding = false
+                            cancelZone = false
+                            onHoldEnd?.invoke(cancelled)
+                        },
+                        modifier = Modifier.matchParentSize()
+                    )
+                }
             }
             Spacer(Modifier.width(6.dp))
             when {
+                dictating -> ReplyMic(active = true, level = dictationLevel, onClick = onDictation)
                 generating -> {
                     if (hasText) {
                         RoundIcon(R.drawable.ic_kz_forward, "Queue follow-up", onQueue, filled = false)
@@ -293,7 +335,7 @@ private fun StopButton(onClick: () -> Unit) {
 
 /** Dictation mic. While listening a white ring grows with the voice level. */
 @Composable
-private fun ReplyMic(active: Boolean, level: Float, onClick: () -> Unit) {
+internal fun ReplyMic(active: Boolean, level: Float, onClick: () -> Unit) {
     val c = DotTheme.c
     val motion = LocalKryzzMotionEnabled.current
     val ring = if (active && motion) 1f + level.coerceIn(0f, 1f) * 0.35f else 1f

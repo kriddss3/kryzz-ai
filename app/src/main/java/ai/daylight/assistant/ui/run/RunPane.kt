@@ -236,7 +236,7 @@ fun RunPane(
                         )
                     },
                     callbacks = callbacks,
-                    showThinking = false
+                    working = focal && (generating || activities.isNotEmpty())
                 )
             }
             val cost = RunCost.readout(

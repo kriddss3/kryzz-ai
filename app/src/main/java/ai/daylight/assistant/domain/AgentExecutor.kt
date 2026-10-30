@@ -66,6 +66,7 @@ import ai.daylight.assistant.data.remote.accumulateStreamText
 import ai.daylight.assistant.security.SecureCredentialStore
 import ai.daylight.assistant.data.local.SkillEntity
 import ai.daylight.assistant.voice.VoiceConfig
+import ai.daylight.assistant.voice.VoiceHearing
 import android.os.SystemClock
 import android.util.Base64
 import java.io.File
@@ -75,10 +76,12 @@ import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -196,11 +199,64 @@ class AgentExecutor(
         }
     }
 
+    /**
+     * v2.1 direct hearing (see [VoiceHearing]): the recording goes to the voice reply model as
+     * audio. The user's row reads "Voice message" until the model says what it heard, then
+     * holds those words. [onHeard] gets them as soon as they stream in ("" = no speech in the
+     * clip; both rows are then removed and the reply is null). Throws
+     * [VoiceAudioUnsupported] when the model refused the audio before hearing anything, so
+     * the caller can fall back to the transcriber.
+     */
+    suspend fun sendVoiceAudio(
+        conversationId: String,
+        audio: File,
+        onHeard: suspend (String) -> Unit = {}
+    ): VoiceAudioReply {
+        val now = System.currentTimeMillis()
+        if (dao.conversation(conversationId) == null) {
+            dao.upsertConversation(ConversationEntity(conversationId, "New conversation", now, now))
+        }
+        val firstTurn = dao.messages(conversationId).none { it.role == "USER" }
+        val userId = UUID.randomUUID().toString()
+        dao.upsertMessage(MessageEntity(userId, conversationId, "USER", VoiceHearing.PLACEHOLDER, now, mode = AssistantMode.CHAT.name))
+        dao.touchConversation(conversationId, now)
+        var heard: String? = null
+        val turn = VoiceAudioTurn(audio, userId) { words ->
+            heard = words
+            if (words.isNotBlank()) {
+                dao.updateMessageContent(userId, words, MessageStatus.COMPLETE.name)
+                if (firstTurn) onFirstUserMessage(conversationId, words)
+                if (preferences.state.first().memoryEnabled && memoryRepository.ingest(words, conversationId)) {
+                    toolActivity.tryEmit(ToolActivity(conversationId, TOOL_MEMORY_SAVE, started = true))
+                }
+            }
+            onHeard(words)
+        }
+        val answer = try {
+            generateReply(conversationId, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true, voiceAudio = turn)
+        } catch (cancelled: CancellationException) {
+            // Closed before the model said what it heard: nothing worth keeping.
+            if (heard == null) withContext(NonCancellable) { dao.deleteMessagesFrom(conversationId, now) }
+            throw cancelled
+        } catch (error: Throwable) {
+            // Failed before the model said what it heard: leave no "Voice message" row behind,
+            // as the transcriber path never wrote one. The error still reaches the voice screen.
+            if (heard == null) dao.deleteMessagesFrom(conversationId, now)
+            val kind = (error as? AssistantApiException)?.kind
+            if (heard == null && (kind == ErrorKind.VALIDATION || kind == ErrorKind.MODEL_UNAVAILABLE)) {
+                throw VoiceAudioUnsupported(error)
+            }
+            throw error
+        }
+        return VoiceAudioReply(heard, answer)
+    }
+
     suspend fun generateReply(
         conversationId: String,
         requestedMode: AssistantMode? = null,
         requestedCapability: AgentCapability? = null,
-        voiceMode: Boolean = false
+        voiceMode: Boolean = false,
+        voiceAudio: VoiceAudioTurn? = null
     ): String? {
         val settings = preferences.state.first()
         val provider = if (voiceMode) ChatProvider.OPENROUTER else settings.chatProvider
@@ -274,7 +330,8 @@ class AgentExecutor(
         // before it, so the system prompt and the history stay a cacheable prefix.
         val systemPrompt = buildModePrompt(basePrompt, mode, capability) + questionCardInstruction +
             (if (memoryInstruction.isNotBlank()) "\n\n$memoryInstruction" else "") +
-            (if (pastChatInstruction.isNotBlank()) "\n\n$pastChatInstruction" else "")
+            (if (pastChatInstruction.isNotBlank()) "\n\n$pastChatInstruction" else "") +
+            (if (voiceAudio != null) "\n\n${VoiceHearing.INSTRUCTION}" else "")
         val turnContext = PromptLayout.turnContext(
             listOf(enabledSkillsPrompt(enabledSkills, lastUser?.content.orEmpty()), memoryContext, pastChatContext, locationContext)
         )
@@ -286,7 +343,10 @@ class AgentExecutor(
             .mapTo(mutableSetOf()) { it.id }
         val working = PromptLayout.build(
             system = systemPrompt,
-            history = history.map { apiMessageFor(it, withEvidence = it.id in evidenceReplies) },
+            history = history.map {
+                if (voiceAudio != null && it.id == voiceAudio.userMessageId) voiceAudioMessage(voiceAudio.file)
+                else apiMessageFor(it, withEvidence = it.id in evidenceReplies)
+            },
             turnContext = turnContext,
             cacheBreakpoints = provider == ChatProvider.OPENROUTER && PromptLayout.usesCacheBreakpoints(model)
         ).toMutableList()
@@ -350,7 +410,8 @@ class AgentExecutor(
                 forcedTool != null -> ToolChoice.named(forcedTool)
                 else -> ToolChoice.AUTO
             },
-            reasoning = reasoningEffort?.let { effort -> ReasoningConfig(effort = effort, exclude = true) },
+            // v2.1: the reasoning comes back (it is billed either way) for the answer's thinking trace.
+            reasoning = reasoningEffort?.let { effort -> ReasoningConfig(effort = effort, exclude = false) },
             // Voice chat always routes to the lowest-latency provider serving this model.
             provider = if (voiceMode && provider == ChatProvider.OPENROUTER) ProviderPreferences() else null,
             // MiniMax thinking + a tool call can exceed a tiny default completion budget.
@@ -489,18 +550,45 @@ class AgentExecutor(
             toolActivity.tryEmit(ToolActivity(conversationId, TOOL_AGENT_RUNNING, started = true))
         }
 
+        // v2.1: the turn's thinking (reasoning, what it said between steps, the tools it
+        // called), kept on the one message that carries the whole turn.
+        val trace = TurnTrace()
+        var liveId: String? = null
+        var thinkingWrittenAt = 0L
+        suspend fun writeThinking(id: String, force: Boolean = false) {
+            val now = SystemClock.elapsedRealtime()
+            if (!force && now - thinkingWrittenAt < THINKING_WRITE_MS) return
+            thinkingWrittenAt = now
+            dao.updateMessageThinking(id, trace.json())
+        }
+        // A round that ends without the answer: its words move into the trace and the live
+        // message is cleared for the next round, instead of being deleted.
+        suspend fun closeRound(id: String, narration: String, calls: List<ToolCall>) {
+            trace.endRound(narration, calls.map { it.function.name to ToolActivityDetail.of(it.function.name, it.function.arguments) })
+            activeText = ""
+            dao.updateMessageContent(id, "", MessageStatus.STREAMING.name)
+            writeThinking(id, force = true)
+        }
+        // Direct hearing: what the model heard, once its <heard> tag has closed.
+        var heardDelivered = false
+
         try {
             while (true) {
-                val messageId = UUID.randomUUID().toString()
+                // v2.1: one message carries the whole turn. Later rounds reuse it, so the
+                // thinking trace stays on screen while tools run.
+                val messageId = liveId ?: UUID.randomUUID().toString().also { id ->
+                    liveId = id
+                    dao.upsertMessage(
+                        MessageEntity(
+                            id, conversationId, "ASSISTANT", "", System.currentTimeMillis(), MessageStatus.STREAMING.name,
+                            mode = mode.name,
+                            capability = if (mode == AssistantMode.AGENT) capability.name else null,
+                            thinkingJson = trace.json()
+                        )
+                    )
+                }
                 activeId = messageId
                 activeText = ""
-                dao.upsertMessage(
-                    MessageEntity(
-                        messageId, conversationId, "ASSISTANT", "", System.currentTimeMillis(), MessageStatus.STREAMING.name,
-                        mode = mode.name,
-                        capability = if (mode == AssistantMode.AGENT) capability.name else null
-                    )
-                )
 
                 // Rebuilt every round: URLs a search returned this turn become readable.
                 val fetchAllowlist = FetchAllowlist(conversationUrls + citations.map(Citation::url), userTexts)
@@ -558,13 +646,35 @@ class AgentExecutor(
                 val request = chatRequest(tools, plan.forcedTool, noToolCalls = plan.terminal)
                 val allowEmptyRound = outputs.isNotEmpty() || skillCreated || completedToolRounds > 0 ||
                     freePlanRounds > 0 || plan.terminal
+                var apiReasoning = false
                 val onStreamText: suspend (String) -> Unit = { value ->
                     if (firstTokenLatencyMs == null && value.isNotBlank()) {
                         firstTokenLatencyMs = (SystemClock.elapsedRealtime() - generationStartedAt).coerceAtLeast(0L)
                     }
-                    val visible = ToolCallXml.scrubToolBlocks(value.scrubThinkTags())
+                    val spoken = if (voiceAudio == null) value else {
+                        val split = VoiceHearing.split(value)
+                        if (split.settled && split.heard != null && !heardDelivered) {
+                            heardDelivered = true
+                            voiceAudio.onHeard(split.heard)
+                        }
+                        split.reply
+                    }
+                    val visible = ToolCallXml.scrubToolBlocks(spoken.scrubThinkTags())
                     activeText = visible
                     dao.updateMessageContent(messageId, visible, MessageStatus.STREAMING.name)
+                    // Models that inline <think> blocks fill the trace from the text.
+                    if (!apiReasoning) {
+                        val inline = value.thinkText()
+                        if (inline.isNotEmpty()) {
+                            trace.reasoning(inline)
+                            writeThinking(messageId)
+                        }
+                    }
+                }
+                val onReasoning: suspend (String) -> Unit = { text ->
+                    apiReasoning = true
+                    trace.reasoning(text)
+                    writeThinking(messageId)
                 }
                 // Keep tools on the first validation retry (drop only a rejected
                 // tool_choice). Stripping tools immediately made Auto narrate
@@ -586,6 +696,7 @@ class AgentExecutor(
                             // tool calls there could resurrect a call the budget already ruled
                             // out and loop forever, so recovery is off for that one round.
                             recoverInlineToolCalls = !plan.terminal,
+                            onReasoning = onReasoning,
                             onText = onStreamText
                         )
                     } catch (error: Throwable) {
@@ -606,6 +717,21 @@ class AgentExecutor(
                 }
 
                 val calls = resolved.toolCalls
+                // Direct hearing: "<heard></heard>" means the clip had no speech for Kryzz.
+                // Remove both rows and let the voice session keep listening.
+                if (voiceAudio != null && calls.isEmpty() && activeText.isBlank() &&
+                    VoiceHearing.split(resolved.rawText).noSpeech
+                ) {
+                    if (!heardDelivered) {
+                        heardDelivered = true
+                        voiceAudio.onHeard("")
+                    }
+                    dao.deleteMessage(messageId)
+                    dao.deleteMessage(voiceAudio.userMessageId)
+                    activeId = null
+                    liveId = null
+                    return null
+                }
                 // v5.7: the model drives the loop. Calls returned -> run them and offer
                 // tools again. Text without calls -> that IS the final answer. The only
                 // prose check left is one high-precision nudge when the FIRST round
@@ -624,9 +750,9 @@ class AgentExecutor(
                 when (AgentTurnPolicy.afterModel(turn, activeText, calls.size, toolsCallable, artifactExpected)) {
                     AgentTurnPolicy.After.NUDGE_ONCE -> {
                         nudgedForTools = true
-                        dao.deleteMessage(messageId)
-                        activeId = null
-                        val directive = if (artifactExpected && !AgentTurnPolicy.strictToolPromise(activeText)) {
+                        val promised = activeText
+                        closeRound(messageId, promised, emptyList())
+                        val directive = if (artifactExpected && !AgentTurnPolicy.strictToolPromise(promised)) {
                             AgentTurnPolicy.ARTIFACT_NUDGE_DIRECTIVE
                         } else {
                             AgentTurnPolicy.NUDGE_DIRECTIVE
@@ -636,8 +762,7 @@ class AgentExecutor(
                     }
                     AgentTurnPolicy.After.START_TERMINAL -> {
                         terminalRoundStarted = true
-                        dao.deleteMessage(messageId)
-                        activeId = null
+                        closeRound(messageId, activeText, emptyList())
                         working += ApiMessage("system", AgentTurnPolicy.TERMINAL_DIRECTIVE)
                         continue
                     }
@@ -676,6 +801,8 @@ class AgentExecutor(
                             finalText = reviewDraft(messageId, activeText)
                         }
                         if (stoppedByCostCap) finalText += "\n\n" + AgentTurnPolicy.costCapNote(costCapUsd)
+                        trace.finishRound()
+                        if (!trace.isEmpty) writeThinking(messageId, force = true)
                         val totalGenerationTimeMs = (SystemClock.elapsedRealtime() - generationStartedAt).coerceAtLeast(0L)
                         dao.finishMessage(
                             messageId, finalText, MessageStatus.COMPLETE.name, json.encodeToString(citations),
@@ -694,8 +821,7 @@ class AgentExecutor(
                     AgentTurnPolicy.After.RUN_CALLS -> Unit // fall through to tool execution
                 }
 
-                dao.deleteMessage(messageId)
-                activeId = null
+                closeRound(messageId, activeText, calls)
                 if (!ToolRoundLimiter.canRun(completedToolRounds, turnSettings.stepBudget)) {
                     // Paranoia: the planner goes terminal at the budget, so calls here mean
                     // a recovered inline call slipped through. Answer with what we have
@@ -871,10 +997,8 @@ class AgentExecutor(
                             // Video generation polls the provider for up to several minutes.
                             // Keep a streaming placeholder alive so the UI shows the
                             // ThinkingIndicator instead of an empty chat while it runs.
-                            val heartbeatId = UUID.randomUUID().toString()
-                            dao.upsertMessage(
-                                MessageEntity(heartbeatId, conversationId, "ASSISTANT", "", System.currentTimeMillis(), MessageStatus.STREAMING.name, mode = mode.name, capability = if (mode == AssistantMode.AGENT) capability.name else null)
-                            )
+                            // v2.1: the turn's live message keeps the thinking row up while it renders.
+                            val heartbeatId = messageId
                             try {
                                 val output = produceVideoOutput(args.prompt, heartbeatId)
                                 outputs += output
@@ -887,7 +1011,7 @@ class AgentExecutor(
                                 saveToolMessage(conversationId, call, result)
                                 working += ApiMessage("tool", result, call.id, call.function.name)
                             } finally {
-                                dao.deleteMessage(heartbeatId)
+                                dao.updateMessageContent(heartbeatId, "", MessageStatus.STREAMING.name)
                             }
                         }
 
@@ -895,10 +1019,8 @@ class AgentExecutor(
                             val args = validateSimplePromptArgs(call.function.arguments, "generate_audio")
                             // Music / speech generation can poll for up to a few minutes.
                             // Keep a streaming placeholder alive so the UI shows progress.
-                            val heartbeatId = UUID.randomUUID().toString()
-                            dao.upsertMessage(
-                                MessageEntity(heartbeatId, conversationId, "ASSISTANT", "", System.currentTimeMillis(), MessageStatus.STREAMING.name, mode = mode.name, capability = if (mode == AssistantMode.AGENT) capability.name else null)
-                            )
+                            // v2.1: the turn's live message keeps the thinking row up while it renders.
+                            val heartbeatId = messageId
                             try {
                                 val output = produceAudioOutput(args.prompt, heartbeatId)
                                 outputs += output
@@ -911,7 +1033,7 @@ class AgentExecutor(
                                 saveToolMessage(conversationId, call, result)
                                 working += ApiMessage("tool", result, call.id, call.function.name)
                             } finally {
-                                dao.deleteMessage(heartbeatId)
+                                dao.updateMessageContent(heartbeatId, "", MessageStatus.STREAMING.name)
                             }
                         }
 
@@ -1153,7 +1275,18 @@ class AgentExecutor(
                 }
             }
         } catch (cancelled: CancellationException) {
-            activeId?.let { dao.updateMessageContent(it, activeText, MessageStatus.CANCELLED.name) }
+            // NonCancellable: the turn is already cancelled, so a plain suspend write would be
+            // skipped and leave the answer marked as streaming for good.
+            activeId?.let { id ->
+                val text = activeText
+                withContext(NonCancellable) {
+                    dao.updateMessageContent(id, text, MessageStatus.CANCELLED.name)
+                    if (!trace.isEmpty) {
+                        trace.finishRound()
+                        dao.updateMessageThinking(id, trace.json())
+                    }
+                }
+            }
             throw cancelled
         } catch (error: Throwable) {
             val friendly = (error as? AssistantApiException)?.message ?: "Something went wrong. Check your connection and try again."
@@ -1179,7 +1312,7 @@ class AgentExecutor(
         )
         toolActivity.tryEmit(ToolActivity(conversationId, TOOL_IMAGE_CREATION, started = true))
         try {
-            val output = produceImageOutput(prompt, media?.aspectRatio)
+            val output = produceImageOutput(media?.style?.styled(prompt) ?: prompt, media?.aspectRatio)
             dao.finishMessage(
                 id, "Created your image with ${preferences.state.first().imageModel}.", MessageStatus.COMPLETE.name, "[]",
                 null, null, null, null,
@@ -1187,7 +1320,7 @@ class AgentExecutor(
             )
             dao.touchConversation(conversationId, System.currentTimeMillis())
         } catch (cancelled: CancellationException) {
-            dao.updateMessageContent(id, "Image generation stopped.", MessageStatus.CANCELLED.name)
+            withContext(NonCancellable) { dao.updateMessageContent(id, "Image generation stopped.", MessageStatus.CANCELLED.name) }
             throw cancelled
         } catch (error: Throwable) {
             failDirectGeneration(id, error)
@@ -1252,7 +1385,7 @@ class AgentExecutor(
         )
         toolActivity.tryEmit(ToolActivity(conversationId, TOOL_VIDEO_CREATION, started = true))
         try {
-            val output = produceVideoOutput(prompt, id, media?.aspectRatio) { status ->
+            val output = produceVideoOutput(media?.style?.styled(prompt) ?: prompt, id, media?.aspectRatio) { status ->
                 mediaStatus.value = MediaJobStatus(conversationId, status, System.currentTimeMillis())
             }
             dao.finishMessage(
@@ -1262,7 +1395,9 @@ class AgentExecutor(
             )
             dao.touchConversation(conversationId, System.currentTimeMillis())
         } catch (cancelled: CancellationException) {
-            dao.updateMessageContent(id, "Video generation stopped. The provider may still be processing the submitted job.", MessageStatus.CANCELLED.name)
+            withContext(NonCancellable) {
+                dao.updateMessageContent(id, "Video generation stopped. The provider may still be processing the submitted job.", MessageStatus.CANCELLED.name)
+            }
             throw cancelled
         } catch (error: Throwable) {
             failDirectGeneration(id, error)
@@ -1383,7 +1518,7 @@ class AgentExecutor(
             )
             dao.touchConversation(conversationId, System.currentTimeMillis())
         } catch (cancelled: CancellationException) {
-            dao.updateMessageContent(id, "Audio creation stopped.", MessageStatus.CANCELLED.name)
+            withContext(NonCancellable) { dao.updateMessageContent(id, "Audio creation stopped.", MessageStatus.CANCELLED.name) }
             throw cancelled
         } catch (error: Throwable) {
             failDirectGeneration(id, error)
@@ -1500,6 +1635,7 @@ class AgentExecutor(
         allowEmpty: Boolean = false,
         recoverInlineToolCalls: Boolean = true,
         showRetryNotices: Boolean = true,
+        onReasoning: (suspend (String) -> Unit)? = null,
         onText: suspend (String) -> Unit
     ): StreamedResult {
         var attempt = 0
@@ -1507,11 +1643,16 @@ class AgentExecutor(
         while (true) {
             val calls = mutableMapOf<Int, MutableCall>()
             var text = ""
+            var reasoning = ""
             var usage: Usage? = null
             var failure: AssistantApiException? = null
             client.stream(key, request).collect { event ->
                 when (event) {
                     is StreamEvent.Delta -> {
+                        if (event.reasoning.isNotEmpty() && onReasoning != null) {
+                            reasoning += event.reasoning
+                            onReasoning(reasoning)
+                        }
                         text = accumulateStreamText(text, event.text)
                         event.toolCalls.forEach { delta ->
                             val call = calls.getOrPut(delta.index) { MutableCall() }
@@ -2378,6 +2519,22 @@ class AgentExecutor(
     }
 
     private data class MutableCall(var id: String = "", var name: String = "", var arguments: String = "")
+
+    /** v2.1: the voice recording as the user's turn, a 16 kHz WAV sent as input_audio. */
+    private suspend fun voiceAudioMessage(file: File): ApiMessage {
+        val encoded = withContext(Dispatchers.IO) { Base64.encodeToString(file.readBytes(), Base64.NO_WRAP) }
+        val parts = buildJsonArray {
+            add(buildJsonObject { put("type", "text"); put("text", VoiceHearing.AUDIO_PROMPT) })
+            add(buildJsonObject {
+                put("type", "input_audio")
+                putJsonObject("input_audio") {
+                    put("data", encoded)
+                    put("format", "wav")
+                }
+            })
+        }
+        return ApiMessage(role = "user", content = parts)
+    }
     private data class StreamedResult(val rawText: String, val text: String, val toolCalls: List<ToolCall>, val usage: Usage?)
 
     companion object {
@@ -2391,6 +2548,9 @@ class AgentExecutor(
         const val TOOL_VIDEO_CREATION = "video_creation"
         const val TOOL_AUDIO_CREATION = "audio_creation"
         const val MINIMAX_MAX_COMPLETION_TOKENS = 8_192
+
+        /** v2.1: streamed reasoning is written to the answer at most this often. */
+        private const val THINKING_WRITE_MS = 150L
 
         /**
          * v5.11: how create_artifact content is rendered, told to the model so it writes
@@ -2426,6 +2586,18 @@ internal fun shouldRetryEmptyResponse(
  * same detail as its start so the chat removes the matching chip.
  */
 data class ToolActivity(val conversationId: String, val toolName: String, val started: Boolean, val detail: String? = null)
+
+/** v2.1: a voice turn sent as audio. [onHeard] gets the words the model heard ("" = no speech). */
+class VoiceAudioTurn(val file: File, val userMessageId: String, val onHeard: suspend (String) -> Unit)
+
+/** What a direct-hearing voice turn produced. [heard] is null when the model never said what it heard. */
+data class VoiceAudioReply(val heard: String?, val answer: String?) {
+    /** The clip held no speech for Kryzz: nothing was saved and nothing should be spoken. */
+    val noSpeech: Boolean get() = heard != null && heard.isBlank() && answer == null
+}
+
+/** The voice model would not take audio; the caller falls back to the transcriber. */
+class VoiceAudioUnsupported(cause: Throwable) : Exception(cause.message, cause)
 
 /**
  * An agent `ask_user` call waiting on the UI. The chat screen renders [question] as an

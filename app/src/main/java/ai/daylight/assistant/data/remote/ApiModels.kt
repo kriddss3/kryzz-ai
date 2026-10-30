@@ -12,11 +12,14 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -180,7 +183,31 @@ data class ChunkChoice(
 )
 
 @Serializable
-data class ChunkDelta(val content: JsonElement? = null, @SerialName("tool_calls") val toolCalls: List<ToolCallDelta>? = null)
+data class ChunkDelta(
+    val content: JsonElement? = null,
+    @SerialName("tool_calls") val toolCalls: List<ToolCallDelta>? = null,
+    /** v2.1: OpenRouter's reasoning text for this chunk (returned now that `exclude` is off). */
+    val reasoning: String? = null,
+    /** DeepSeek-style providers name it reasoning_content. */
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
+    /** OpenRouter's structured form of the same reasoning; read only when [reasoning] is absent. */
+    @SerialName("reasoning_details") val reasoningDetails: JsonElement? = null
+)
+
+/** The reasoning a stream chunk carries, from whichever field the provider used ("" for none). */
+internal fun ChunkDelta.reasoningText(): String {
+    reasoning?.takeIf { it.isNotEmpty() }?.let { return it }
+    reasoningContent?.takeIf { it.isNotEmpty() }?.let { return it }
+    val details = reasoningDetails as? JsonArray ?: return ""
+    return details.joinToString("") { item ->
+        val obj = item as? JsonObject ?: return@joinToString ""
+        when ((obj["type"] as? JsonPrimitive)?.contentOrNull) {
+            "reasoning.text" -> (obj["text"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            "reasoning.summary" -> (obj["summary"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            else -> ""
+        }
+    }
+}
 
 @Serializable
 data class ChunkMessage(
@@ -621,7 +648,7 @@ data class MiniMaxBaseResp(
 )
 
 sealed interface StreamEvent {
-    data class Delta(val text: String, val toolCalls: List<ToolCallDelta> = emptyList()) : StreamEvent
+    data class Delta(val text: String, val toolCalls: List<ToolCallDelta> = emptyList(), val reasoning: String = "") : StreamEvent
     data class UsageUpdate(val usage: Usage) : StreamEvent
     data class Failure(val error: AssistantApiException) : StreamEvent
     data object Done : StreamEvent

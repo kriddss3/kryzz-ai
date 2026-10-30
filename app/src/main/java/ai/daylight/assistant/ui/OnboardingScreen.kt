@@ -78,6 +78,8 @@ import ai.daylight.assistant.ui.dot.effects.DotReveal
 import ai.daylight.assistant.ui.dot.effects.DotRipple
 import ai.daylight.assistant.ui.dot.mascot.DotSquid
 import ai.daylight.assistant.ui.dot.mascot.squidPitchFor
+import ai.daylight.assistant.ui.onboarding.GetKeyLink
+import ai.daylight.assistant.ui.onboarding.KeyLinks
 import ai.daylight.assistant.ui.onboarding.OnboardingFlow
 import ai.daylight.assistant.ui.onboarding.OnboardingStep
 import ai.daylight.assistant.ui.shell.ScreenBackHandler
@@ -350,7 +352,8 @@ private fun KeysStep(
         check = openCheck,
         onTest = onTestOpen,
         tag = "openrouter_key",
-        required = true
+        required = true,
+        link = KeyLinks.OPENROUTER
     )
     Spacer(Modifier.height(24.dp))
     OptionalKey(
@@ -360,7 +363,8 @@ private fun KeysStep(
         onValue = onParallelKey,
         check = parallelCheck,
         onTest = onTestParallel,
-        tag = "parallel_key"
+        tag = "parallel_key",
+        link = KeyLinks.PARALLEL
     )
     OptionalKey(
         name = "Fish Audio",
@@ -369,7 +373,8 @@ private fun KeysStep(
         onValue = onFishKey,
         check = fishCheck,
         onTest = onTestFish,
-        tag = "fish_key"
+        tag = "fish_key",
+        link = KeyLinks.FISH_AUDIO
     )
     Spacer(Modifier.height(24.dp))
     DotNotice(
@@ -388,6 +393,7 @@ private fun OptionalKey(
     check: CheckState,
     onTest: () -> Unit,
     tag: String,
+    link: String,
 ) {
     var expanded by rememberSaveable(name) { mutableStateOf(value.isNotBlank()) }
     val caption = when {
@@ -414,6 +420,7 @@ private fun OptionalKey(
             tag = tag,
             required = false,
             showHeader = false,
+            link = link,
             modifier = Modifier.padding(start = 34.dp, bottom = 16.dp)
         )
     }
@@ -436,6 +443,7 @@ private fun KeyField(
     required: Boolean,
     modifier: Modifier = Modifier,
     showHeader: Boolean = true,
+    link: String? = null,
 ) {
     val c = DotTheme.c
     val keyboard = LocalSoftwareKeyboardController.current
@@ -458,8 +466,10 @@ private fun KeyField(
                 )
                 DotTag(OnboardingFlow.requirement(required), color = if (required) c.textPrimary else c.textTertiary)
             }
-            Text(purpose, Modifier.padding(top = 6.dp, bottom = 12.dp), style = DotType.BodySmall, color = c.textTertiary)
+            Text(purpose, Modifier.padding(top = 6.dp, bottom = if (link == null) 12.dp else 2.dp), style = DotType.BodySmall, color = c.textTertiary)
         }
+        // v2.1: where to get the key, one tap away.
+        if (link != null) GetKeyLink(link, Modifier.padding(bottom = 6.dp))
         DotField(
             value = value,
             onValueChange = onValue,

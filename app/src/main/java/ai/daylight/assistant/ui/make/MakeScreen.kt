@@ -18,8 +18,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +54,7 @@ import ai.daylight.assistant.domain.MINIMAX_VIDEO_SECONDS
 import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.MakeOutcome
 import ai.daylight.assistant.domain.MakeRender
+import ai.daylight.assistant.domain.MakeStyle
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.OutputKind
 import ai.daylight.assistant.domain.RecentOutput
@@ -61,6 +64,7 @@ import ai.daylight.assistant.ui.dot.DotNotice
 import ai.daylight.assistant.ui.dot.DotPillButton
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
+import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.InkLine
@@ -260,7 +264,7 @@ fun MakeScreen(
             ) {
                 DotMatrixText("MAKE", pitch = 4.2.dp, on = c.textPrimary, off = Color.Transparent)
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(16.dp))
             DotSegments(
                 options = listOf(
                     SegmentOption("Image", R.drawable.ic_kz_image, tag = "make_kind_image"),
@@ -279,7 +283,8 @@ fun MakeScreen(
                         else -> vm.setKind(target)
                     }
                 },
-                modifier = Modifier.width(176.dp)
+                // v2.1: fills the row (it was a fixed 176dp, tight with larger text).
+                modifier = Modifier.weight(1f).widthIn(max = 260.dp)
             )
         }
         Spacer(Modifier.height(16.dp))
@@ -287,7 +292,7 @@ fun MakeScreen(
         when {
             waitingForRecent -> Spacer(Modifier.height(240.dp))
             running != null -> {
-                PromptCard(running.prompt)
+                PromptCard(running.prompt, specs = MakeModel.styleSpecs(running.style))
                 Spacer(Modifier.height(20.dp))
                 FrameWithDials(aspect, ratio, dials)
                 Spacer(Modifier.height(18.dp))
@@ -297,10 +302,10 @@ fun MakeScreen(
                     detail = model.substringAfter('/')
                 )
                 Spacer(Modifier.height(20.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    DotPillButton("Cancel", { vm.cancel() }, style = DotButtonStyle.Ghost, icon = R.drawable.ic_kz_close)
-                    DotPillButton("Run in background", onBackground, Modifier.weight(1f), style = DotButtonStyle.White)
-                }
+                // v2.1: one button a row; side by side "Run in background" lost its last words.
+                DotPillButton("Run in background", onBackground, Modifier.fillMaxWidth(), style = DotButtonStyle.White)
+                Spacer(Modifier.height(10.dp))
+                DotPillButton("Cancel", { vm.cancel() }, Modifier.fillMaxWidth(), style = DotButtonStyle.Ghost, icon = R.drawable.ic_kz_close)
             }
             shown != null -> ResultBody(
                 shown = shown,
@@ -328,6 +333,8 @@ fun MakeScreen(
                     focusRequester = focus,
                     onEdit = { focusAsk++ }
                 )
+                Spacer(Modifier.height(16.dp))
+                StylePicker(settings.makeStyle, vm::setStyle)
                 Spacer(Modifier.height(20.dp))
                 FrameWithDials(aspect, ratio, dials)
                 Spacer(Modifier.height(20.dp))
@@ -440,27 +447,49 @@ private fun ResultBody(
         specs = MakeModel.specs(kind, facts.durationMs, facts.width, facts.height),
         onEdit = onEdit
     )
+    // v2.1: Save and Share on one row, Variant on its own, so no label is cut short.
     Row(
         Modifier.fillMaxWidth().padding(top = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         DotPillButton(
-            label = if (saved) "Saved" else "Save",
+            label = if (saved) "Saved to phone" else "Save to phone",
             onClick = { onSave(output) },
             modifier = Modifier.weight(1f),
             style = DotButtonStyle.Accent,
             enabled = output.localPath != null,
             icon = if (saved) R.drawable.ic_kz_check else R.drawable.ic_kz_download
         )
-        DotPillButton(
-            label = "Variant",
-            onClick = onVariant,
-            modifier = Modifier.weight(1f),
-            style = DotButtonStyle.Ghost,
-            enabled = shown.prompt != null,
-            icon = R.drawable.ic_kz_retry
-        )
         RoundIconButton(R.drawable.ic_kz_share, "Share", onShare)
+    }
+    DotPillButton(
+        label = "Make a variant",
+        onClick = onVariant,
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        style = DotButtonStyle.Ghost,
+        enabled = shown.prompt != null,
+        icon = R.drawable.ic_kz_retry
+    )
+}
+
+/**
+ * v2.1: Make's look. Nothing dresses the prompt in the Nothing OS style (black, white and one
+ * red, dot matrix, Glyph light); Plain sends the prompt as written. It stays as set.
+ */
+@Composable
+private fun StylePicker(style: MakeStyle, onStyle: (MakeStyle) -> Unit) {
+    val c = DotTheme.c
+    Column(Modifier.fillMaxWidth()) {
+        Text("STYLE", Modifier.padding(bottom = 8.dp), style = DotType.Label, color = c.textTertiary)
+        DotSegments(
+            options = listOf(
+                SegmentOption(MakeStyle.PLAIN.label, R.drawable.ic_kz_image, tag = "make_style_plain"),
+                SegmentOption(MakeStyle.NOTHING.label, R.drawable.ic_kz_grid, tag = "make_style_nothing")
+            ),
+            selected = style.ordinal,
+            onSelect = { onStyle(MakeStyle.entries[it]) }
+        )
+        Text(style.caption, Modifier.padding(top = 8.dp), style = DotType.BodySmall, color = c.textTertiary)
     }
 }

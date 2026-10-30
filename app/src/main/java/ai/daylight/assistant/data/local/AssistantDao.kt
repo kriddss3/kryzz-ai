@@ -165,6 +165,10 @@ interface AssistantDao {
     @Query("UPDATE messages SET content = :content, status = :status WHERE id = :id")
     suspend fun updateMessageContent(id: String, content: String, status: String)
 
+    /** v2.1: the answer's thinking trace, written as it streams. */
+    @Query("UPDATE messages SET thinkingJson = :thinkingJson WHERE id = :id")
+    suspend fun updateMessageThinking(id: String, thinkingJson: String)
+
     @Query("UPDATE messages SET content = :content, status = :status, citationsJson = :citationsJson, promptTokens = :promptTokens, completionTokens = :completionTokens, totalTokens = :totalTokens, cost = :cost, outputsJson = :outputsJson, cachedInputTokens = :cachedInputTokens, firstTokenLatencyMs = :firstTokenLatencyMs, totalGenerationTimeMs = :totalGenerationTimeMs WHERE id = :id")
     suspend fun finishMessage(
         id: String,

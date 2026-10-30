@@ -4,6 +4,9 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.NoiseSuppressor
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicInteger
@@ -31,6 +34,15 @@ class VoiceRecorder(private val context: Context) {
      */
     @Volatile var muted: Boolean = false
     private val peak = AtomicInteger(0)
+    private val voicedFrames = AtomicInteger(0)
+    private val frames = AtomicInteger(0)
+    private val effects = mutableListOf<AudioEffect>()
+
+    /**
+     * v2.1: how clearly pitched a 20ms frame must be to count as voice (see
+     * [SpeechFrameAnalyzer]). Set from the user's Voice sensitivity before a session starts.
+     */
+    @Volatile var minPeriodicity: Float = SensitivityProfile.of(VoiceSensitivity.NORMAL).minPeriodicity
 
     fun start(): Result<Unit> = runCatching {
         stopInternal()
@@ -49,7 +61,8 @@ class VoiceRecorder(private val context: Context) {
         val instance = openRecorder(bufSize)
             ?: error("Could not open the microphone.")
         recorder = instance
-        peak.set(0)
+        attachEffects(instance.audioSessionId)
+        resetCounters()
         capturing = true
         try {
             instance.startRecording()
@@ -75,8 +88,22 @@ class VoiceRecorder(private val context: Context) {
         output = null
     }
 
-    /** Peak amplitude since the last poll, 0..32767. Resets on read, like MediaRecorder.maxAmplitude. */
-    fun level(): Int = peak.getAndSet(0)
+    /**
+     * Peak amplitude since the last poll, 0..32767, measured after the 200 Hz high-pass so wind
+     * rumble does not move the meter. Resets on read, like MediaRecorder.maxAmplitude.
+     */
+    fun level(): Int {
+        voicedFrames.set(0)
+        frames.set(0)
+        return peak.getAndSet(0)
+    }
+
+    /** v2.1: the peak plus how many frames since the last poll sounded like a voice. Resets on read. */
+    internal fun poll(): MicReading = MicReading(
+        peak = peak.getAndSet(0),
+        voicedFrames = voicedFrames.getAndSet(0),
+        frames = frames.getAndSet(0)
+    )
 
     /** Closes the recording and returns the finished file (may be null when nothing was recorded). */
     fun stop(): File? {
@@ -99,6 +126,11 @@ class VoiceRecorder(private val context: Context) {
     private fun captureLoop(instance: AudioRecord, file: File, readSize: Int) {
         val buf = ByteArray(readSize)
         val silent = ByteArray(readSize) // written while muted so the WAV length still grows
+        val analyzer = SpeechFrameAnalyzer(minPeriodicity = minPeriodicity) { framePeak, voiced ->
+            peak.accumulateAndGet(framePeak, ::maxOf)
+            frames.incrementAndGet()
+            if (voiced) voicedFrames.incrementAndGet()
+        }
         FileOutputStream(file, true).use { out ->
             while (capturing && instance.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 val read = instance.read(buf, 0, buf.size)
@@ -108,11 +140,12 @@ class VoiceRecorder(private val context: Context) {
                         // and reset the peak so the end-of-speech detector stays in its idle
                         // state, but discard the captured audio so the user can't be heard.
                         out.write(silent, 0, read)
-                        peak.set(0)
+                        resetCounters()
+                        analyzer.reset()
                     } else {
                         out.write(buf, 0, read)
-                        val samplePeak = pcmPeakAmplitude(buf, read)
-                        peak.accumulateAndGet(samplePeak, ::maxOf)
+                        analyzer.minPeriodicity = minPeriodicity
+                        analyzer.accept(buf, read)
                     }
                 } else if (read < 0) {
                     break
@@ -130,7 +163,39 @@ class VoiceRecorder(private val context: Context) {
         runCatching { recorder?.stop() }
         runCatching { recorder?.release() }
         recorder = null
+        releaseEffects()
+        resetCounters()
+    }
+
+    private fun resetCounters() {
         peak.set(0)
+        voicedFrames.set(0)
+        frames.set(0)
+    }
+
+    /**
+     * v2.1: the phone's own noise suppressor and echo canceller, when it has them. Many phones
+     * already run them for VOICE_COMMUNICATION; asking explicitly costs nothing where they do.
+     */
+    private fun attachEffects(sessionId: Int) {
+        releaseEffects()
+        if (runCatching { NoiseSuppressor.isAvailable() }.getOrDefault(false)) {
+            runCatching { NoiseSuppressor.create(sessionId) }.getOrNull()?.let {
+                runCatching { it.enabled = true }
+                effects += it
+            }
+        }
+        if (runCatching { AcousticEchoCanceler.isAvailable() }.getOrDefault(false)) {
+            runCatching { AcousticEchoCanceler.create(sessionId) }.getOrNull()?.let {
+                runCatching { it.enabled = true }
+                effects += it
+            }
+        }
+    }
+
+    private fun releaseEffects() {
+        effects.forEach { runCatching { it.release() } }
+        effects.clear()
     }
 
     /**

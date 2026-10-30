@@ -242,4 +242,24 @@ class DatabaseMigrationTest {
             close()
         }
     }
+
+    @Test fun migratesThinkingTraceColumnKeepingMessages() {
+        val name = "migration-v13-v14"
+        helper.createDatabase(name, 13).apply {
+            execSQL("INSERT INTO conversations (id, title, createdAt, updatedAt, archived, searchSessionId, searchDepth, searchWidth, pinned, folderId) VALUES ('one', 'Existing', 1, 1, 0, NULL, 2, 3, 0, NULL)")
+            execSQL("INSERT INTO messages (id, conversationId, role, content, createdAt, status, citationsJson, mode, outputsJson, attachmentsJson) VALUES ('a1', 'one', 'ASSISTANT', 'answer', 2, 'COMPLETE', '[]', 'AGENT', '[]', '[]')")
+            close()
+        }
+        helper.runMigrationsAndValidate(name, 14, true, AssistantDatabase.MIGRATION_13_14).apply {
+            // An existing answer keeps its words and starts with no thinking.
+            query("SELECT content, thinkingJson FROM messages WHERE id = 'a1'").use { cursor ->
+                check(cursor.moveToFirst() && cursor.getString(0) == "answer" && cursor.getString(1) == "[]")
+            }
+            execSQL("UPDATE messages SET thinkingJson = '[{\"kind\":\"THINK\",\"text\":\"hm\"}]' WHERE id = 'a1'")
+            query("SELECT thinkingJson FROM messages WHERE id = 'a1'").use { cursor ->
+                check(cursor.moveToFirst() && cursor.getString(0).contains("THINK"))
+            }
+            close()
+        }
+    }
 }
