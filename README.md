@@ -6,7 +6,7 @@
 
 **A private AI workspace for Android: chat, autonomous runs, voice, images, free-to-reuse image search and personal bots in one app, running on your own API keys.** No account, no subscription, no telemetry. Your conversations stay on your phone.
 
-v2.0 is a full redesign in a Nothing-style dot-matrix look: black and white, one yellow accent, LED type, and a Home board with eight "arms".
+v2 is a full redesign in a Nothing-style dot-matrix look: black and white, one yellow accent, LED type, and a Home board with eight "arms". The latest drop, **v2.2**, adds real files and slide decks from chat, echo-proof voice, photo-to-render Make and a Web mode in Find.
 
 [![Download the latest APK](https://img.shields.io/badge/Download-latest%20APK-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/kriddss3/kryzz-ai/releases/latest)
 
@@ -28,13 +28,13 @@ v2.0 is a full redesign in a Nothing-style dot-matrix look: black and white, one
 
 ## Install in 60 seconds
 
-1. **Download** `kryzz-ai-5.12.14-release.apk` (about 7 MB) from the [latest release](https://github.com/kriddss3/kryzz-ai/releases/latest).
+1. **Download** `kryzz-ai-5.13.10-release.apk` (about 9 MB) from the [latest release](https://github.com/kriddss3/kryzz-ai/releases/latest).
 2. **Allow it to install.** Android 9+: *Settings → Apps → Special access → Install unknown apps*, then allow your browser or file manager.
 3. **Open Kryzz AI**, paste an [OpenRouter key](https://openrouter.ai/keys), test it in the onboarding screen, and start talking to it.
 
 Prefer automatic updates? Add `https://github.com/kriddss3/kryzz-ai` to [Obtainium](https://github.com/ImranR98/Obtainium), set its APK filter to `release`, and it will notify you when a new release lands.
 
-> The release APK is signed with a release key (certificate SHA-256 in [Download details](#download-details)). If you already run a v1.x **debug** build and want to upgrade in place, use the debug APK instead. The two builds are separate apps and do not share data. Either way, v2.0 installs over v1.1.2 of the same kind and keeps your chats, keys and settings.
+> The release APK is signed with a release key (certificate SHA-256 in [Download details](#download-details)). If you already run a v1.x **debug** build and want to upgrade in place, use the debug APK instead. The two builds are separate apps and do not share data. Either way, v2.2 installs over v1.1.2 of the same kind and keeps your chats, keys and settings.
 
 ---
 
@@ -102,9 +102,23 @@ Multimodal attachments and generated media require a model that supports them. S
 
 ---
 
-## What's new in v2.0
+## What's new in v2.2
 
-Since public v1.1.2 (internal 5.11.0). This drop is internal **5.12.14**.
+Since v2.1 (internal 5.13.0). This drop is internal **5.13.10**.
+
+- **Any file, by its name.** Talk and Run write PDF, Word, Excel, PowerPoint, HTML, vCard, SQLite, SVG, ZIP, or any text or code file, picked from the file name. "Make me a pdf" works first time.
+- **Real slide decks.** Markdown becomes a 16:9 .pptx; "add a slide" edits the deck instead of rewriting it.
+- **Kryzz stops hearing itself.** Voice runs on the voice-call audio path so the echo canceller works, and barge-in is judged against real playback level.
+- **Make from your own photos and clips**, up to four per render, or from a finished render.
+- **Find gets a Web mode:** a live search with a synthesized answer and sources.
+- **Auto memory** learns durable facts after each turn and never stores anything that looks like a key.
+- **A new look in the details:** 64 LED icons, new splash and launcher marks, a ripple dot-grid on Talk, a rail that names the arm under your thumb.
+
+Notes: [`RELEASE_NOTES_5.13.10.md`](./RELEASE_NOTES_5.13.10.md).
+
+## What was new in v2.0
+
+Since public v1.1.2 (internal 5.11.0). This drop was internal **5.12.14**.
 
 - **A new look.** Black and white, one yellow accent, dot-matrix type, and stepped LED motion, in Dark, Light or Auto.
 - **Home and the arm rail.** A board of eight arms is the start screen, and an 8-dot rail on the right edge switches arms from anywhere. An LED strip at the top says what the screen is doing.
@@ -112,9 +126,9 @@ Since public v1.1.2 (internal 5.11.0). This drop is internal **5.12.14**.
 - **New: Make, Find, Crew and the Inkwell.** An image and clip studio, free-to-reuse image search with credits, personal bots with scheduled routines, and one feed of everything Kryzz made.
 - **Safer restores.** Importing a backup on the same phone now merges instead of deleting newer messages and files.
 
-See [`CHANGELOG.md`](./CHANGELOG.md). This drop's notes: [`RELEASE_NOTES_5.12.14.md`](./RELEASE_NOTES_5.12.14.md). Older public notes: [`RELEASE_NOTES_5.11.0.md`](./RELEASE_NOTES_5.11.0.md) (v1.1.2), [`RELEASE_NOTES_5.7.2.md`](./RELEASE_NOTES_5.7.2.md) (v1.1) and [`RELEASE_NOTES_5.1.15.md`](./RELEASE_NOTES_5.1.15.md) (v1.0).
+See [`CHANGELOG.md`](./CHANGELOG.md). v2.0's notes: [`RELEASE_NOTES_5.12.14.md`](./RELEASE_NOTES_5.12.14.md), v2.1's: [`RELEASE_NOTES_5.13.0.md`](./RELEASE_NOTES_5.13.0.md). Older public notes: [`RELEASE_NOTES_5.11.0.md`](./RELEASE_NOTES_5.11.0.md) (v1.1.2), [`RELEASE_NOTES_5.7.2.md`](./RELEASE_NOTES_5.7.2.md) (v1.1) and [`RELEASE_NOTES_5.1.15.md`](./RELEASE_NOTES_5.1.15.md) (v1.0).
 
-**Version numbering.** Public **v2.0** is internal build **5.12.14** (versionCode 99). Public v1.1.2 was internal 5.11.0, v1.1 was internal 5.7.2, and v1.0 was internal 5.1.15. Builds 1.x through 5.1.14 and 5.12.0 through 5.12.13 were never published, and there is no public v1.1.1.
+**Version numbering.** Public **v2.2** is internal build **5.13.10** (versionCode 110). v2.1 was internal 5.13.0 (versionCode 100) and v2.0 was internal 5.12.14 (versionCode 99); neither had its own public release, so v2.2 is the first public build of the redesign. Public v1.1.2 was internal 5.11.0, v1.1 was internal 5.7.2, and v1.0 was internal 5.1.15. Builds 1.x through 5.1.14 and 5.12.0 through 5.12.13 were never published, and there is no public v1.1.1.
 
 ---
 
@@ -140,20 +154,20 @@ See [`CHANGELOG.md`](./CHANGELOG.md). This drop's notes: [`RELEASE_NOTES_5.12.14
 
 Both APKs for the source in this repository are published on the **GitHub Release** page:
 
-👉 **[`v2.0` release page →](https://github.com/kriddss3/kryzz-ai/releases/tag/v2.0)**
+👉 **[`v2.2` release page →](https://github.com/kriddss3/kryzz-ai/releases/tag/v2.2)**
 
 | File | Package | Signing | Use it when |
 | --- | --- | --- | --- |
-| `kryzz-ai-5.12.14-release.apk` (about 7 MB) | `ai.daylight.assistant` | Release key | New installs (recommended) |
-| `kryzz-ai-5.12.14-debug.apk` (about 70 MB) | `ai.daylight.assistant.debug` | Android debug key | Upgrading in place over a v1.x debug build |
+| `kryzz-ai-5.13.10-release.apk` (about 9 MB) | `ai.daylight.assistant` | Release key | New installs (recommended) |
+| `kryzz-ai-5.13.10-debug.apk` (about 75 MB) | `ai.daylight.assistant.debug` | Android debug key | Upgrading in place over a v1.x debug build |
 
-Release signing certificate SHA-256: `5922776bff28cda04b1b8a3bd71d815b420bc9e3b73890e78b3bfcde3c7c91e3`. Check a download with `apksigner verify --print-certs kryzz-ai-5.12.14-release.apk`. File checksums are on the release page.
+Release signing certificate SHA-256: `5922776bff28cda04b1b8a3bd71d815b420bc9e3b73890e78b3bfcde3c7c91e3`. Check a download with `apksigner verify --print-certs kryzz-ai-5.13.10-release.apk`. File checksums are on the release page.
 
 The v1.1.2 debug APK is also committed in this repo at `work-assets/releases/kryzz-ai-5.11.0-debug.apk`.
 
 Previous public builds stay up: [`v1.1.2`](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1.2) (`kryzz-ai-5.11.0-release.apk`, `kryzz-ai-5.11.0-debug.apk`), [`v1.1`](https://github.com/kriddss3/kryzz-ai/releases/tag/v1.1) (`kryzz-ai-5.7.2-debug.apk`) and [`kryzz-AI-v1-(debug)`](https://github.com/kriddss3/kryzz-ai/releases/tag/kryzz-AI-v1-(debug)) (`kryzz-ai-5.1.15-debug.apk`).
 
-> versionCode 99 upgrades in place over every earlier public build of the same kind: the release APK over the v1.1.2 release APK, the debug APK over the v1.x debug APKs. The database moves to version 13 on first launch and keeps your chats. The release and debug APKs are separate apps and will not replace each other.
+> versionCode 110 upgrades in place over every earlier public build of the same kind: the release APK over the v1.1.2 release APK, the debug APK over the v1.x debug APKs. The database moves to version 14 on first launch and keeps your chats. The release and debug APKs are separate apps and will not replace each other.
 
 ---
 
@@ -265,7 +279,9 @@ app/                     ← Kotlin source, Android resources, tests, Room schem
 build.gradle.kts
 settings.gradle.kts
 gradle/  gradlew*        ← Gradle wrapper
-CHANGELOG.md             ← public v1.0 → v2.0 summary
+CHANGELOG.md             ← public v1.0 → v2.2 summary
+RELEASE_NOTES_5.13.10.md ← v2.2 internal notes
+RELEASE_NOTES_5.13.0.md  ← v2.1 internal notes
 RELEASE_NOTES_5.12.14.md ← v2.0 internal notes
 RELEASE_NOTES_5.11.0.md  ← v1.1.2 internal notes
 RELEASE_NOTES_5.1.15.md  ← v1.0 internal notes

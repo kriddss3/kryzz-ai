@@ -2,6 +2,36 @@
 
 Public GitHub versions. Internal Kryzz build numbers are in parentheses.
 
+## v2.2 — 2026-11-27 (internal 5.13.10, versionCode 110)
+
+Ten internal drops since v2.1, together: real files and slide decks from chat, a voice session that no longer hears itself, your own photos in Make, a Web mode in Find, an auto-learning memory, and a new LED icon set. No database change. Full notes: [`RELEASE_NOTES_5.13.10.md`](./RELEASE_NOTES_5.13.10.md).
+
+### Talk and Run
+
+- **Any file, by its name.** PDF, Word, Excel, PowerPoint, HTML, vCard, SQLite, SVG, ZIP, or any text or code file. "Make me a pdf" works first time.
+- **Slide decks.** Markdown becomes a real 16:9 .pptx with a dark cover and clean content slides. "Add a slide" edits the deck instead of rewriting it.
+- **Calendar events** open the phone's calendar editor, prefilled.
+- **"make ..." and "find ..."** typed in Talk start an image, a clip or a photo search.
+- Mid-stream rate limits are retried instead of failing every message.
+
+### Voice
+
+- **Kryzz stops hearing itself.** Voice sessions use the voice-call audio path so the echo canceller can do its job, and talking over a reply is judged against the real playback level.
+
+### Make and Find
+
+- **Start from your own photos and clips** (up to four), or from a finished render.
+- **Find has a Web mode:** a live search with a synthesized answer and sources. The image viewer gains Use in Make.
+
+### Models and Memory
+
+- **Models** is a Tune board with six recommended models pinned on top.
+- **Auto memory** learns durable facts after each turn, never stores anything that looks like a key, and always recalls your pinned and preference facts.
+
+### Look
+
+- 64 LED-style icons, a new splash and launcher mark, a ripple dot-grid on Talk with a secondary colour, and a rail that names the arm under your thumb as you scrub.
+
 ## v2.1 — 2026-10-30 (internal 5.13.0, versionCode 100)
 
 Fixes and additions from phone testing of v2.0. The database moves to version 14 in place (answers gain a thinking trace); nothing is lost.
