@@ -96,7 +96,7 @@ fun SkillsToolsScreen(
     var expanded by remember { mutableStateOf<String?>(null) }
     var pendingDelete by remember { mutableStateOf<SkillEntity?>(null) }
 
-    TunePage("Skills", onBack, scrollable = false) {
+    TunePage("Skills", onBack, scrollable = false, mark = R.drawable.kz_led_skills) {
         LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(top = 8.dp, bottom = 28.dp)) {
             item {
                 TuneSection("Built-in tools")

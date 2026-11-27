@@ -24,12 +24,187 @@ enum class AssistantMode { CHAT, AGENT }
 /** v5.10: MAX is the optional model Agent mode's Max quality runs on (see AgentQuality). */
 enum class ModelPurpose { CHAT, AGENT, RESEARCH, MAX, IMAGE, VIDEO, AUDIO }
 
-enum class ChatProvider(val label: String) {
-    OPENROUTER("OpenRouter"),
-    MINIMAX("MiniMax");
+enum class ChatProvider(
+    val id: String,
+    val label: String,
+    val description: String,
+    val baseUrl: String,
+    val keyUrl: String?,
+    val defaultModel: String,
+    val cheapModel: String,
+    val supportsModelsEndpoint: Boolean = true,
+    val fallbackModelIds: List<String> = emptyList(),
+) {
+    OPENROUTER(
+        id = "openrouter",
+        label = "OpenRouter",
+        description = "Chat, image, video, audio and speech models.",
+        baseUrl = "https://openrouter.ai/api/v1",
+        keyUrl = "https://openrouter.ai/keys",
+        defaultModel = "openai/gpt-4o-mini",
+        cheapModel = "google/gemini-2.5-flash-lite",
+        fallbackModelIds = listOf("openai/gpt-4o-mini", "google/gemini-2.5-flash-lite"),
+    ),
+    MINIMAX(
+        id = "minimax",
+        label = "MiniMax (token plan only)",
+        description = "Token plan only — chat, image, video and audio from MiniMax.",
+        baseUrl = "https://api.minimax.io/v1",
+        keyUrl = "https://platform.minimax.io/",
+        defaultModel = "MiniMax-M3",
+        cheapModel = "MiniMax-M3",
+        fallbackModelIds = listOf("MiniMax-M3"),
+    ),
+    DEEPSEEK(
+        id = "deepseek",
+        label = "DeepSeek",
+        description = "Chat and reasoning models from DeepSeek.",
+        baseUrl = "https://api.deepseek.com/v1",
+        keyUrl = "https://platform.deepseek.com/api_keys",
+        defaultModel = "deepseek-chat",
+        cheapModel = "deepseek-chat",
+        fallbackModelIds = listOf("deepseek-chat", "deepseek-reasoner"),
+    ),
+    OPENCODE(
+        id = "opencode",
+        label = "OpenCode",
+        description = "Curated coding and chat models via OpenCode.",
+        baseUrl = "https://opencode.ai/zen/v1",
+        keyUrl = "https://opencode.ai/auth",
+        defaultModel = "gpt-5-nano",
+        cheapModel = "gpt-5-nano",
+        fallbackModelIds = listOf("gpt-5-nano", "claude-haiku-4-5", "gemini-2.5-flash", "deepseek-v3", "qwen3-coder", "kimi-k2"),
+    ),
+    OPENAI(
+        id = "openai",
+        label = "OpenAI",
+        description = "Chat and reasoning models from OpenAI.",
+        baseUrl = "https://api.openai.com/v1",
+        keyUrl = "https://platform.openai.com/api-keys",
+        defaultModel = "gpt-4o-mini",
+        cheapModel = "gpt-4o-mini",
+        fallbackModelIds = listOf("gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1", "gpt-4o", "o4-mini"),
+    ),
+    GEMINI(
+        id = "gemini",
+        label = "Google Gemini",
+        description = "Google AI models via OpenAI-compatible API.",
+        baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
+        keyUrl = "https://aistudio.google.com/apikey",
+        defaultModel = "gemini-2.5-flash",
+        cheapModel = "gemini-2.5-flash-lite",
+        fallbackModelIds = listOf("gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"),
+    ),
+    GROQ(
+        id = "groq",
+        label = "Groq",
+        description = "Ultra-fast open-weight model inference.",
+        baseUrl = "https://api.groq.com/openai/v1",
+        keyUrl = "https://console.groq.com/keys",
+        defaultModel = "llama-3.3-70b-versatile",
+        cheapModel = "llama-3.1-8b-instant",
+        fallbackModelIds = listOf("llama-3.1-8b-instant", "llama-3.3-70b-versatile"),
+    ),
+    XAI(
+        id = "xai",
+        label = "xAI (Grok)",
+        description = "Chat and reasoning models from xAI.",
+        baseUrl = "https://api.x.ai/v1",
+        keyUrl = "https://console.x.ai/",
+        defaultModel = "grok-3-mini",
+        cheapModel = "grok-3-mini",
+        fallbackModelIds = listOf("grok-3-mini", "grok-3", "grok-4"),
+    ),
+    MISTRAL(
+        id = "mistral",
+        label = "Mistral",
+        description = "Chat and reasoning models from Mistral.",
+        baseUrl = "https://api.mistral.ai/v1",
+        keyUrl = "https://console.mistral.ai/api-keys",
+        defaultModel = "mistral-small-latest",
+        cheapModel = "ministral-8b-latest",
+        fallbackModelIds = listOf("ministral-8b-latest", "mistral-small-latest", "mistral-large-latest"),
+    ),
+    TOGETHER(
+        id = "together",
+        label = "Together AI",
+        description = "Open-source models hosted by Together AI.",
+        baseUrl = "https://api.together.xyz/v1",
+        keyUrl = "https://api.together.xyz/settings/api-keys",
+        defaultModel = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        cheapModel = "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+        fallbackModelIds = listOf("meta-llama/Llama-3.2-3B-Instruct-Turbo", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "deepseek-ai/DeepSeek-V3"),
+    ),
+    FIREWORKS(
+        id = "fireworks",
+        label = "Fireworks AI",
+        description = "Fast serverless open-weight models.",
+        baseUrl = "https://api.fireworks.ai/inference/v1",
+        keyUrl = "https://fireworks.ai/account/api-keys",
+        defaultModel = "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        cheapModel = "accounts/fireworks/models/llama-v3p1-8b-instruct",
+        fallbackModelIds = listOf("accounts/fireworks/models/llama-v3p1-8b-instruct", "accounts/fireworks/models/llama-v3p3-70b-instruct"),
+    ),
+    PERPLEXITY(
+        id = "perplexity",
+        label = "Perplexity",
+        description = "Search-grounded chat models from Perplexity.",
+        baseUrl = "https://api.perplexity.ai",
+        keyUrl = "https://www.perplexity.ai/settings/api",
+        defaultModel = "sonar",
+        cheapModel = "sonar",
+        supportsModelsEndpoint = false,
+        fallbackModelIds = listOf("sonar", "sonar-pro", "sonar-reasoning"),
+    ),
+    MOONSHOT(
+        id = "moonshot",
+        label = "Moonshot (Kimi)",
+        description = "Chat and reasoning models from Moonshot.",
+        baseUrl = "https://api.moonshot.ai/v1",
+        keyUrl = "https://platform.moonshot.ai/console/api-keys",
+        defaultModel = "kimi-k2-0711-preview",
+        cheapModel = "moonshot-v1-8k",
+        fallbackModelIds = listOf("moonshot-v1-8k", "kimi-k2-0711-preview"),
+    ),
+    CEREBRAS(
+        id = "cerebras",
+        label = "Cerebras",
+        description = "Wafer-scale ultra-fast model inference.",
+        baseUrl = "https://api.cerebras.ai/v1",
+        keyUrl = "https://cloud.cerebras.ai/",
+        defaultModel = "llama-3.3-70b",
+        cheapModel = "llama3.1-8b",
+        fallbackModelIds = listOf("llama3.1-8b", "llama-3.3-70b"),
+    ),
+    QWEN(
+        id = "qwen",
+        label = "Qwen (DashScope)",
+        description = "Alibaba Cloud models via DashScope.",
+        baseUrl = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        keyUrl = "https://dashscope.console.aliyun.com/apiKey",
+        defaultModel = "qwen-plus",
+        cheapModel = "qwen-turbo",
+        fallbackModelIds = listOf("qwen-turbo", "qwen-plus", "qwen-max"),
+    ),
+    ZHIPU(
+        id = "zhipu",
+        label = "Z.ai (GLM)",
+        description = "Chat and reasoning models from Z.ai.",
+        baseUrl = "https://api.z.ai/api/paas/v4",
+        keyUrl = "https://z.ai/manage-apikey/apikey-list",
+        defaultModel = "glm-4.5-air",
+        cheapModel = "glm-4.5-flash",
+        fallbackModelIds = listOf("glm-4.5-flash", "glm-4.5-air", "glm-4.5"),
+    );
 
     companion object {
-        fun from(value: String): ChatProvider = entries.firstOrNull { it.name.equals(value, ignoreCase = true) } ?: OPENROUTER
+        fun from(value: String?): ChatProvider {
+            val clean = value?.trim().orEmpty()
+            if (clean.isEmpty()) return OPENROUTER
+            return entries.firstOrNull {
+                it.name.equals(clean, ignoreCase = true) || it.id.equals(clean, ignoreCase = true)
+            } ?: OPENROUTER
+        }
     }
 }
 
@@ -58,7 +233,7 @@ enum class ReasoningEffort(val apiValue: String?, val label: String) {
 }
 
 enum class AgentCapability(val title: String, val shortLabel: String, val instruction: String) {
-    AUTO("Agent workspace", "Auto", "Choose the best available tools and produce a practical, finished result. Work in multiple steps when needed: call a tool, read the result, then call the next tool until the job is done. For a task with three or more distinct steps, first call update_plan with a short checklist, then keep it current as you work (mark a step in_progress when you start it and done when it is finished); skip the plan for simple questions. Call parallel_search whenever the answer depends on fresh, niche, uncertain, or source-backed facts — never answer such questions from memory alone. When search excerpts are too thin to answer precisely, call fetch_url on the one to three most relevant result URLs and read them before answering; independent lookups can be called together in one round. Call get_current_time before answering anything that depends on today or now. Call calculate for arithmetic instead of guessing. Call get_weather for forecasts, fetch_url when the user pasted a link, remember_fact / recall_memories for durable personal facts, and schedule_task for recurring reminders. When the user asks for a picture, video, or piece of music, call the matching generate_image / generate_video / generate_audio tool instead of describing how to make it. When they want a document, spreadsheet, database, skill, or code zip, call create_artifact / create_skill / create_code_project. When a choice genuinely matters and you can offer concrete options, call ask_user to ask the user with tappable options instead of guessing."),
+    AUTO("Agent workspace", "Auto", "Choose the best available tools and produce a practical, finished result. Work in multiple steps when needed: call a tool, read the result, then call the next tool until the job is done. For a task with three or more distinct steps, first call update_plan with a short checklist, then keep it current as you work (mark a step in_progress when you start it and done when it is finished); skip the plan for simple questions. Call parallel_search whenever the answer depends on fresh, niche, uncertain, or source-backed facts — never answer such questions from memory alone. When search excerpts are too thin to answer precisely, call fetch_url on the one to three most relevant result URLs and read them before answering; independent lookups can be called together in one round. Call get_current_time before answering anything that depends on today or now. Call calculate for arithmetic instead of guessing. Call get_weather for forecasts, fetch_url when the user pasted a link, remember_fact / recall_memories for durable personal facts, and schedule_task for recurring reminders. When the user asks for a picture, video, or piece of music, call the matching generate_image / generate_video / generate_audio tool instead of describing how to make it. When they want any file (PDF, Word, Excel, PowerPoint, a web page, code, data, an SVG, a calendar event, a ZIP of several files), call create_artifact with a file_name whose extension sets the format; for a reusable skill or a multi-file code project call create_skill / create_code_project. When a choice genuinely matters and you can offer concrete options, call ask_user to ask the user with tappable options instead of guessing."),
     DOCUMENT("Document maker", "Document", "Create a polished Markdown document and return it through the create_artifact tool."),
     DEEP_RESEARCH("Deep search", "Deep search", "Run at least two focused, related web-search passes when the configured tool bound permits it. Cover different query angles, reconcile disagreements, distinguish sourced facts from inference, and cite claims."),
     DATABASE("Database maker", "Database", "Design a production-minded SQLite database schema with constraints, indexes, comments, safe seed rows, and useful starter queries, then return it through the create_artifact tool."),
@@ -71,8 +246,12 @@ enum class AgentCapability(val title: String, val shortLabel: String, val instru
     AUDIO("Music production", "Music", "Produce original music tracks using the configured provider audio models. Specify genre, mood, and instrumentation, then return the generated audio through the create_artifact tool.");
 }
 
+/**
+ * What a generated file is. v5.13.7: PRESENTATION (.pptx), TEXT (any text or code file written as
+ * given) and ARCHIVE (a .zip of several files) joined the list; they are stored by name.
+ */
 @Serializable
-enum class OutputKind { DOCUMENT, SPREADSHEET, DATABASE, CODE, IMAGE, VIDEO, AUDIO, PDF }
+enum class OutputKind { DOCUMENT, SPREADSHEET, DATABASE, CODE, IMAGE, VIDEO, AUDIO, PDF, CALENDAR, PRESENTATION, TEXT, ARCHIVE }
 
 @Serializable
 data class GeneratedOutput(

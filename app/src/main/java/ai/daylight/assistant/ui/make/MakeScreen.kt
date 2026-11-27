@@ -1,6 +1,7 @@
 package ai.daylight.assistant.ui.make
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,6 +55,7 @@ import ai.daylight.assistant.domain.MINIMAX_VIDEO_SECONDS
 import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.MakeOutcome
 import ai.daylight.assistant.domain.MakeRender
+import ai.daylight.assistant.domain.MakeSources
 import ai.daylight.assistant.domain.MakeStyle
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.OutputKind
@@ -81,9 +83,9 @@ import kotlinx.coroutines.withContext
 
 /**
  * Make (kit create-image and create-video, C7). Three states on one page:
- *  - writing: the prompt card is the text field, the frame takes the chosen ratio, and the
- *    dials show only what the request really carries (Ratio when the provider takes one,
- *    Model, and the fixed MiniMax video facts);
+ *  - writing: the prompt card is the text field, photos or clips can be added to edit or to
+ *    start from, the frame takes the chosen ratio, and the dials show only what the request
+ *    really carries (Ratio when the provider takes one, Model, and the fixed MiniMax video facts);
  *  - rendering: indeterminate dots, the elapsed time and the job's real status (video), with
  *    Cancel and Run in background (the render runs in the app, not in this screen);
  *  - a result: the image, or the clip with a dot scrubber and a filmstrip, with Save to the
@@ -116,6 +118,15 @@ fun MakeScreen(
         }
     }
 
+    val composeReq by vm.composeRequests.collectAsStateWithLifecycle()
+    var handledComposeReq by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(composeReq) {
+        if (composeReq > handledComposeReq) {
+            handledComposeReq = composeReq
+            vm.enterComposeFromExternal()
+        }
+    }
+
     val settings by vm.settings.collectAsStateWithLifecycle()
     val render by vm.render.collectAsStateWithLifecycle()
     val jobStatus by vm.jobStatus.collectAsStateWithLifecycle()
@@ -123,6 +134,8 @@ fun MakeScreen(
     val kindPref by vm.kind.collectAsStateWithLifecycle()
     val prompt by vm.prompt.collectAsStateWithLifecycle()
     val ratios by vm.ratios.collectAsStateWithLifecycle()
+    val sources by vm.sources.collectAsStateWithLifecycle()
+    val sourceNote by vm.sourceNote.collectAsStateWithLifecycle()
     val openRouterVideo by vm.openRouterVideoModels.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val composing by vm.composing.collectAsStateWithLifecycle()
@@ -206,6 +219,12 @@ fun MakeScreen(
             }
         }
     }
+    val pickSources = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MakeSources.MAX)) { uris ->
+        if (uris.isNotEmpty()) vm.addMedia(uris)
+    }
+    fun addSources() {
+        pickSources.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+    }
     fun save(output: GeneratedOutput) {
         if (MakeMedia.canSaveToGallery) {
             scope.launch {
@@ -222,7 +241,15 @@ fun MakeScreen(
     val noun = if (kind == MakeKind.VIDEO) "clip" else "image"
     val dials = buildList {
         if (ratio != null) {
-            add(DialSpec("Ratio", ratio, onClick = if (running == null && choices.size > 1) ({ ratioSheet = true }) else null, ratio = ratio))
+            val fromPhoto = kind == MakeKind.VIDEO && miniMax && MakeSources.frameSetsShape(sources)
+            add(
+                DialSpec(
+                    "Ratio",
+                    if (fromPhoto) "From photo" else ratio,
+                    onClick = if (running == null && choices.size > 1 && !fromPhoto) ({ ratioSheet = true }) else null,
+                    ratio = ratio.takeUnless { fromPhoto },
+                )
+            )
         }
         add(
             DialSpec(
@@ -292,7 +319,10 @@ fun MakeScreen(
         when {
             waitingForRecent -> Spacer(Modifier.height(240.dp))
             running != null -> {
-                PromptCard(running.prompt, specs = MakeModel.styleSpecs(running.style))
+                PromptCard(
+                    running.prompt,
+                    specs = MakeModel.styleSpecs(running.style) + MakeSources.labels(sources),
+                )
                 Spacer(Modifier.height(20.dp))
                 FrameWithDials(aspect, ratio, dials)
                 Spacer(Modifier.height(18.dp))
@@ -322,17 +352,32 @@ fun MakeScreen(
                     focusAsk++
                 },
                 onOpen = { MakeMedia.open(context, shown.output) },
-                onShare = { MakeMedia.share(context, shown.output) }
+                onShare = { MakeMedia.share(context, shown.output) },
+                onUse = {
+                    vm.useMade(shown)
+                    focusAsk++
+                },
             )
             else -> {
                 PromptCard(
                     text = prompt,
                     editable = true,
                     onText = vm::setPrompt,
-                    placeholder = "Describe the $noun",
+                    placeholder = if (sources.isEmpty()) "Describe the $noun" else "Say what to change or make",
                     focusRequester = focus,
                     onEdit = { focusAsk++ }
                 )
+                Spacer(Modifier.height(16.dp))
+                SourceStrip(
+                    sources = sources,
+                    caption = MakeSources.caption(kind, sources, miniMax),
+                    onAdd = ::addSources,
+                    onRemove = vm::removeSource,
+                )
+                sourceNote?.let { note ->
+                    Spacer(Modifier.height(12.dp))
+                    DotNotice(note, icon = R.drawable.ic_kz_info)
+                }
                 Spacer(Modifier.height(16.dp))
                 StylePicker(settings.makeStyle, vm::setStyle)
                 Spacer(Modifier.height(20.dp))
@@ -407,6 +452,7 @@ private fun ResultBody(
     onEdit: () -> Unit,
     onOpen: () -> Unit,
     onShare: () -> Unit,
+    onUse: () -> Unit,
 ) {
     val output = shown.output
     val kind = MakeModel.kindOf(output) ?: MakeKind.IMAGE
@@ -463,6 +509,14 @@ private fun ResultBody(
         )
         RoundIconButton(R.drawable.ic_kz_share, "Share", onShare)
     }
+    DotPillButton(
+        label = if (kind == MakeKind.VIDEO) "Use this clip" else "Use this image",
+        onClick = onUse,
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        style = DotButtonStyle.Ghost,
+        enabled = output.localPath != null,
+        icon = R.drawable.ic_kz_plus,
+    )
     DotPillButton(
         label = "Make a variant",
         onClick = onVariant,

@@ -13,10 +13,13 @@ import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import ai.daylight.assistant.data.remote.CommonsImageClient
 import ai.daylight.assistant.domain.FoundImage
+import ai.daylight.assistant.domain.MakeSources
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 /** A Find image downloaded for Save or Share, with the name the gallery gets. */
@@ -32,7 +35,9 @@ internal data class FindFile(val file: File, val mime: String, val displayName: 
  */
 internal object FindMedia {
     private const val FOLDER = "find"
+    private const val MAKE_SOURCES_FOLDER = "make-sources"
     private const val KEEP_FILES = 12
+    private const val KEEP_MAKE_SOURCES = 30
 
     /** True when the gallery takes the file directly (Android 10+). Android 9 saves through the file picker. */
     val canSaveToGallery: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
@@ -125,12 +130,60 @@ internal object FindMedia {
     }.isSuccess
 
     /** Puts the credit line on the clipboard. */
-    fun copyCredit(context: Context, credit: String) {
+    fun copyCredit(context: Context, credit: String) = copyText(context, "Credit line", credit)
+
+    /** Puts plain text on the clipboard. */
+    fun copyText(context: Context, label: String, text: String) {
         runCatching {
             val clipboard = context.getSystemService(ClipboardManager::class.java)
-            clipboard?.setPrimaryClip(ClipData.newPlainText("Credit line", credit))
+            clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
         }
     }
+
+    /**
+     * Downloads [image] into durable app storage for Make, using a deterministic name so
+     * repeated "Use in Make" taps deduplicate cleanly. Verifies the file fits [MakeSources.MAX_BYTES].
+     */
+    suspend fun stageForMake(context: Context, image: FoundImage, commons: CommonsImageClient): File =
+        withContext(Dispatchers.IO) {
+            val url = if (image.bytes in 1..MakeSources.MAX_BYTES && !image.mime.contains("svg", ignoreCase = true)) {
+                image.saveUrl
+            } else {
+                image.viewUrl
+            }
+            val folder = File(context.applicationContext.filesDir, MAKE_SOURCES_FOLDER).apply { mkdirs() }
+            val base = "commons-${image.id}-${Integer.toHexString(url.hashCode())}"
+            folder.listFiles()
+                ?.firstOrNull {
+                    it.isFile && it.name.startsWith("$base.") && !it.name.endsWith(".part") &&
+                        it.length() in 1..MakeSources.MAX_BYTES
+                }
+                ?.let { existing ->
+                    existing.setLastModified(System.currentTimeMillis())
+                    return@withContext existing
+                }
+
+            val part = File(folder, "$base.part")
+            try {
+                val served = commons.download(url, part, maxBytes = MakeSources.MAX_BYTES)
+                val mime = FindModel.savedMime(served, image)
+                val ext = FindModel.extensionFor(mime)
+                val out = File(folder, "$base.$ext")
+                if (!part.renameTo(out)) {
+                    part.copyTo(out, overwrite = true)
+                }
+                if (out.length() !in 1..MakeSources.MAX_BYTES) {
+                    out.delete()
+                    throw IllegalStateException("Image exceeds Make's 20 MB limit or is empty.")
+                }
+                val files = folder.listFiles { f -> f.isFile && !f.name.endsWith(".part") }
+                    ?.sortedByDescending { it.lastModified() }
+                files?.drop(KEEP_MAKE_SOURCES)?.forEach { it.delete() }
+                out
+            } finally {
+                if (part.exists()) part.delete()
+            }
+        }
 
     /** Opens a web page (the file's Commons page, or its licence) in the browser. */
     fun openPage(context: Context, url: String): Boolean = runCatching {

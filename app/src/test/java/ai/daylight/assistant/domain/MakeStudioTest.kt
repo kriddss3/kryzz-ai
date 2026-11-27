@@ -112,4 +112,14 @@ class MakeStudioTest {
         assertThat(make.start(MakeKind.IMAGE, "   ", null, "image-01")).isFalse()
         assertThat(make.current.value).isNull()
     }
+
+    @Test
+    fun attachedMediaGoesWithTheRender() = runTest(StandardTestDispatcher()) {
+        val calls = mutableListOf<Call>()
+        val make = studio(this, calls)
+        val photo = MakeSource("a", "cat.jpg", "image/jpeg", "/tmp/cat.jpg")
+        assertThat(make.start(MakeKind.VIDEO, "she turns", "16:9", "MiniMax-H3", sources = listOf(photo))).isTrue()
+        runCurrent()
+        assertThat(calls.single().options.sources).containsExactly(photo)
+    }
 }

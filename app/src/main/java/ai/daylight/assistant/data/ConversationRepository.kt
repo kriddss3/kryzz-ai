@@ -250,6 +250,9 @@ class ConversationRepository(private val dao: AssistantDao, private val json: Js
         kind == ai.daylight.assistant.domain.OutputKind.SPREADSHEET -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".csv", mimeType = "text/csv")
         kind == ai.daylight.assistant.domain.OutputKind.DATABASE -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".sql", mimeType = "application/sql")
         kind == ai.daylight.assistant.domain.OutputKind.PDF -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".txt", mimeType = "text/plain")
+        // v5.13.7: a deck keeps its Markdown, a zip its file list; a text file is its own content.
+        kind == ai.daylight.assistant.domain.OutputKind.PRESENTATION -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".md", mimeType = "text/markdown")
+        kind == ai.daylight.assistant.domain.OutputKind.ARCHIVE -> copy(localPath = null, fileName = fileName.substringBeforeLast('.') + ".txt", mimeType = "text/plain")
         else -> copy(localPath = null)
     }
 }

@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotIconButton
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotPillButton
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTag
@@ -158,7 +159,7 @@ private fun TourHero(page: TourPage) {
     var shown by remember { mutableStateOf(!motion) }
     LaunchedEffect(Unit) { shown = true }
     DotDissolve(visible = shown, cover = DotTheme.c.bg) {
-        Icon(painterResource(page.icon), null, Modifier.size(88.dp), tint = DotTheme.c.textPrimary)
+        KryzzGlyph(page.icon, Modifier.size(88.dp), tint = DotTheme.c.textPrimary)
     }
 }
 

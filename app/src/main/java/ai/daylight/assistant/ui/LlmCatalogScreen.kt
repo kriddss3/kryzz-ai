@@ -115,6 +115,7 @@ fun LlmCatalogScreen(
         "Catalog",
         onChats,
         scrollable = false,
+        mark = R.drawable.kz_led_model_catalog,
         actions = {
             DotIconButton(R.drawable.ic_kz_retry, "Refresh model catalog", vm::refresh, tint = DotTheme.c.textSecondary)
         }

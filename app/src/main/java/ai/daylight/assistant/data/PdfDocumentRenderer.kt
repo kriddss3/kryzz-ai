@@ -3,9 +3,11 @@ package ai.daylight.assistant.data
 import ai.daylight.assistant.domain.DocumentLayout
 import ai.daylight.assistant.domain.DocumentLayout.Role
 import ai.daylight.assistant.domain.DocumentMarkdown
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.text.Layout
@@ -53,10 +55,17 @@ object PdfDocumentRenderer {
     /** A measured item: its StaticLayouts (one, or one per table cell) and its line heights. */
     private class Laid(val item: DocumentLayout.Item, val layouts: List<StaticLayout?>, val measure: DocumentLayout.Measure)
 
-    fun render(markdown: String): ByteArray {
-        val items = DocumentLayout.pdfItems(DocumentMarkdown.parse(markdown), CONTENT_WIDTH)
+    fun render(markdown: String, images: Map<String, ByteArray> = emptyMap()): ByteArray {
+        val pictures = HashMap<String, ByteArray>(images.size * 2)
+        images.forEach { (key, bytes) ->
+            if (bytes.isEmpty()) return@forEach
+            pictures[key] = bytes
+            pictures[key.lowercase()] = bytes
+        }
+        val blocks = DocumentMarkdown.parse(markdown)
+        val items = DocumentLayout.pdfItems(blocks, CONTENT_WIDTH)
             .ifEmpty { listOf(DocumentLayout.TextItem(Role.BODY, listOf(DocumentMarkdown.Run(" ")), spaceBefore = 0f, spaceAfter = 0f)) }
-        val laid = items.map(::measure)
+        val laid = items.map { measure(it, pictures) }
         val slices = DocumentLayout.paginate(laid.map { it.measure }, CONTENT_HEIGHT)
         val pageCount = (slices.maxOfOrNull { it.page } ?: 0) + 1
 
@@ -66,7 +75,7 @@ object PdfDocumentRenderer {
             for (page in 0 until pageCount) {
                 val pdfPage = document.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, page + 1).create())
                 val canvas = pdfPage.canvas
-                byPage[page].orEmpty().forEach { slice -> draw(canvas, laid[slice.item], slice) }
+                byPage[page].orEmpty().forEach { slice -> draw(canvas, laid[slice.item], slice, pictures) }
                 if (pageCount > 1) drawPageNumber(canvas, page + 1, pageCount)
                 document.finishPage(pdfPage)
             }
@@ -80,7 +89,7 @@ object PdfDocumentRenderer {
 
     // ── Measuring ───────────────────────────────────────────────────────────
 
-    private fun measure(item: DocumentLayout.Item): Laid = when (item) {
+    private fun measure(item: DocumentLayout.Item, pictures: Map<String, ByteArray>): Laid = when (item) {
         is DocumentLayout.TextItem -> {
             val inset = if (item.role == Role.CODE) CODE_PAD else 0f
             val width = (CONTENT_WIDTH - item.indent - inset * 2).coerceAtLeast(40f)
@@ -102,6 +111,30 @@ object PdfDocumentRenderer {
             Laid(item, layouts, DocumentLayout.Measure(listOf(height), item.spaceBefore, item.spaceAfter, splittable = false, keepWithNext = item.keepWithNext))
         }
         is DocumentLayout.RuleItem -> Laid(item, emptyList(), DocumentLayout.Measure(listOf(1f), item.spaceBefore, item.spaceAfter, splittable = false))
+        is DocumentLayout.ImageItem -> Laid(
+            item, emptyList(),
+            DocumentLayout.Measure(
+                listOf(pictureHeight(pictureBytes(item.source, pictures))),
+                item.spaceBefore, item.spaceAfter, splittable = false
+            )
+        )
+    }
+
+    private fun pictureBytes(source: String, pictures: Map<String, ByteArray>): ByteArray? {
+        pictures[source]?.let { return it }
+        pictures[source.lowercase()]?.let { return it }
+        val name = source.substringAfterLast('/').substringBefore('?')
+        return pictures[name] ?: pictures[name.lowercase()]
+    }
+
+    /** Height of the picture at the text column's width, capped so one picture cannot eat the page. */
+    private fun pictureHeight(bytes: ByteArray?): Float {
+        if (bytes == null) return 48f
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return 48f
+        val height = CONTENT_WIDTH * bounds.outHeight / bounds.outWidth.toFloat()
+        return height.coerceIn(48f, 360f)
     }
 
     private fun lineHeights(layout: StaticLayout): List<Float> =
@@ -164,16 +197,49 @@ object PdfDocumentRenderer {
 
     // ── Drawing ─────────────────────────────────────────────────────────────
 
-    private fun draw(canvas: Canvas, laid: Laid, slice: DocumentLayout.Slice) {
+    private fun draw(canvas: Canvas, laid: Laid, slice: DocumentLayout.Slice, pictures: Map<String, ByteArray>) {
         val top = MARGIN_TOP + slice.y
         when (val item = laid.item) {
             is DocumentLayout.TextItem -> drawText(canvas, item, laid.layouts.first()!!, slice, top)
             is DocumentLayout.TableRowItem -> drawRow(canvas, item, laid.layouts, laid.measure.height, top)
+            is DocumentLayout.ImageItem -> drawPicture(canvas, item, laid.measure.height, top, pictures)
             is DocumentLayout.RuleItem -> {
                 val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = RULE; strokeWidth = 0.8f }
                 canvas.drawLine(MARGIN_X, top + 0.5f, MARGIN_X + CONTENT_WIDTH, top + 0.5f, paint)
             }
         }
+    }
+
+    private fun drawPicture(
+        canvas: Canvas,
+        item: DocumentLayout.ImageItem,
+        height: Float,
+        top: Float,
+        pictures: Map<String, ByteArray>
+    ) {
+        val bytes = pictureBytes(item.source, pictures)
+        val bitmap = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+        if (bitmap == null) {
+            val box = Paint().apply { color = CODE_BG; style = Paint.Style.FILL }
+            canvas.drawRect(MARGIN_X, top, MARGIN_X + CONTENT_WIDTH, top + height, box)
+            val caption = layout(
+                item.alt.ifBlank { "Picture" },
+                paint(Role.BODY).apply { color = MUTED },
+                CONTENT_WIDTH - 16f,
+                Role.BODY
+            )
+            canvas.save()
+            canvas.translate(MARGIN_X + 8f, top + 8f)
+            caption.draw(canvas)
+            canvas.restore()
+            return
+        }
+        val scale = minOf(CONTENT_WIDTH / bitmap.width, height / bitmap.height)
+        val width = bitmap.width * scale
+        val drawn = bitmap.height * scale
+        val left = MARGIN_X + (CONTENT_WIDTH - width) / 2f
+        canvas.drawBitmap(bitmap, null, RectF(left, top, left + width, top + drawn), Paint(Paint.FILTER_BITMAP_FLAG))
+        bitmap.recycle()
     }
 
     private fun drawText(canvas: Canvas, item: DocumentLayout.TextItem, layout: StaticLayout, slice: DocumentLayout.Slice, top: Float) {

@@ -1,5 +1,8 @@
 package ai.daylight.assistant.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -13,16 +16,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import ai.daylight.assistant.ui.dot.DotMotion
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
 import ai.daylight.assistant.ui.dot.effects.DotReveal
+import ai.daylight.assistant.ui.dot.effects.DotSplashMath
+import ai.daylight.assistant.ui.dot.effects.DotSplashState
+import ai.daylight.assistant.ui.dot.effects.SplashDotGridCache
 import ai.daylight.assistant.ui.dot.effects.dotGrid
+import ai.daylight.assistant.ui.dot.effects.drawSplashDotGrid
 import ai.daylight.assistant.ui.dot.effects.flickerIn
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlinx.coroutines.delay
@@ -34,14 +45,68 @@ import kotlinx.coroutines.delay
  * [dotGrid] adds the kit's dot grid (components.md section 1: text colour at 6%, 8dp pitch,
  * 1dp dots). Tune's "Dot background" switch turns it on for [dotGridForRoute].
  */
+private val SplashRippleEasing = CubicBezierEasing(0.18f, 0.85f, 0.32f, 1f)
+
 @Composable
 fun DaylightBackground(
     modifier: Modifier = Modifier,
     dotGrid: Boolean = false,
+    splash: DotSplashState? = null,
+    @Suppress("UNUSED_PARAMETER") talkTinted: Boolean = false,
+    secondaryColor: Color? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    val grid = if (dotGrid) Modifier.dotGrid(DotTheme.c.textPrimary.copy(alpha = DOT_GRID_ALPHA)) else Modifier
+    val c = DotTheme.c
+    val motionEnabled = LocalKryzzMotionEnabled.current
+    val splashProgress = remember { Animatable(1f) }
+    val splashCache = remember { SplashDotGridCache() }
+    LaunchedEffect(splash?.serial) {
+        if (splash != null && splash.serial > 0) {
+            if (motionEnabled) {
+                splashProgress.snapTo(0f)
+                splashProgress.animateTo(1f, tween(DotSplashMath.SPLASH_MS, easing = SplashRippleEasing))
+            } else {
+                splashProgress.snapTo(1f)
+            }
+        }
+    }
+    val grid = if (splash != null || dotGrid) {
+        Modifier.drawBehind {
+            val progress = splashProgress.value
+            if (splash != null && progress < 1f) {
+                drawSplashDotGrid(
+                    pitchPx = 8.dp.toPx(),
+                    baseRadiusPx = 1.dp.toPx(),
+                    baseColor = c.textPrimary.copy(alpha = DOT_GRID_ALPHA),
+                    fromColor = splash.fromColor,
+                    toColor = secondaryColor ?: splash.toColor ?: c.accentText,
+                    origin = splash.origin ?: Offset(size.width / 2f, size.height / 2f),
+                    progress = progress,
+                    persistTint = false,
+                    settledAlpha = if (c.dark) DotSplashMath.TALK_DOT_ALPHA_DARK else DotSplashMath.TALK_DOT_ALPHA_LIGHT,
+                    showBaseGrid = dotGrid,
+                    cache = splashCache,
+                )
+            } else if (dotGrid) {
+                drawSplashDotGrid(
+                    pitchPx = 8.dp.toPx(),
+                    baseRadiusPx = 1.dp.toPx(),
+                    baseColor = c.textPrimary.copy(alpha = DOT_GRID_ALPHA),
+                    fromColor = null,
+                    toColor = secondaryColor ?: c.accentText,
+                    origin = Offset.Zero,
+                    progress = 1f,
+                    persistTint = false,
+                    settledAlpha = DOT_GRID_ALPHA,
+                    showBaseGrid = true,
+                    cache = splashCache,
+                )
+            }
+        }
+    } else {
+        Modifier
+    }
     Box(modifier.fillMaxSize().background(scheme.background).then(grid)) {
         CompositionLocalProvider(LocalContentColor provides scheme.onBackground) { content() }
     }

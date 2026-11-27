@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.FileProvider
 import ai.daylight.assistant.domain.GeneratedOutput
 import ai.daylight.assistant.domain.OutputKind
+import ai.daylight.assistant.ui.run.FileCardModel
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -115,11 +116,16 @@ internal object MakeMedia {
     /** Opens the file in the phone's own viewer (zoom for images, any file type). */
     fun open(context: Context, output: GeneratedOutput) {
         val uri = fileUri(context, output) ?: output.remoteUrl?.let(Uri::parse) ?: return
-        runCatching {
+        fun view(type: String) = runCatching {
             context.startActivity(
-                Intent(Intent.ACTION_VIEW).setDataAndType(uri, output.mimeType)
+                Intent(Intent.ACTION_VIEW).setDataAndType(uri, type)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             )
+        }.isSuccess
+        // v5.13.7: code and data files without a viewer of their own open as plain text.
+        val opened = view(output.mimeType) || (FileCardModel.opensAsText(output) && view("text/plain"))
+        if (!opened) {
+            android.widget.Toast.makeText(context, FileCardModel.noViewerMessage(output), android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
@@ -142,6 +148,16 @@ internal object MakeMedia {
             OutputKind.VIDEO -> frameAt(path, 1_000L, sidePx)
             else -> null
         } ?: return null
+        thumbs.put(key, bitmap)
+        return bitmap
+    }
+
+    /** A thumbnail of a photo or clip the user added, cached with the recent-ink tiles. */
+    fun preview(path: String, video: Boolean, sidePx: Int): ImageBitmap? {
+        val key = "src:$video:$path@$sidePx"
+        thumbs.get(key)?.let { return it }
+        val bitmap = if (video) frameAt(path, 0L, sidePx) else decodeImage(path, sidePx)
+        if (bitmap == null) return null
         thumbs.put(key, bitmap)
         return bitmap
     }

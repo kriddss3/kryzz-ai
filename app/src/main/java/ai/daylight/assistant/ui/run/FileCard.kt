@@ -81,27 +81,46 @@ object FileCardModel {
     fun savesToGallery(output: GeneratedOutput): Boolean =
         output.localPath != null && (output.kind == OutputKind.IMAGE || output.kind == OutputKind.VIDEO)
 
+    /** A text file (code, data, markup) that can fall back to a plain-text viewer. */
+    fun opensAsText(output: GeneratedOutput): Boolean =
+        output.mimeType != "text/plain" && (output.kind == OutputKind.TEXT || output.mimeType.startsWith("text/"))
+
+    /** Shown when no app on the phone opens the file. */
+    fun noViewerMessage(output: GeneratedOutput): String =
+        "No app on this phone opens ${extension(output)} files. Tap download to save it."
+
     /** The save button's words. */
     fun saveLabel(saved: Boolean): String = if (saved) "Saved to phone" else "Save to phone"
+
+    /** Code and markup files share the code icon (v5.13.7: any text format can be made). */
+    private val codeExtensions = setOf(
+        "ZIP", "KT", "KTS", "JS", "MJS", "TS", "TSX", "JSX", "PY", "HTML", "HTM", "CSS", "JSON", "XML", "YAML", "YML",
+        "JAVA", "C", "H", "CPP", "CS", "GO", "RS", "RB", "PHP", "SWIFT", "SH", "BAT", "PS1", "TOML", "INI", "GRADLE",
+        "DART", "LUA", "VUE", "TEX"
+    )
 
     /** The kit's dot file icons. A deliverable that fell back to plain text gets the plain file. */
     @DrawableRes
     fun icon(output: GeneratedOutput): Int = when (extension(output)) {
-        "DOCX", "DOC" -> R.drawable.ic_kz_file_docx_dot
+        "DOCX", "DOC", "RTF" -> R.drawable.ic_kz_file_docx_dot
         "XLSX", "XLS" -> R.drawable.ic_kz_file_xlsx_dot
+        "PPTX", "PPT" -> R.drawable.ic_kz_file_pptx_dot
         "PDF" -> R.drawable.ic_kz_file_pdf_dot
-        "ZIP", "KT", "JS", "TS", "PY", "HTML", "JSON" -> R.drawable.ic_kz_file_code_dot
+        "SVG" -> R.drawable.ic_kz_image_dot
         "SQLITE", "DB", "SQL" -> R.drawable.ic_kz_grid_dot
-        "MD", "TXT", "CSV" -> R.drawable.ic_kz_file_dot
+        "MD", "TXT", "CSV", "TSV", "ICS", "VCF" -> R.drawable.ic_kz_file_dot
+        in codeExtensions -> R.drawable.ic_kz_file_code_dot
         else -> when (output.kind) {
             OutputKind.DOCUMENT -> R.drawable.ic_kz_file_docx_dot
             OutputKind.SPREADSHEET -> R.drawable.ic_kz_file_xlsx_dot
             OutputKind.PDF -> R.drawable.ic_kz_file_pdf_dot
-            OutputKind.CODE -> R.drawable.ic_kz_file_code_dot
+            OutputKind.PRESENTATION -> R.drawable.ic_kz_file_pptx_dot
+            OutputKind.CODE, OutputKind.ARCHIVE -> R.drawable.ic_kz_file_code_dot
             OutputKind.DATABASE -> R.drawable.ic_kz_grid_dot
             OutputKind.IMAGE -> R.drawable.ic_kz_image_dot
             OutputKind.VIDEO -> R.drawable.ic_kz_video_dot
             OutputKind.AUDIO -> R.drawable.ic_kz_voice_wave_dot
+            OutputKind.CALENDAR, OutputKind.TEXT -> R.drawable.ic_kz_file_dot
         }
     }
 }
@@ -160,7 +179,11 @@ fun FileCard(
                 .clip(DotRadius.Tile)
                 .background(c.surface)
                 .border(1.dp, c.border, DotRadius.Tile)
-                .clickable(onClickLabel = if (openable) "Open" else "Save") {
+                .clickable(onClickLabel = when {
+                    output.kind == OutputKind.CALENDAR && openable -> "Add to calendar"
+                    openable -> "Open"
+                    else -> "Save"
+                }) {
                     if (openable) onOpen(output) else onSave(output)
                 }
                 .padding(start = 12.dp),
@@ -195,7 +218,7 @@ fun FileCard(
                         .size(56.dp)
                         .clip(CircleShape)
                         .clickable { onSave(output) }
-                        .semantics { contentDescription = "Save ${output.fileName}"; role = Role.Button },
+                        .semantics { contentDescription = "Download ${output.fileName}"; role = Role.Button },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(painterResource(R.drawable.ic_kz_download), null, Modifier.size(22.dp), tint = c.textSecondary)

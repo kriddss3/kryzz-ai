@@ -20,12 +20,11 @@ enum class VoicePhase {
 /** Fixed wiring for the voice chat mode: STT and TTS engines, timing and the spoken-style prompt. */
 object VoiceConfig {
     /**
-     * Speech-to-text default. Grok STT 1.0 via OpenRouter runs ~100 ms faster than the
-     * Whisper-large-v3-turbo default it replaced, and stays on the same `/audio/transcriptions`
-     * endpoint so the existing request shape still works. Users on a previous default keep
-     * their saved choice — DataStore migration only affects fresh installs.
+     * Speech-to-text default. Grok STT 2.0 via OpenRouter runs on the `/audio/transcriptions`
+     * endpoint with strong noisy-room and multi-speaker accuracy. Users on a previous Grok STT
+     * default are migrated automatically via [coerceVoiceSttModel].
      */
-    const val DEFAULT_STT_MODEL = "x-ai/grok-stt-1.0"
+    const val DEFAULT_STT_MODEL = "x-ai/grok-stt-2.0"
 
     /** ISO-639-1 hint so Groq / Grok skips language detection. Empty string = auto-detect. */
     const val DEFAULT_STT_LANGUAGE = "en"
@@ -33,8 +32,11 @@ object VoiceConfig {
     /** Whisper large-v3-turbo via OpenRouter, kept as a fallback option. */
     const val WHISPER_STT_MODEL = "openai/whisper-large-v3-turbo"
 
-    /** Grok STT 1.0 through OpenRouter POST /api/v1/audio/transcriptions. */
-    const val GROK_STT_MODEL = "x-ai/grok-stt-1.0"
+    /** Grok STT 2.0 through OpenRouter POST /api/v1/audio/transcriptions. */
+    const val GROK_STT_MODEL = "x-ai/grok-stt-2.0"
+
+    /** Previous Grok STT 1.0 slug, migrated to [GROK_STT_MODEL]. */
+    const val GROK_STT_1_LEGACY = "x-ai/grok-stt-1.0"
 
     /** Older DataStore id from when Grok STT hit api.x.ai directly. */
     const val GROK_STT_MODEL_LEGACY = "xai/grok-stt"
@@ -93,14 +95,16 @@ object VoiceConfig {
             "Answer in one or two short sentences when that is enough. Stay under forty words unless they asked for detail. " +
             "No markdown, headings, lists, code, or links. Round numbers so they are easy to say. Stay warm and direct. " +
             "Never claim an action was performed unless you verified it. " +
-            "Put one Fish tag at the START of a sentence when the feeling or sound is clear. Use these exact tags: " +
+            "Stay the same speaker for the whole reply. Never switch character, accent, or persona. " +
+            "Never clear your throat or add filler sounds before speaking. " +
+            "Put one Fish tag at the START of a sentence only when the feeling is unmistakable. Use these exact tags: " +
             "[angry] [sad] [embarrassed] [emphasis] [whispering] [soft] [breathy] [excited] " +
-            "[laughing] [chuckling] [moaning] [clear throat] [sobbing] [crying loudly] " +
+            "[laughing] [chuckling] [moaning] [sobbing] [crying loudly] " +
             "[sighing] [panting] [groaning] [crowd laughing] [background laughter] [audience laughing] " +
             "[pause] [long pause] [happy] [calm]. " +
             "Examples: [excited] That is great news. [whispering] Come closer. [laughing] I cannot believe that. " +
             "[sighing] Okay, we can try again. [pause] Give me a second. [angry] That is not okay. " +
-            "Use a tag on most sentences. One tag per sentence. Never invent other brackets. Never use markdown."
+            "Most sentences get no tag. One tag per sentence at most. Never invent other brackets. Never use markdown."
 
     /** Same spoken-style instructions without the emotion-tag request, used when emotions are turned off. */
     const val VOICE_SYSTEM_PROMPT_NO_EMOTIONS =
@@ -122,7 +126,7 @@ object VoiceConfig {
             "Drop the usual warm, kind, or cheerful persona. Match the mood they ask for. " +
             "Put one Fish tag at the START of each sentence. Use these exact tags: " +
             "[angry] [sad] [embarrassed] [emphasis] [whispering] [soft] [breathy] [excited] " +
-            "[laughing] [chuckling] [moaning] [clear throat] [sobbing] [crying loudly] " +
+            "[laughing] [chuckling] [moaning] [sobbing] [crying loudly] " +
             "[sighing] [panting] [groaning] [crowd laughing] [background laughter] [audience laughing] " +
             "[pause] [long pause] [happy] [calm]. " +
             "If they name a mood, use that tag. One or two short sentences, under forty words. No markdown. " +
@@ -288,9 +292,13 @@ object FishEmotions {
     val extra = setOf(
         "whispering", "laughing", "chuckling", "sighing", "emphasis", "break",
         "hopeful", "determined", "confused", "disappointed",
-        "soft", "breathy", "moaning", "clear throat", "sobbing", "crying loudly",
+        "soft", "breathy", "moaning", "sobbing", "crying loudly",
         "panting", "groaning", "crowd laughing", "background laughter", "audience laughing",
         "pause", "long pause"
+    )
+    private val BLOCKED_CUES = setOf(
+        "clear throat", "clears throat", "clearing throat",
+        "clearing my throat", "throat clear", "ahem"
     )
     fun isOfficial(tag: String): Boolean {
         val key = tag.trim().lowercase()
@@ -299,13 +307,13 @@ object FishEmotions {
 
     /**
      * Fish S2 accepts official tags and free-form cues such as [warm and happy].
-     * Citation leftovers like [1] are not emotions and must not be sent to TTS —
-     * they are what used to get rewritten into a forced [calm] that flattened
-     * the line and sometimes cut the rest of the clip short.
+     * Citation leftovers like [1] and throat-clearing cues are stripped so they
+     * are never sent to TTS.
      */
     fun keep(tag: String): Boolean {
         val key = tag.trim().lowercase()
         if (key.isEmpty()) return false
+        if (key in BLOCKED_CUES || key.contains("throat")) return false
         if (isOfficial(key)) return true
         return NATURAL_CUE.matches(key)
     }
@@ -346,7 +354,7 @@ data class VoiceSttModel(val id: String, val name: String, val detail: String)
 object VoiceSttModels {
     val options = listOf(
         // The default now lives first so Settings shows the same model that ships by default.
-        VoiceSttModel(VoiceConfig.DEFAULT_STT_MODEL, "Grok STT", "via OpenRouter (default)"),
+        VoiceSttModel(VoiceConfig.DEFAULT_STT_MODEL, "Grok STT 2.0", "via OpenRouter (default)"),
         VoiceSttModel(VoiceConfig.WHISPER_STT_MODEL, "Whisper large-v3-turbo", "Groq via OpenRouter"),
         VoiceSttModel(VoiceConfig.NEMOTRON_STT_MODEL, "Nemotron 3.5 ASR", "NVIDIA via OpenRouter · streaming")
     )
@@ -356,7 +364,9 @@ object VoiceSttModels {
 
 internal fun coerceVoiceSttModel(raw: String?): String {
     val value = raw?.trim().orEmpty()
-    if (value == VoiceConfig.GROK_STT_MODEL_LEGACY) return VoiceConfig.GROK_STT_MODEL
+    if (value == VoiceConfig.GROK_STT_MODEL_LEGACY || value == VoiceConfig.GROK_STT_1_LEGACY) {
+        return VoiceConfig.GROK_STT_MODEL
+    }
     return if (value in VoiceSttModels.ids) value else VoiceConfig.DEFAULT_STT_MODEL
 }
 

@@ -118,9 +118,9 @@ class VoiceRecorder(private val context: Context) {
 
     /** Aborts the recording and deletes the partial file. */
     fun cancel() {
+        stopInternal()
         output?.delete()
         output = null
-        stopInternal()
     }
 
     private fun captureLoop(instance: AudioRecord, file: File, readSize: Int) {

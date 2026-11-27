@@ -45,6 +45,9 @@ object DocumentMarkdown {
         val columnCount: Int get() = header.size
     }
 
+    /** A picture on its own line: `![caption](file-or-url)`. */
+    data class Image(val alt: String, val source: String) : Block
+
     fun parse(markdown: String): List<Block> = BlockParser(markdown.replace("\r\n", "\n").replace('\r', '\n').lines()).parse()
 
     /** Plain text of [runs] (used for measuring, fallbacks and table widths). */
@@ -56,6 +59,7 @@ object DocumentMarkdown {
     private val fencePattern = Regex("^(\\s{0,3})(`{3,}|~{3,})\\s*([^`\\s]*)")
     private val rulePattern = Regex("^\\s{0,3}([-*_])(\\s*\\1){2,}\\s*$")
     private val listPattern = Regex("^(\\s*)([-*+]|(\\d{1,9})[.)])\\s+(.*)$")
+    private val imagePattern = Regex("""^!\[([^\]\n]*)]\(([^)\s]+)\)\s*$""")
     private val separatorCell = Regex("^:?-{1,}:?$")
 
     private data class ListLine(val indent: Int, val ordered: Boolean, val number: Int, val text: String)
@@ -113,6 +117,11 @@ object DocumentMarkdown {
                     rulePattern.matches(line) -> { blocks += Rule; index++ }
                     trimmed.startsWith(">") -> blocks += quote()
                     listLine(line) != null -> blocks += list()
+                    imagePattern.matches(trimmed) -> {
+                        val match = imagePattern.find(trimmed)!!
+                        blocks += Image(match.groupValues[1].trim(), match.groupValues[2].trim())
+                        index++
+                    }
                     startsTable(index) -> blocks += table()
                     else -> blocks += paragraph()
                 }
@@ -133,8 +142,8 @@ object DocumentMarkdown {
             val trimmed = line.trim()
             val list = listLine(line)
             return trimmed.isEmpty() || fencePattern.containsMatchIn(line) || headingPattern.matches(trimmed) ||
-                rulePattern.matches(line) || trimmed.startsWith(">") || startsTable(position) ||
-                (list != null && (!list.ordered || list.number == 1))
+                rulePattern.matches(line) || trimmed.startsWith(">") || imagePattern.matches(trimmed) ||
+                startsTable(position) || (list != null && (!list.ordered || list.number == 1))
         }
 
         private fun codeBlock(): CodeBlock {

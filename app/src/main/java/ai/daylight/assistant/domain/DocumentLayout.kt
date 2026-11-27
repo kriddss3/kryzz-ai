@@ -88,6 +88,14 @@ object DocumentLayout {
 
     data class RuleItem(override val spaceBefore: Float = 6f, override val spaceAfter: Float = 10f) : Item
 
+    /** A picture. [height] is filled in when the bitmap is known; 0 means the renderer measures it. */
+    data class ImageItem(
+        val alt: String,
+        val source: String,
+        override val spaceBefore: Float = 8f,
+        override val spaceAfter: Float = 10f
+    ) : Item
+
     /** Hanging indent of one list level, in points. */
     const val LIST_INDENT = 18f
 
@@ -116,6 +124,7 @@ object DocumentLayout {
                     spaceBefore = 6f, spaceAfter = 12f
                 )
                 DocumentMarkdown.Rule -> items += RuleItem()
+                is DocumentMarkdown.Image -> items += ImageItem(block.alt, block.source)
                 is DocumentMarkdown.ListBlock -> {
                     addList(block, depth = 0, items = items)
                     val last = items.lastOrNull()

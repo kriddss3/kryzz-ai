@@ -13,9 +13,9 @@ class RunHeaderTest {
     @Test fun theSignalCountsUpAndOnlyMaxIsYellow() {
         assertThat(AgentQuality.entries.map(RunQuality::signal)).containsExactly(1, 2, 3).inOrder()
         assertThat(AgentQuality.entries.filter(RunQuality::accentSignal)).containsExactly(AgentQuality.MAX)
-        assertThat(RunQuality.icon(AgentQuality.FAST)).isEqualTo(R.drawable.ic_kz_bolt)
-        assertThat(RunQuality.icon(AgentQuality.BALANCED)).isEqualTo(R.drawable.ic_kz_balance)
-        assertThat(RunQuality.icon(AgentQuality.MAX)).isEqualTo(R.drawable.ic_kz_max)
+        assertThat(RunQuality.icon(AgentQuality.FAST)).isEqualTo(R.drawable.kz_led_fast)
+        assertThat(RunQuality.icon(AgentQuality.BALANCED)).isEqualTo(R.drawable.kz_led_balanced)
+        assertThat(RunQuality.icon(AgentQuality.MAX)).isEqualTo(R.drawable.kz_led_max)
     }
 
     @Test fun theCapLineShowsWhatEachModeReallyRunsWith() {

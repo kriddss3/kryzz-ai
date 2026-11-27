@@ -97,7 +97,7 @@ fun CronJobsScreen(vm: CronViewModel, onBack: () -> Unit) {
         }
     }
 
-    TunePage("Routines", onBack, scrollable = false) {
+    TunePage("Routines", onBack, scrollable = false, mark = R.drawable.kz_led_routines) {
         if (tasks.isEmpty()) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 TuneEmpty(

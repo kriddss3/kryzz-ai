@@ -54,7 +54,7 @@ import kotlinx.coroutines.withContext
 fun AboutScreen(onBack: () -> Unit) {
     val c = DotTheme.c
     var showLicences by rememberSaveable { mutableStateOf(false) }
-    TunePage("About", onBack) {
+    TunePage("About", onBack, mark = R.drawable.kz_led_about) {
         Row(
             Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 28.dp),
             verticalAlignment = Alignment.Bottom

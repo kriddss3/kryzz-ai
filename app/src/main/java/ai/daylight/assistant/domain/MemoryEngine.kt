@@ -185,6 +185,69 @@ object MemoryEngine {
             .toList()
     }
 
+    /**
+     * Combines query-matched memories with up to [coreProfileLimit] enabled core profile facts
+     * (pinned memories, then USER/PREFERENCE facts ordered by usage and recency) so essential
+     * user context is still recalled even when a prompt has little lexical overlap.
+     */
+    fun retrieveWithCore(
+        query: String,
+        memories: List<MemoryEntity>,
+        limit: Int = 6,
+        coreProfileLimit: Int = 2,
+        minScore: Double = 0.12,
+        now: Long = System.currentTimeMillis()
+    ): List<MemoryEntity> {
+        if (limit <= 0) return emptyList()
+        val matched = retrieve(query, memories, limit = limit, minScore = minScore, now = now)
+        val matchedIds = matched.mapTo(HashSet()) { it.id }
+        val maxCore = coreProfileLimit.coerceIn(0, limit)
+        val coreAdditions = if (maxCore == 0) {
+            emptyList()
+        } else {
+            memories.asSequence()
+                .filter { memory ->
+                    memory.enabled &&
+                        memory.id !in matchedIds &&
+                        (memory.pinned ||
+                            memory.category.equals(Category.USER.name, ignoreCase = true) ||
+                            memory.category.equals(Category.PREFERENCE.name, ignoreCase = true))
+                }
+                .sortedWith(
+                    compareByDescending<MemoryEntity> { it.pinned }
+                        .thenByDescending { it.usageCount }
+                        .thenByDescending { it.updatedAt }
+                )
+                .take(maxCore)
+                .toList()
+        }
+        return if (matched.size + coreAdditions.size <= limit) {
+            (matched + coreAdditions).distinctBy { it.id }
+        } else {
+            val remaining = (limit - coreAdditions.size).coerceAtLeast(0)
+            val prioritizedMatched = matched.sortedByDescending { memory ->
+                memory.pinned ||
+                    memory.category.equals(Category.USER.name, ignoreCase = true) ||
+                    memory.category.equals(Category.PREFERENCE.name, ignoreCase = true)
+            }
+            (coreAdditions + prioritizedMatched.take(remaining)).distinctBy { it.id }
+        }
+    }
+
+    private val SECRET_PREFIX_PATTERN = Regex("""(?:^|[^A-Za-z0-9])(?:sk-|AIza|ghp_|xoxb-|Bearer\s)""")
+
+    /** True when [text] appears to contain an API key, auth token, or private key block. */
+    fun containsSecretPattern(text: String): Boolean {
+        if (text.isBlank()) return false
+        if (SECRET_PREFIX_PATTERN.containsMatchIn(text) || text.contains("-----BEGIN ")) return true
+        return text.split(Regex("""\s+""")).any { raw ->
+            val token = raw.trimEnd('.', ',', ';', ':', ')', ']', '"', '\'')
+            token.length >= 32 &&
+                token.any { it.isLetter() } &&
+                token.any { it.isDigit() || !it.isLetterOrDigit() }
+        }
+    }
+
     private fun tokens(text: String): Set<String> = text.lowercase()
         .replace(Regex("""[^a-z0-9']"""), " ")
         .split(Regex("""\s+"""))

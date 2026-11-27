@@ -64,6 +64,9 @@ object OfficeFileGenerator {
                         // Word merges tables that touch and wants a paragraph after a table.
                         out.append(paragraph("<w:spacing w:before=\"0\" w:after=\"60\"/>", ""))
                     }
+                    is DocumentMarkdown.Image -> out.append(
+                        paragraph("", runs(listOf(DocumentMarkdown.Run(block.alt.ifBlank { "Picture" }))))
+                    )
                 }
             }
             if (out.isEmpty()) out.append(paragraph("", ""))
@@ -467,6 +470,7 @@ object OfficeFileGenerator {
                     block.rows.forEach { row -> text(row.joinToString(" | ") { DocumentMarkdown.plain(it) }, 1, 10) }
                     gap()
                 }
+                is DocumentMarkdown.Image -> { text(block.alt.ifBlank { "Picture" }, 1, 11); gap() }
             }
         }
         while (lines.lastOrNull()?.text?.isEmpty() == true) lines.removeAt(lines.lastIndex)
@@ -509,7 +513,7 @@ object OfficeFileGenerator {
 
     // ── Shared ──────────────────────────────────────────────────────────────
 
-    private fun zip(entries: Map<String, String>): ByteArray {
+    internal fun zip(entries: Map<String, String>): ByteArray {
         val bytes = ByteArrayOutputStream()
         ZipOutputStream(bytes).use { zip -> entries.forEach { (name, content) -> zip.putNextEntry(ZipEntry(name)); zip.write(content.toByteArray(Charsets.UTF_8)); zip.closeEntry() } }
         return bytes.toByteArray()
@@ -518,7 +522,7 @@ object OfficeFileGenerator {
     private fun columnName(index: Int): String { var value = index + 1; val result = StringBuilder(); while (value > 0) { value--; result.append(('A'.code + value % 26).toChar()); value /= 26 }; return result.reverse().toString() }
 
     /** Escapes XML text and drops characters XML 1.0 forbids (they would corrupt the file). */
-    private fun xml(value: String): String = buildString(value.length) {
+    internal fun xml(value: String): String = buildString(value.length) {
         value.forEach { char ->
             when {
                 char == '&' -> append("&amp;")

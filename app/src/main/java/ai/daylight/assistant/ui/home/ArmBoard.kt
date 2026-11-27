@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,8 +32,13 @@ import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -49,6 +53,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotMotion
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotPalette
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
@@ -153,14 +158,14 @@ internal object BoardMotion {
 
 @DrawableRes
 internal fun armIcon(arm: Arm): Int = when (arm) {
-    Arm.TALK -> R.drawable.ic_kz_chat
-    Arm.MAKE -> R.drawable.ic_kz_image
-    Arm.FIND -> R.drawable.ic_kz_search
-    Arm.CREW -> R.drawable.ic_kz_crew
-    Arm.RUN -> R.drawable.ic_kz_plan
-    Arm.VOICE -> R.drawable.ic_kz_voice_wave
-    Arm.LINK -> R.drawable.ic_kz_link_future
-    Arm.TUNE -> R.drawable.ic_kz_settings
+    Arm.TALK -> R.drawable.kz_led_talk
+    Arm.MAKE -> R.drawable.kz_led_make
+    Arm.FIND -> R.drawable.kz_led_find
+    Arm.CREW -> R.drawable.kz_led_crew
+    Arm.RUN -> R.drawable.kz_led_run
+    Arm.VOICE -> R.drawable.kz_led_voice
+    Arm.LINK -> R.drawable.kz_led_link
+    Arm.TUNE -> R.drawable.kz_led_tune
 }
 
 /**
@@ -178,7 +183,8 @@ fun ArmBoard(
     monthCaption: String,
     status: String,
     onOpen: (Arm) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenAt: ((Arm, Offset?) -> Unit)? = null,
 ) {
     val c = DotTheme.c
     val density = LocalDensity.current
@@ -249,7 +255,9 @@ fun ArmBoard(
                         port = port,
                         textInset = (geo.portTextX - hitX).dp,
                         contentTop = portContentTop(geo.rowHeight).dp,
-                        onClick = { onOpen(port.arm) },
+                        onClickAt = { origin ->
+                            if (onOpenAt != null) onOpenAt(port.arm, origin) else onOpen(port.arm)
+                        },
                         modifier = Modifier
                             .offset(x = hitX.dp, y = geo.portTop(i).dp)
                             .width((boardWidth - hitX).coerceAtLeast(0f).dp)
@@ -316,7 +324,7 @@ private fun PortRow(
     port: ArmPort,
     textInset: Dp,
     contentTop: Dp,
-    onClick: () -> Unit,
+    onClickAt: (Offset?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val c = DotTheme.c
@@ -326,8 +334,30 @@ private fun PortRow(
         append(", ")
         append(port.caption)
     }
+    val coords = remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val lastTapRoot = remember { mutableStateOf<Offset?>(null) }
+    val triggerClick = {
+        val origin = lastTapRoot.value ?: coords.value?.takeIf { it.isAttached }?.boundsInRoot()?.center
+        lastTapRoot.value = null
+        onClickAt(origin)
+    }
     Box(
         modifier
+            .onGloballyPositioned { coords.value = it }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press) {
+                            val pos = event.changes.firstOrNull()?.position
+                            val layout = coords.value
+                            if (pos != null && layout != null && layout.isAttached) {
+                                lastTapRoot.value = layout.localToRoot(pos)
+                            }
+                        }
+                    }
+                }
+            }
             // Outer, so it replaces the clickable's own semantics with one clear button.
             .clearAndSetSemantics {
                 contentDescription = spoken
@@ -337,9 +367,9 @@ private fun PortRow(
                     PortState.BUSY -> "Working"
                     PortState.IDLE -> ""
                 }
-                onClick(label = "Open ${port.arm.label}") { onClick(); true }
+                onClick(label = "Open ${port.arm.label}") { triggerClick(); true }
             }
-            .clickable(onClick = onClick)
+            .clickable(onClick = triggerClick)
     ) {
         Box(Modifier.padding(start = textInset).fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
@@ -370,9 +400,8 @@ private fun PortRow(
                     )
                 }
             }
-            Icon(
-                painterResource(armIcon(port.arm)),
-                contentDescription = null,
+            KryzzGlyph(
+                armIcon(port.arm),
                 tint = if (unlit) c.textDisabled else c.textSecondary,
                 modifier = Modifier
                     .align(Alignment.TopEnd)

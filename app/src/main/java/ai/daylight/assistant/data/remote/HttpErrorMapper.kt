@@ -6,7 +6,12 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.CancellationException
 
 object HttpErrorMapper {
-    fun fromHttp(status: Int, providerMessage: String?, retryAfter: String? = null): AssistantApiException {
+    fun fromHttp(
+        status: Int,
+        providerMessage: String?,
+        retryAfter: String? = null,
+        providerName: String? = null
+    ): AssistantApiException {
         val raw = providerMessage.orEmpty()
         val lower = raw.lowercase()
         val kind = when {
@@ -29,7 +34,7 @@ object HttpErrorMapper {
             ErrorKind.VALIDATION -> raw.ifBlank { "The provider could not validate this request." }
             else -> raw.ifBlank { "The provider returned an unexpected error ($status)." }
         }
-        return AssistantApiException(kind, friendly, status, wait)
+        return AssistantApiException(kind, friendly, status, wait, providerSlug(providerName))
     }
 
     fun fromThrowable(error: Throwable): AssistantApiException = when (error) {
@@ -47,4 +52,15 @@ object HttpErrorMapper {
             (time - System.currentTimeMillis() / 1000).coerceAtLeast(0)
         }.getOrNull()
     }
+}
+
+/**
+ * OpenRouter's chunk `provider` and `metadata.provider_name` are display names (`OpenAI`).
+ * The routing `ignore` list wants a single slug token. Names with spaces are left out
+ * rather than guessed (`Google AI Studio` is not the slug `google`).
+ */
+internal fun providerSlug(name: String?): String? {
+    val raw = name?.trim()?.lowercase().orEmpty()
+    if (raw.isEmpty() || !raw.all { it.isLetterOrDigit() || it == '-' || it == '_' }) return null
+    return raw
 }

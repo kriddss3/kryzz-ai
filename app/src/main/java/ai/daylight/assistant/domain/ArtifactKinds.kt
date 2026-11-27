@@ -14,12 +14,16 @@ package ai.daylight.assistant.domain
  */
 internal object ArtifactKinds {
 
-    /** Kinds the AUTO capability may produce through `create_artifact`. */
+    /** Kinds `create_artifact` produces (v5.13.7: slides, any text file and zips too). */
     val fileKinds: Set<OutputKind> = setOf(
         OutputKind.DOCUMENT,
         OutputKind.SPREADSHEET,
         OutputKind.DATABASE,
-        OutputKind.PDF
+        OutputKind.PDF,
+        OutputKind.CALENDAR,
+        OutputKind.PRESENTATION,
+        OutputKind.TEXT,
+        OutputKind.ARCHIVE
     )
 
     private val documentAliases = setOf(
@@ -34,6 +38,12 @@ internal object ArtifactKinds {
     private val pdfAliases = setOf(
         "pdf", "pdf file", "pdf document"
     )
+    private val calendarAliases = setOf(
+        "calendar", "ics", "ical", "icalendar", "vcalendar"
+    )
+    private val presentationAliases = setOf(
+        "presentation", "pptx", "ppt", "powerpoint", "slides", "slide deck", "deck"
+    )
 
     /** Maps the model's `type` argument (canonical or alias) to an [OutputKind], or null. */
     fun kindFor(rawType: String?): OutputKind? {
@@ -44,6 +54,8 @@ internal object ArtifactKinds {
             in spreadsheetAliases -> OutputKind.SPREADSHEET
             in databaseAliases -> OutputKind.DATABASE
             in pdfAliases -> OutputKind.PDF
+            in calendarAliases -> OutputKind.CALENDAR
+            in presentationAliases -> OutputKind.PRESENTATION
             else -> runCatching { OutputKind.valueOf(value.uppercase()) }.getOrNull()
                 ?.takeIf { it in fileKinds }
         }
@@ -63,7 +75,34 @@ internal object ArtifactKinds {
                 if (looksLikeMarkdownTable(section)) markdownTableToCsv(section) else section
             }
         }
+        if (kind == OutputKind.CALENDAR) text = normalizeCalendar(text)
         return text
+    }
+
+    /**
+     * A bare VEVENT becomes a full calendar, and each event gets a UID when the model
+     * left one out. Phone calendar apps import that; a prose description does not pass
+     * [calendarIsUsable] and is sent back to the model.
+     */
+    fun normalizeCalendar(content: String): String {
+        var text = content.replace("\r\n", "\n").replace('\r', '\n').trim()
+        val upper = text.uppercase()
+        if ("BEGIN:VCALENDAR" !in upper && "BEGIN:VEVENT" in upper) {
+            text = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Kryzz AI//EN\n$text\nEND:VCALENDAR"
+        }
+        if ("BEGIN:VEVENT" in text.uppercase() && !Regex("(?im)^UID:").containsMatchIn(text)) {
+            val uid = "UID:${java.util.UUID.randomUUID()}@kryzz"
+            text = text.replace(Regex("(?i)BEGIN:VEVENT"), "BEGIN:VEVENT\n$uid")
+        }
+        return text.trim()
+    }
+
+    /** True when the text is an iCalendar document a phone can import. */
+    fun calendarIsUsable(text: String): Boolean {
+        val upper = text.uppercase()
+        return "BEGIN:VCALENDAR" in upper && "END:VCALENDAR" in upper &&
+            "BEGIN:VEVENT" in upper && "END:VEVENT" in upper &&
+            ("SUMMARY:" in upper || "DTSTART" in upper)
     }
 
     /** Removes a single ``` fence wrapper if the whole content is fenced. */

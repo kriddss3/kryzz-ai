@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,8 +23,10 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import ai.daylight.assistant.ui.LocalSidePanelHoldSuppress
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import kotlin.math.abs
 
 /** The rules of hold-to-talk on a text field (v2.1). Pure, so they are unit tested. */
@@ -34,13 +37,18 @@ internal object HoldToTalkModel {
     /** How far (dp) a held finger slides away before letting go drops the recording. */
     const val CANCEL_DP = 72f
 
-    /** A hold that slid up past [cancelPx], or far sideways, cancels. */
-    fun cancels(dx: Float, dy: Float, cancelPx: Float): Boolean = -dy > cancelPx || abs(dx) > cancelPx * 1.5f
+    /** A hold that slid right or up past [cancelPx], or far sideways, cancels. */
+    fun cancels(dx: Float, dy: Float, cancelPx: Float): Boolean =
+        dx > cancelPx || -dy > cancelPx || abs(dx) > cancelPx * 1.5f
+
+    /** Normalized 0..1 progress toward the swipe-right or slide-up cancel threshold. */
+    fun cancelProgress(dx: Float, dy: Float, cancelPx: Float): Float =
+        if (cancelPx <= 0f) 0f else maxOf((dx / cancelPx).coerceIn(0f, 1f), (-dy / cancelPx).coerceIn(0f, 1f))
 
     /** The line above the reply rule while a hold or a dictation is going on, or null. */
     fun note(holding: Boolean, cancelZone: Boolean, dictating: Boolean, transcribing: Boolean): Pair<String, String>? = when {
         holding && cancelZone -> "CANCEL" to "Let go to drop it."
-        holding && dictating -> "LISTENING" to "Let go to add it. Slide up to cancel."
+        holding && dictating -> "LISTENING" to "Let go to add it. Slide right to cancel."
         transcribing -> "WRITING" to "Turning your words into text…"
         else -> null
     }
@@ -61,76 +69,96 @@ internal fun HoldToTalkSurface(
     onCancelZone: (Boolean) -> Unit,
     onHoldEnd: (cancelled: Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    onDragProgress: (dxPx: Float, progress: Float) -> Unit = { _, _ -> },
 ) {
     val haptic = LocalHapticFeedback.current
+    val holdSuppress = LocalSidePanelHoldSuppress.current
     val tap by rememberUpdatedState(onTap)
     val start by rememberUpdatedState(onHoldStart)
     val zone by rememberUpdatedState(onCancelZone)
     val end by rememberUpdatedState(onHoldEnd)
+    val drag by rememberUpdatedState(onDragProgress)
     Box(
         modifier.pointerInput(Unit) {
             val cancelPx = HoldToTalkModel.CANCEL_DP.dp.toPx()
+            val holdSlop = maxOf(viewConfiguration.touchSlop * 1.25f, 12.dp.toPx())
             awaitEachGesture {
                 val down = awaitFirstDown()
-                val early: PressEnd? = withTimeoutOrNull(HoldToTalkModel.HOLD_MS) {
-                    var result: PressEnd? = null
-                    while (result == null) {
-                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
-                        result = when {
-                            change == null -> PressEnd.MOVED
-                            !change.pressed -> PressEnd.TAP
-                            (change.position - down.position).getDistance() > viewConfiguration.touchSlop -> PressEnd.MOVED
-                            else -> null
+                holdSuppress?.active = true
+                try {
+                    val early: PressEnd? = withTimeoutOrNull(HoldToTalkModel.HOLD_MS) {
+                        var result: PressEnd? = null
+                        while (result == null) {
+                            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                            result = when {
+                                change == null -> PressEnd.MOVED
+                                !change.pressed -> PressEnd.TAP
+                                (change.position - down.position).getDistance() > holdSlop -> PressEnd.MOVED
+                                else -> null
+                            }
                         }
+                        result
                     }
-                    result
-                }
-                when (early) {
-                    PressEnd.TAP -> tap()
-                    PressEnd.MOVED -> Unit // a swipe that began here (the library drawer): not ours
-                    null -> {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        start()
-                        var cancelled = false
-                        var ended = false
-                        try {
-                            while (true) {
-                                val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
-                                if (change == null || !change.pressed) break
-                                change.consume()
-                                val moved = change.position - down.position
-                                val nowCancel = HoldToTalkModel.cancels(moved.x, moved.y, cancelPx)
-                                if (nowCancel != cancelled) {
-                                    cancelled = nowCancel
-                                    zone(cancelled)
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    when (early) {
+                        PressEnd.TAP -> tap()
+                        PressEnd.MOVED -> {
+                            // A swipe that began here (e.g. the library drawer): release hold suppression.
+                            holdSuppress?.active = false
+                        }
+                        null -> {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            start()
+                            var cancelled = false
+                            var ended = false
+                            try {
+                                while (true) {
+                                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                                    if (change == null || !change.pressed) break
+                                    change.consume()
+                                    val moved = change.position - down.position
+                                    drag(moved.x.coerceAtLeast(0f), HoldToTalkModel.cancelProgress(moved.x, moved.y, cancelPx))
+                                    val nowCancel = HoldToTalkModel.cancels(moved.x, moved.y, cancelPx)
+                                    if (nowCancel != cancelled) {
+                                        cancelled = nowCancel
+                                        zone(cancelled)
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                }
+                                drag(0f, 0f)
+                                ended = true
+                                end(cancelled)
+                            } finally {
+                                // The gesture was taken away (the screen changed): drop the recording.
+                                if (!ended) {
+                                    drag(0f, 0f)
+                                    end(true)
                                 }
                             }
-                            ended = true
-                            end(cancelled)
-                        } finally {
-                            // The gesture was taken away (the screen changed): drop the recording.
-                            if (!ended) end(true)
                         }
                     }
+                } finally {
+                    holdSuppress?.active = false
                 }
             }
         }
     )
 }
 
-/** The line above the reply rule during a hold: a yellow (or grey) mono label and a hint. */
+/** The line above the reply rule during a hold: a yellow (or red) mono label and a hint. */
 @Composable
-internal fun HoldNote(label: String, text: String, modifier: Modifier = Modifier) {
+internal fun HoldNote(label: String, text: String, modifier: Modifier = Modifier, cancelProgress: Float = 0f) {
     val c = DotTheme.c
+    val motion = LocalKryzzMotionEnabled.current
+    val shift = if (motion && (label == "LISTENING" || label == "CANCEL")) (cancelProgress.coerceIn(0f, 1f) * 18f).dp else 0.dp
     Row(
         modifier
             .fillMaxWidth()
             .heightIn(min = 40.dp)
+            .offset(x = shift)
             .semantics { liveRegion = LiveRegionMode.Polite },
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = DotType.Label, color = if (label == "CANCEL") c.textTertiary else c.accentText)
+        Text(label, style = DotType.Label, color = if (label == "CANCEL") c.error else c.accentText)
         Spacer(Modifier.width(10.dp))
         Text(text, style = DotType.BodySmall, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

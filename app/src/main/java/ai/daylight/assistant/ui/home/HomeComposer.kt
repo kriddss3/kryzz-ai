@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -19,10 +21,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -32,9 +35,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -48,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.AgentCapability
 import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.talk.HoldNote
@@ -89,13 +94,26 @@ fun HomeComposer(
     // v2.1 hold-to-talk, as on the reply line.
     val requester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
     var focused by remember { mutableStateOf(false) }
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    var imeWasVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(imeBottom) {
+        if (imeBottom > 0) {
+            imeWasVisible = true
+        } else if (imeWasVisible) {
+            imeWasVisible = false
+            if (focused) focusManager.clearFocus()
+        }
+    }
     var holding by remember { mutableStateOf(false) }
     var cancelZone by remember { mutableStateOf(false) }
+    var cancelProgress by remember { mutableFloatStateOf(0f) }
     val holdEnabled = onHoldStart != null && onHoldEnd != null
     Column(modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp)) {
         HoldToTalkModel.note(holding, cancelZone, dictating, transcribing)?.let { (label, hint) ->
-            HoldNote(label, hint, Modifier.padding(start = 4.dp, bottom = 4.dp))
+            HoldNote(label, hint, Modifier.padding(start = 4.dp, bottom = 4.dp), cancelProgress = cancelProgress)
         }
         if (makeOffer != null) {
             MakeOfferPill(makeOffer, onClick = { onMake(makeOffer) })
@@ -112,14 +130,18 @@ fun HomeComposer(
                     .padding(start = 18.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(painterResource(R.drawable.ic_kz_squid), null, Modifier.size(20.dp), tint = c.textTertiary)
+                KryzzGlyph(R.drawable.kz_led_bot, Modifier.size(20.dp), tint = c.textTertiary)
                 Spacer(Modifier.width(12.dp))
-                Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
+                Box(
+                    Modifier.weight(1f).heightIn(min = 48.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(vertical = 12.dp)
                             .focusRequester(requester)
                             .onFocusChanged { focused = it.isFocused }
                             .semantics { contentDescription = HOME_PLACEHOLDER },
@@ -150,12 +172,15 @@ fun HomeComposer(
                             onHoldStart = {
                                 holding = true
                                 cancelZone = false
+                                cancelProgress = 0f
                                 onHoldStart?.invoke()
                             },
                             onCancelZone = { cancelZone = it },
+                            onDragProgress = { _, p -> cancelProgress = p },
                             onHoldEnd = { cancelled ->
                                 holding = false
                                 cancelZone = false
+                                cancelProgress = 0f
                                 onHoldEnd?.invoke(cancelled)
                             },
                             modifier = Modifier.matchParentSize()
@@ -178,7 +203,7 @@ fun HomeComposer(
 @Composable
 private fun MakeOfferPill(capability: AgentCapability, onClick: () -> Unit) {
     val c = DotTheme.c
-    val icon = if (capability == AgentCapability.VIDEO) R.drawable.ic_kz_video else R.drawable.ic_kz_image
+    val icon = if (capability == AgentCapability.VIDEO) R.drawable.kz_led_video else R.drawable.kz_led_image
     Row(
         Modifier
             .clip(DotRadius.Pill)
@@ -195,7 +220,7 @@ private fun MakeOfferPill(capability: AgentCapability, onClick: () -> Unit) {
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(painterResource(icon), null, Modifier.size(14.dp), tint = c.textSecondary)
+            KryzzGlyph(icon, Modifier.size(14.dp), tint = c.textSecondary)
             Spacer(Modifier.width(6.dp))
             Text(makeOfferLabel(capability).uppercase(), style = DotType.Caption, color = c.textSecondary, maxLines = 1)
         }
@@ -222,7 +247,7 @@ private fun InkwellButton(badge: String, onClick: () -> Unit) {
                 },
             contentAlignment = Alignment.Center
         ) {
-            Icon(painterResource(R.drawable.ic_kz_ink), null, Modifier.size(22.dp), tint = c.bg)
+            KryzzGlyph(R.drawable.kz_led_inkwell, Modifier.size(22.dp), tint = c.bg)
         }
         if (badge.isNotEmpty()) {
             // Inside the button's box: the NavHost clips anything past its right edge.

@@ -63,6 +63,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.input.pointer.pointerInput
@@ -87,6 +88,7 @@ import ai.daylight.assistant.domain.AgentPlan
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ConversationUsage
 import ai.daylight.assistant.domain.GeneratedOutput
+import ai.daylight.assistant.domain.OutputKind
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
 import androidx.compose.ui.res.painterResource
@@ -114,6 +116,7 @@ import ai.daylight.assistant.ui.shell.InkLine
 import ai.daylight.assistant.ui.shell.LocalInkStrip
 import kotlinx.coroutines.withContext
 import ai.daylight.assistant.ui.run.FileCardModel
+import ai.daylight.assistant.ui.run.openCalendarOnPhone
 import ai.daylight.assistant.ui.make.MakeMedia
 import ai.daylight.assistant.ui.shell.InkLines
 import ai.daylight.assistant.ui.shell.InkStripEffect
@@ -173,6 +176,7 @@ fun ChatScreen(
     initialCapability: AgentCapability = AgentCapability.AUTO,
     initialVoice: Boolean = false,
     onBack: () -> Unit,
+    onCloseVoice: () -> Unit = {},
     onModels: (ModelPurpose) -> Unit,
     onOpenLibrary: () -> Unit = {},
     onStartAgent: () -> Boolean = { false },
@@ -228,6 +232,7 @@ fun ChatScreen(
     val speakingMessageId by vm.speakingMessageId.collectAsStateWithLifecycle()
     val synthesizingMessageId by vm.synthesizingMessageId.collectAsStateWithLifecycle()
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) vm.beginVoice() else vm.error.value = "Microphone permission is needed for voice chat."
     }
@@ -352,6 +357,7 @@ fun requestVoice() {
     // Opened from the Home composer: the question is already in the composer, send it
     // once. Mode and capability are set here too so the send can't race the effects above.
     LaunchedEffect(vm.conversationId) {
+        if (replyFocusRequests == 0) focusManager.clearFocus()
         if (consumeChatAutoSend(vm.conversationId)) {
             vm.mode.value = initialMode
             vm.capability.value = initialCapability
@@ -558,6 +564,7 @@ fun requestVoice() {
                             onRemoveAttachment = vm::removeAttachment,
                             onFocusChanged = onComposerFocusChanged,
                             focusRequester = replyFocus,
+                            idlePlaceholder = "Make, find, or reply",
                             transcribing = dictationTranscribing,
                             onHoldStart = ::holdToTalkStart,
                             onHoldEnd = ::holdToTalkEnd
@@ -772,7 +779,10 @@ fun requestVoice() {
                             vm.cancelVoice()
                             replyFocusRequests++
                         },
-                        onClose = vm::cancelVoice
+                        onClose = {
+                            vm.cancelVoice()
+                            onCloseVoice()
+                        }
                     )
                 }
                 // The agent's ask_user tool suspends until this card is answered or
@@ -927,14 +937,23 @@ internal suspend fun writeOutput(context: Context, uri: Uri, output: GeneratedOu
 }
 
 private fun openOutput(context: Context, output: GeneratedOutput) {
+    if (output.kind == OutputKind.CALENDAR) {
+        if (!openCalendarOnPhone(context, output)) {
+            android.widget.Toast.makeText(context, "No calendar app could open this event.", android.widget.Toast.LENGTH_SHORT).show()
+        }
+        return
+    }
     val uri = output.localPath?.let { path ->
         runCatching { FileProvider.getUriForFile(context, "${context.packageName}.files", File(path)) }.getOrNull()
     } ?: output.remoteUrl?.let(Uri::parse) ?: return
-    runCatching {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW).setDataAndType(uri, output.mimeType)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+    fun view(type: String) = Intent(Intent.ACTION_VIEW).setDataAndType(uri, type)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        .apply { clipData = ClipData.newRawUri(output.fileName, uri) }
+    // v5.13.7: a text format with no viewer of its own (.py, .yaml, .json) opens as plain text.
+    val opened = runCatching { context.startActivity(view(output.mimeType)) }.isSuccess ||
+        (FileCardModel.opensAsText(output) && runCatching { context.startActivity(view("text/plain")) }.isSuccess)
+    if (!opened) {
+        android.widget.Toast.makeText(context, FileCardModel.noViewerMessage(output), android.widget.Toast.LENGTH_LONG).show()
     }
 }
 

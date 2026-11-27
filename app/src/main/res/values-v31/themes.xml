@@ -6,7 +6,7 @@
         <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
         <item name="android:windowBackground">#F4F4F4</item>
         <item name="android:windowSplashScreenBackground">#F4F4F4</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/kryzz_mark_foreground_dark</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/kryzz_splash_foreground_dark</item>
         <item name="android:windowSplashScreenIconBackgroundColor">#F4F4F4</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:colorAccent">#FFC700</item>

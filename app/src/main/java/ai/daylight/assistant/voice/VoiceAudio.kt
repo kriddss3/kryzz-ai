@@ -102,6 +102,26 @@ internal fun trimWavSilence(
     return file
 }
 
+/** Keeps only the trailing [maxTailMs] of PCM16 audio in a barge-in WAV clip. */
+internal fun trimWavTail(
+    file: File,
+    maxTailMs: Long,
+    sampleRate: Int = VOICE_CAPTURE_SAMPLE_RATE
+): File {
+    if (!file.isFile) return file
+    val bytes = file.readBytes()
+    val pcmLen = bytes.size - WAV_HEADER_BYTES
+    if (pcmLen <= 4) return file
+    val keepBytes = (((sampleRate * maxTailMs.coerceAtLeast(100L)) / 1_000L) * 2L)
+        .toInt()
+        .coerceAtLeast(2) and 1.inv()
+    if (pcmLen <= keepBytes) return file
+    val start = (bytes.size - keepBytes).coerceAtLeast(WAV_HEADER_BYTES) and 1.inv()
+    val tail = bytes.copyOfRange(start, bytes.size)
+    file.writeBytes(wavHeader(tail.size, sampleRate) + tail)
+    return file
+}
+
 private fun pcmSample(data: ByteArray, offset: Int): Int {
     val sample = (data[offset].toInt() and 0xFF) or (data[offset + 1].toInt() shl 8)
     return sample.toShort().toInt()

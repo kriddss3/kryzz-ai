@@ -64,13 +64,32 @@ class MakeStudio(
     /** The render running now, or the last one and how it ended. */
     val current: StateFlow<MakeRender?> = _current.asStateFlow()
 
-    /** Make's prompt, kind and chosen ratios, kept while the app runs so leaving Make loses nothing. */
+    /** Make's prompt, kind, chosen ratios and attached media, kept while the app runs so leaving Make loses nothing. */
     val draft = MutableStateFlow("")
     val kind = MutableStateFlow(MakeKind.IMAGE)
     val ratios = MutableStateFlow<Map<MakeKind, String>>(emptyMap())
+    val sources = MutableStateFlow<List<MakeSource>>(emptyList())
 
     /** OpenRouter's video models with the ratios each takes, fetched once per app run. */
     val openRouterVideoModels = MutableStateFlow<List<MediaModel>?>(null)
+
+    /** Bumped when another arm (such as Find) stages a source and asks Make to show the composer. */
+    val composeRequests = MutableStateFlow(0)
+
+    enum class StageSourceResult { ADDED, DUPLICATE, FULL, BUSY }
+
+    fun stageExternalSource(source: MakeSource): StageSourceResult {
+        if (_current.value?.running == true) return StageSourceResult.BUSY
+        kind.value = MakeKind.IMAGE
+        if (sources.value.any { it.localPath == source.localPath }) {
+            composeRequests.update { it + 1 }
+            return StageSourceResult.DUPLICATE
+        }
+        if (sources.value.size >= MakeSources.MAX) return StageSourceResult.FULL
+        sources.update { it + source }
+        composeRequests.update { it + 1 }
+        return StageSourceResult.ADDED
+    }
 
     private var job: Job? = null
     private var serial = 0
@@ -87,16 +106,18 @@ class MakeStudio(
         model: String,
         conversationId: String? = null,
         style: MakeStyle = MakeStyle.PLAIN,
+        sources: List<MakeSource> = emptyList(),
     ): Boolean {
         val clean = prompt.trim()
         if (clean.isEmpty() || _current.value?.running == true) return false
         val id = ++serial
+        val attached = sources.filter { it.usable }
         _current.value = MakeRender(id, kind, clean, ratio, model, clock(), conversationId, style = style)
         job = scope.launch {
             try {
                 val conversation = conversationId ?: newConversation()
                 change(id) { it.copy(conversationId = conversation) }
-                render(conversation, clean, kind, MediaOptions(ratio, style))
+                render(conversation, clean, kind, MediaOptions(ratio, style, attached))
                 change(id) { it.copy(outcome = MakeOutcome.DONE, finishedAt = clock()) }
             } catch (stop: CancellationException) {
                 change(id) { it.copy(outcome = MakeOutcome.STOPPED, finishedAt = clock()) }

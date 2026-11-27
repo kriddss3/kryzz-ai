@@ -27,7 +27,8 @@ object ToolActivityDetail {
                 ?: AgentLoopPolicy.parseSearchQueries(arguments).firstOrNull()
             AgentTurnPolicy.FETCH_URL -> args?.string("url")?.let(::hostAndPath)
             AgentTurnPolicy.GET_WEATHER -> args?.string("place")
-            AgentTurnPolicy.CREATE_ARTIFACT -> args?.string("title")
+            // v5.13.7: the file name says what is being made ("pitch.pptx").
+            AgentTurnPolicy.CREATE_ARTIFACT -> args?.string("file_name") ?: args?.string("title")
             else -> null
         }
         return raw?.let(::shorten)?.takeIf(String::isNotBlank)

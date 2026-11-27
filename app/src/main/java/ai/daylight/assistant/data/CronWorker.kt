@@ -43,10 +43,10 @@ class CronWorker(
                 // the bot's chat at once) and keeps the chat's title if it was pruned.
                 container.crew.runRoutine(botId, task.id, task.title) {
                     val conversationId = container.bots.ensureConversation(botId) ?: task.conversationId
-                    container.agent.send(conversationId, task.prompt)
+                    container.agent.send(conversationId, task.prompt, skipAutoMemory = true)
                 }
             } else {
-                container.agent.send(task.conversationId, task.prompt)
+                container.agent.send(task.conversationId, task.prompt, skipAutoMemory = true)
             }
             dao.updateScheduledTaskLastRun(task.id, System.currentTimeMillis())
             val botName = task.botId?.let { dao.bot(it)?.name }

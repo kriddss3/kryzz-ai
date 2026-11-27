@@ -13,6 +13,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -24,11 +25,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -82,6 +87,9 @@ import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.FindFilters
 import ai.daylight.assistant.domain.FindKind
 import ai.daylight.assistant.domain.FindSize
+import ai.daylight.assistant.domain.FindWebSource
+import ai.daylight.assistant.domain.FindWebState
+import ai.daylight.assistant.domain.FindWebStatus
 import ai.daylight.assistant.domain.FoundImage
 import ai.daylight.assistant.domain.LicenceFilter
 import ai.daylight.assistant.ui.dot.DotButtonStyle
@@ -93,12 +101,12 @@ import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotSheetHandle
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
-import ai.daylight.assistant.ui.dot.dashedBorder
 import ai.daylight.assistant.ui.dot.effects.ThinkingDots
 import ai.daylight.assistant.ui.talk.DotSheet
 import ai.daylight.assistant.ui.talk.SheetLabel
 import ai.daylight.assistant.ui.tune.TuneChoiceRow
 import ai.daylight.assistant.ui.tune.TuneDetail
+import ai.daylight.assistant.ui.tune.TuneEmpty
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -136,6 +144,8 @@ internal fun FindQueryField(
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    placeholder: String = "Search free images",
+    semanticsLabel: String = "Search Wikimedia Commons",
 ) {
     val c = DotTheme.c
     val source = remember { MutableInteractionSource() }
@@ -165,7 +175,7 @@ internal fun FindQueryField(
                         if (event.type == KeyEventType.KeyUp) onSearch()
                         true
                     }
-                    .semantics { contentDescription = "Search Wikimedia Commons" },
+                    .semantics { contentDescription = semanticsLabel },
                 enabled = enabled,
                 singleLine = true,
                 textStyle = DotType.Body.copy(fontSize = 16.sp, color = if (enabled) c.textPrimary else c.textTertiary),
@@ -175,7 +185,7 @@ internal fun FindQueryField(
                 interactionSource = source,
                 decorationBox = { inner ->
                     if (value.isEmpty()) {
-                        Text("Search free images", style = DotType.Body.copy(fontSize = 16.sp), color = c.textTertiary, maxLines = 1)
+                        Text(placeholder, style = DotType.Body.copy(fontSize = 16.sp), color = c.textTertiary, maxLines = 1)
                     }
                     inner()
                 }
@@ -309,9 +319,9 @@ internal fun FindTile(
 
 /**
  * The viewer sheet (kit web-images): a preview, title, author, licence and source, then
- * Save, Source and Share. It sits inside Find, so tapping another tile swaps what it shows.
- * Drag it down, tap its handle or press Back to close it. "Use in Make" is drawn unlit:
- * Make can't start from an image yet.
+ * Save, Source and Share, plus "Use in Make" to stage the image into Make's composer.
+ * It sits inside Find, so tapping another tile swaps what it shows.
+ * Drag it down, tap its handle or press Back to close it.
  */
 @Composable
 internal fun FindViewerSheet(
@@ -328,6 +338,7 @@ internal fun FindViewerSheet(
     onLicence: (() -> Unit)?,
     onUseInMake: () -> Unit,
     modifier: Modifier = Modifier,
+    usingInMake: Boolean = false,
 ) {
     val c = DotTheme.c
     val density = LocalDensity.current
@@ -420,7 +431,13 @@ internal fun FindViewerSheet(
                     color = c.textTertiary,
                     maxLines = 1
                 )
-                UnlitChip("Use in Make", R.drawable.ic_kz_image, onUseInMake, Modifier.padding(top = 4.dp))
+                ActionChip(
+                    label = if (usingInMake) "Staging…" else "Use in Make",
+                    icon = R.drawable.ic_kz_image,
+                    busy = usingInMake,
+                    onClick = onUseInMake,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
         Row(
@@ -454,30 +471,51 @@ internal fun FindViewerSheet(
     }
 }
 
-/** An unlit (dashed) chip for something that isn't built yet; a tap only says "not yet". */
+/** Active 28dp pill action chip inside [FindViewerSheet] with a full 48dp touch target. */
 @Composable
-private fun UnlitChip(label: String, @DrawableRes icon: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun ActionChip(
+    label: String,
+    @DrawableRes icon: Int,
+    busy: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val c = DotTheme.c
+    val haptic = LocalHapticFeedback.current
     Box(
         modifier
             .minimumInteractiveComponentSize()
-            .clickable(role = Role.Button, onClick = onClick)
+            .clip(DotRadius.Pill)
+            .clickable(enabled = !busy, role = Role.Button) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .clearAndSetSemantics {
-                contentDescription = "$label, not yet"
-                onClick { onClick(); true }
+                contentDescription = if (busy) "$label, working" else label
+                if (!busy) onClick { onClick(); true }
             },
         contentAlignment = Alignment.CenterStart
     ) {
         Row(
             Modifier
                 .height(28.dp)
-                .dashedBorder(c.borderStrong, radius = 14.dp)
+                .background(c.surfaceRaised, DotRadius.Pill)
+                .border(1.dp, if (busy) c.accentText else c.borderStrong, DotRadius.Pill)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(painterResource(icon), null, Modifier.size(14.dp), tint = c.textDisabled)
-            Text(label.uppercase(Locale.US), style = DotType.Caption.copy(fontSize = 10.sp), color = c.textDisabled, maxLines = 1)
+            if (busy) {
+                ThinkingDots(dot = 3.5.dp, on = c.accentText, off = c.accentText.copy(alpha = .3f))
+            } else {
+                Icon(painterResource(icon), null, Modifier.size(14.dp), tint = c.textPrimary)
+            }
+            Text(
+                label.uppercase(Locale.US),
+                style = DotType.Caption.copy(fontSize = 10.sp),
+                color = if (busy) c.accentText else c.textPrimary,
+                maxLines = 1
+            )
         }
     }
 }
@@ -638,6 +676,211 @@ internal fun FindFilterSheet(
                     TuneChoiceRow(size.label, size.detail, size == filters.size, onClick = { onSize(size) })
                 }
             }
+        }
+    }
+}
+
+/** Body for Find's Web browsing mode: loading states, error/retry, synthesized answer card, and clickable sources. */
+@Composable
+internal fun FindWebResultsBody(
+    state: FindWebState,
+    off: Boolean,
+    onAllowSearch: () -> Unit,
+    onRetry: () -> Unit,
+    onCopyAnswer: (String) -> Unit,
+    onOpenUrl: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = DotTheme.c
+    when {
+        off -> FindWebMessage(modifier) {
+            TuneEmpty(
+                dotIcon = R.drawable.ic_kz_web_dot,
+                words = "Search off",
+                body = "Find needs web search to browse the web. It is switched off in Tune.",
+                action = "Allow web search",
+                onAction = onAllowSearch,
+                actionIcon = R.drawable.ic_kz_web
+            )
+        }
+        state.status == FindWebStatus.IDLE -> FindWebMessage(modifier) {
+            TuneEmpty(
+                dotIcon = R.drawable.ic_kz_web_dot,
+                words = "Web search",
+                body = "Search the live web with Parallel Search and get a quick sourced summary."
+            )
+        }
+        state.status == FindWebStatus.SEARCHING || state.status == FindWebStatus.SYNTHESIZING -> FindWebMessage(modifier) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                ThinkingDots(dot = 6.dp)
+                Text(
+                    if (state.status == FindWebStatus.SYNTHESIZING) {
+                        "SUMMARIZING SOURCES"
+                    } else {
+                        "SEARCHING THE WEB"
+                    },
+                    Modifier.padding(top = 14.dp),
+                    style = DotType.Caption,
+                    color = c.textTertiary
+                )
+            }
+        }
+        state.status == FindWebStatus.FAILED -> FindWebMessage(modifier) {
+            TuneEmpty(
+                dotIcon = R.drawable.ic_kz_warning_dot,
+                words = "Search failed",
+                body = state.error ?: "The web search failed.",
+                action = "Try again",
+                onAction = onRetry,
+                actionIcon = R.drawable.ic_kz_retry
+            )
+        }
+        else -> {
+            val result = state.result
+            if (result == null) {
+                FindWebMessage(modifier) {
+                    TuneEmpty(
+                        dotIcon = R.drawable.ic_kz_web_dot,
+                        words = "No results",
+                        body = "Try fewer or different words."
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item(key = "answer") {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(DotRadius.Card)
+                                .background(c.surface, DotRadius.Card)
+                                .border(1.dp, c.border, DotRadius.Card)
+                                .padding(start = 16.dp, top = 8.dp, end = 4.dp, bottom = 16.dp)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("ANSWER", style = DotType.Label, color = c.textTertiary)
+                                result.modelLabel?.let { label ->
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        label.uppercase(Locale.US),
+                                        Modifier
+                                            .weight(1f, fill = false)
+                                            .background(c.surfaceRaised, DotRadius.Pill)
+                                            .border(1.dp, c.border, DotRadius.Pill)
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        style = DotType.Caption.copy(fontSize = 10.sp),
+                                        color = c.textSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(Modifier.weight(1f))
+                                DotIconButton(
+                                    icon = R.drawable.ic_kz_copy,
+                                    label = "Copy answer",
+                                    onClick = { onCopyAnswer(result.answer) },
+                                    tint = c.textSecondary,
+                                    iconSize = 18.dp
+                                )
+                            }
+                            Text(
+                                result.answer,
+                                Modifier.padding(top = 4.dp, end = 12.dp),
+                                style = DotType.Body,
+                                color = c.textPrimary
+                            )
+                        }
+                    }
+
+                    item(key = "sources_header") {
+                        Text(
+                            if (result.sources.isEmpty()) "NO SOURCES FOUND" else "SOURCES (${result.sources.size})",
+                            Modifier.padding(top = 4.dp),
+                            style = DotType.Label,
+                            color = c.textSecondary
+                        )
+                    }
+
+                    itemsIndexed(result.sources, key = { index, source -> "${index}_${source.url}" }) { _, source ->
+                        WebSourceRow(source = source, onClick = { onOpenUrl(source.url) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FindWebMessage(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Box(
+        modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 20.dp, end = 8.dp, top = 32.dp, bottom = 24.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun WebSourceRow(source: FindWebSource, onClick: () -> Unit) {
+    val c = DotTheme.c
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(DotRadius.Tile)
+            .background(c.surface, DotRadius.Tile)
+            .border(1.dp, c.border, DotRadius.Tile)
+            .clickable(role = Role.Button, onClickLabel = "Open source", onClick = onClick)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                source.domain.ifBlank { source.url }.uppercase(Locale.US),
+                Modifier.weight(1f, fill = false),
+                style = DotType.Caption.copy(fontSize = 10.sp),
+                color = c.accentText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            source.publishDate?.let { date ->
+                Text(
+                    date.uppercase(Locale.US),
+                    style = DotType.Caption.copy(fontSize = 10.sp),
+                    color = c.textTertiary,
+                    maxLines = 1
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Icon(painterResource(R.drawable.ic_kz_external), null, Modifier.size(14.dp), tint = c.textTertiary)
+        }
+        Text(
+            source.title,
+            style = DotType.Title.copy(fontSize = 15.sp, lineHeight = 20.sp),
+            color = c.textPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (source.snippet.isNotBlank()) {
+            Text(
+                source.snippet,
+                style = DotType.BodySmall,
+                color = c.textSecondary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

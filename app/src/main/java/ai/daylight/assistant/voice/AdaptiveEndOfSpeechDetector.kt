@@ -70,6 +70,13 @@ internal class AdaptiveEndOfSpeechDetector(
         speechConfirmMs = profile.confirmMs
     }
 
+    /** Configures barge-in detectors with responsive confirmation while keeping sensitivity scaling. */
+    fun configureBarge(profile: SensitivityProfile) {
+        gateScale = profile.gateScale
+        minVoicedMs = profile.bargeTriggerMs
+        speechConfirmMs = (profile.confirmMs / 2L).coerceIn(60L, 110L)
+    }
+
     fun reset(startedAtMs: Long) {
         this.startedAtMs = startedAtMs
         lastSampleAtMs = startedAtMs

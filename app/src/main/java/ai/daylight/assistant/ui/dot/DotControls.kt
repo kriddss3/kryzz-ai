@@ -27,7 +27,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -45,7 +44,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -138,7 +136,7 @@ fun DotPillButton(
             ThinkingDots(dot = 6.dp, on = fg, off = fg.copy(alpha = .3f))
         } else {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (icon != null) Icon(painterResource(icon), null, Modifier.size(18.dp), tint = fg)
+                if (icon != null) KryzzGlyph(icon, Modifier.size(18.dp), tint = fg)
                 Text(label, style = DotType.Button, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -155,6 +153,7 @@ fun DotIconButton(
     tint: Color = DotTheme.c.textPrimary,
     enabled: Boolean = true,
     iconSize: androidx.compose.ui.unit.Dp = 22.dp,
+    accent: Color = Color.Unspecified,
 ) {
     Box(
         modifier
@@ -164,7 +163,12 @@ fun DotIconButton(
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center
     ) {
-        Icon(painterResource(icon), null, Modifier.size(iconSize), tint = if (enabled) tint else DotTheme.c.textDisabled)
+        KryzzGlyph(
+            icon,
+            Modifier.size(iconSize),
+            tint = if (enabled) tint else DotTheme.c.textDisabled,
+            accent = accent,
+        )
     }
 }
 
@@ -222,10 +226,10 @@ fun DotField(
             verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top
         ) {
             if (leadingIcon != null) {
-                Icon(
-                    painterResource(leadingIcon), null,
+                KryzzGlyph(
+                    leadingIcon,
                     Modifier.padding(top = if (singleLine) 0.dp else 15.dp).size(20.dp),
-                    tint = c.textTertiary
+                    tint = c.textTertiary,
                 )
                 Spacer(Modifier.width(10.dp))
             }
@@ -316,7 +320,7 @@ fun DotPill(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            if (icon != null) Icon(painterResource(icon), null, Modifier.size(16.dp), tint = fg)
+            if (icon != null) KryzzGlyph(icon, Modifier.size(16.dp), tint = fg)
             Text(label.uppercase(Locale.US), style = DotType.Label, color = fg, maxLines = 1)
         }
     }
@@ -334,7 +338,7 @@ fun DotTag(text: String, modifier: Modifier = Modifier, @DrawableRes icon: Int? 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-        if (icon != null) Icon(painterResource(icon), null, Modifier.size(12.dp), tint = color)
+        if (icon != null) KryzzGlyph(icon, Modifier.size(12.dp), tint = color)
         Text(text.uppercase(Locale.US), style = DotType.Label.copy(fontSize = 10.sp), color = color, maxLines = 1)
     }
 }
@@ -367,7 +371,7 @@ fun DotNotice(text: String, modifier: Modifier = Modifier, @DrawableRes icon: In
             .padding(16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(painterResource(icon), null, Modifier.padding(top = 1.dp).size(18.dp), tint = c.textSecondary)
+        KryzzGlyph(icon, Modifier.padding(top = 1.dp).size(18.dp), tint = c.textSecondary)
         Text(text, Modifier.weight(1f), style = DotType.BodySmall, color = c.textSecondary)
     }
 }

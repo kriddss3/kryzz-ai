@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotButtonStyle
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotIconButton
 import ai.daylight.assistant.ui.dot.DotPillButton
 import ai.daylight.assistant.ui.dot.DotRadio
@@ -59,11 +60,12 @@ fun TunePage(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     scrollable: Boolean = true,
+    @DrawableRes mark: Int? = null,
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(modifier.fillMaxSize().imePadding()) {
-        TunePageHeader(title, onBack, actions)
+        TunePageHeader(title, onBack, mark, actions)
         if (scrollable) {
             Column(
                 Modifier
@@ -89,7 +91,12 @@ fun TunePage(
 
 /** The depth-page header: back, the dot title at a 3dp pitch (Tune's own is 4.2dp), actions. */
 @Composable
-fun TunePageHeader(title: String, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit = {}) {
+fun TunePageHeader(
+    title: String,
+    onBack: () -> Unit,
+    @DrawableRes mark: Int? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
     val c = DotTheme.c
     Row(
         Modifier
@@ -100,6 +107,9 @@ fun TunePageHeader(title: String, onBack: () -> Unit, actions: @Composable RowSc
     ) {
         DotIconButton(R.drawable.ic_kz_back, "Back", onBack)
         Spacer(Modifier.width(4.dp))
+        if (mark != null) {
+            KryzzGlyph(mark, Modifier.padding(end = 8.dp).size(22.dp), tint = c.textPrimary)
+        }
         DotMatrixText(
             title.uppercase(Locale.US),
             Modifier.semantics { heading() },
@@ -129,10 +139,11 @@ fun TuneSlider(
     modifier: Modifier = Modifier,
     caption: String? = null,
     enabled: Boolean = true,
+    @DrawableRes mark: Int? = null,
 ) {
     val c = DotTheme.c
     Column(modifier.fillMaxWidth()) {
-        TuneSection(title) {
+        TuneSection(title, mark = mark) {
             DotMatrixText(
                 value.uppercase(Locale.US),
                 pitch = 3.dp,
@@ -174,6 +185,7 @@ fun TuneChoiceRow(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    @DrawableRes icon: Int? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = DotTheme.c
@@ -193,6 +205,9 @@ fun TuneChoiceRow(
         ) {
             DotRadio(selected)
             Spacer(Modifier.width(14.dp))
+            if (icon != null) {
+                KryzzGlyph(icon, Modifier.padding(end = 12.dp).size(20.dp), tint = if (selected) c.textPrimary else c.textSecondary)
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     title,

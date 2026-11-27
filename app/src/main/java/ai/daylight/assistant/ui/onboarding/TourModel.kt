@@ -22,7 +22,7 @@ data class TourKey(val name: String, val purpose: String, val required: Boolean,
  */
 enum class TourPage(@DrawableRes val icon: Int, val title: String, val body: String) {
     HOME(
-        R.drawable.ic_kz_grid_dot,
+        R.drawable.kz_led_bot,
         "EIGHT ARMS",
         "Home is a board of eight arms. Tap a row to open it. A row lights up while that arm is busy, and the squid shows how things are going."
     ),
@@ -34,25 +34,25 @@ enum class TourPage(@DrawableRes val icon: Int, val title: String, val body: Str
     CHATS(
         R.drawable.ic_kz_history_dot,
         "YOUR CHATS",
-        "Swipe in from the left edge for your chat library: folders, pins and backups. Long-press any question or answer to copy, share, edit or hear it."
+        "The three-line mark at the top left opens your chats. You can also swipe in from the left edge. Long-press any question or answer to copy, share, edit or hear it."
     ),
     TALK(
-        R.drawable.ic_kz_web_dot,
+        R.drawable.kz_led_talk,
         "TALK, RUN",
-        "Talk answers and searches the web. Run takes on bigger jobs: plans, files and several steps. Tap THINKING above an answer to see how Kryzz worked it out."
+        "Talk answers and searches the web. Start a message with make to generate an image, or a video, and with find to search photos. Run takes on bigger jobs: plans, files and several steps."
     ),
     VOICE(
-        R.drawable.ic_kz_voice_wave_dot,
+        R.drawable.kz_led_voice,
         "VOICE",
         "Voice is a hands-free call: Gemini hears you and Fish Audio answers out loud. In any chat you can also hold the reply line to dictate. Let go to drop the words in, slide up to cancel."
     ),
     MAKE(
-        R.drawable.ic_kz_image_dot,
+        R.drawable.kz_led_make,
         "MAKE MORE",
         "Make draws images and clips; try the Nothing style. Find gets pictures that are free to reuse. Crew runs your own bots on a schedule. Everything made lands in the Inkwell."
     ),
     KEYS(
-        R.drawable.ic_kz_key_dot,
+        R.drawable.kz_led_api_keys,
         "YOUR KEYS",
         "Kryzz runs on your own keys. Get them here, then paste them in Tune > Keys."
     );

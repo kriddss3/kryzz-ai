@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -122,6 +123,14 @@ internal fun panelSwipeEnabledForRoute(route: String?): Boolean {
     }
 }
 
+/**
+ * The three-line chats mark shows wherever the library can open, and stays off
+ * onboarding and depth pages (a settings subpage, a bot, the Inkwell).
+ */
+internal fun chatsButtonVisible(route: String?, onboardingComplete: Boolean = true): Boolean =
+    ai.daylight.assistant.ui.shell.shellChromeVisibleForRoute(route, onboardingComplete) &&
+        sidePanelOpenAllowedForRoute(route)
+
 /** True when the side panel is allowed to be opened at all on the given route. */
 internal fun sidePanelOpenAllowedForRoute(route: String?): Boolean {
     // Once the user is inside a settings subpage (or any other depth
@@ -180,6 +189,13 @@ internal fun panelProgressAfterDrag(
  */
 internal val LocalSidePanelClose = staticCompositionLocalOf<() -> Unit> { {} }
 
+@Stable
+internal class SidePanelHoldSuppress {
+    var active: Boolean = false
+}
+
+internal val LocalSidePanelHoldSuppress = staticCompositionLocalOf<SidePanelHoldSuppress?> { null }
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun KryzzSidePanelHost(
@@ -198,6 +214,7 @@ fun KryzzSidePanelHost(
     val density = LocalDensity.current
     val panelWidthPx = with(density) { panelWidth.toPx() }
     val panelEngagePx = with(density) { PANEL_ENGAGE_DP.toPx() }
+    val holdSuppress = remember { SidePanelHoldSuppress() }
     val progress = remember { Animatable(if (open) 1f else 0f) }
     var dragging by remember { mutableStateOf(false) }
     var settleTarget by remember { mutableStateOf<Float?>(null) }
@@ -329,6 +346,10 @@ fun KryzzSidePanelHost(
                                 val ch = ev.changes.firstOrNull { it.id == downId } ?: break
                                 if (!ch.pressed) break
                                 if (yielded) continue
+                                if (!engaged && holdSuppress.active) {
+                                    yielded = true
+                                    continue
+                                }
                                 val childMoved = ch.isConsumed && ch.position != ch.previousPosition
                                 if (panelYieldsToChild(engaged, childMoved)) {
                                     yielded = true
@@ -377,17 +398,26 @@ fun KryzzSidePanelHost(
                 }
             }
     ) {
-        Box(Modifier.fillMaxSize()) { content() }
+        CompositionLocalProvider(LocalSidePanelHoldSuppress provides holdSuppress) {
+            Box(Modifier.fillMaxSize()) { content() }
+        }
 
         if (shown) {
+            val scrimInteractive = open || dragging || progress.value > 0.2f
             Box(
                 Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.48f * progress.value.coerceIn(0f, 1f)))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { forceClose(); currentOnClose() }
+                    .then(
+                        if (scrimInteractive) {
+                            Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { forceClose(); currentOnClose() }
+                            )
+                        } else {
+                            Modifier
+                        }
                     )
                     .testTag("side_panel_scrim")
             )
@@ -429,7 +459,7 @@ internal fun shouldClearStaleOpenTarget(
 private val PanelEmphasizedEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
 private const val PANEL_OPEN_MS = 360
 private const val PANEL_CLOSE_MS = 300
-private val PANEL_ENGAGE_DP = 4.dp
+private val PANEL_ENGAGE_DP = 16.dp
 
 /**
  * The chat library drawer (components.md section 11, C10). CHATS in dot text with the count

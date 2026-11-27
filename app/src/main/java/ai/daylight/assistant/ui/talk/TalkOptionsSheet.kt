@@ -22,7 +22,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -30,7 +29,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -40,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotSheetHandle
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
@@ -82,18 +81,18 @@ fun TalkOptionsSheet(
             }
             SheetLabel("Attach")
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AttachTile(R.drawable.ic_kz_image, "Image", onPickImage, Modifier.weight(1f))
-                AttachTile(R.drawable.ic_kz_camera, "Camera", onPickCamera, Modifier.weight(1f))
-                AttachTile(R.drawable.ic_kz_file, "File", onPickFile, Modifier.weight(1f))
+                AttachTile(R.drawable.kz_led_image, "Image", onPickImage, Modifier.weight(1f))
+                AttachTile(R.drawable.kz_led_camera, "Camera", onPickCamera, Modifier.weight(1f))
+                AttachTile(R.drawable.kz_led_file, "File", onPickFile, Modifier.weight(1f))
             }
             Spacer(Modifier.height(16.dp))
-            OptionRow(R.drawable.ic_kz_web, "Web search", onClick = { onWebSearch(!webSearch) }) {
+            OptionRow(R.drawable.kz_led_web_search, "Web search", onClick = { onWebSearch(!webSearch) }) {
                 DotToggle(checked = webSearch, onChange = onWebSearch)
             }
-            OptionRow(R.drawable.ic_kz_model, "Model", value = modelLabel, onClick = onModel)
-            OptionRow(R.drawable.ic_kz_voice_wave, "Voice chat", value = "In this chat", onClick = onVoice)
-            OptionRow(R.drawable.ic_kz_history, "Chats", onClick = onChats)
-            OptionRow(R.drawable.ic_kz_chat_new, "New chat", onClick = onNewChat)
+            OptionRow(R.drawable.kz_led_chat_model, "Model", value = modelLabel, onClick = onModel)
+            OptionRow(R.drawable.kz_led_voice, "Voice chat", value = "In this chat", onClick = onVoice)
+            OptionRow(R.drawable.kz_led_chats, "Chats", onClick = onChats)
+            OptionRow(R.drawable.kz_led_new_chat, "New chat", onClick = onNewChat)
         }
     }
 }
@@ -198,7 +197,7 @@ internal fun AttachTile(@DrawableRes icon: Int, label: String, onClick: () -> Un
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(painterResource(icon), null, Modifier.size(22.dp), tint = c.textPrimary)
+        KryzzGlyph(icon, Modifier.size(22.dp), tint = c.textPrimary)
         Spacer(Modifier.height(6.dp))
         Text(label.uppercase(), style = DotType.Label, color = c.textSecondary)
     }
@@ -223,7 +222,7 @@ internal fun OptionRow(
                 .clickable(onClick = onClick),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(painterResource(icon), null, Modifier.size(22.dp), tint = c.textPrimary)
+            KryzzGlyph(icon, Modifier.size(22.dp), tint = c.textPrimary)
             Spacer(Modifier.width(14.dp))
             Text(title, Modifier.weight(1f), style = DotType.Body.copy(fontSize = 16.sp), color = c.textPrimary)
             if (value != null) {

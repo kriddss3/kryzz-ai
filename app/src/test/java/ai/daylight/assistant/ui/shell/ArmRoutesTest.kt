@@ -72,6 +72,19 @@ class ArmRoutesTest {
         assertThat(railVisibleForRoute(Routes.SETTINGS)).isTrue()
     }
 
+    @Test fun chatsMarkShowsWhereverTheLibraryOpens() {
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.HOME)).isTrue()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.chat("abc"))).isTrue()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.MAKE)).isTrue()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.FIND)).isTrue()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.SETTINGS)).isTrue()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.ONBOARDING)).isFalse()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.API)).isFalse()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.INKWELL)).isFalse()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(Routes.BOT)).isFalse()
+        assertThat(ai.daylight.assistant.ui.chatsButtonVisible(null, onboardingComplete = false)).isFalse()
+    }
+
     @Test fun chromeHidesOnlyOnOnboarding() {
         assertThat(shellChromeVisibleForRoute(Routes.ONBOARDING)).isFalse()
         assertThat(shellChromeVisibleForRoute(Routes.BOOT)).isTrue()
@@ -97,6 +110,20 @@ class ArmRoutesTest {
         assertThat(railIndexAt(-500f, first, pitch)).isEqualTo(0)
         assertThat(railIndexAt(5_000f, first, pitch)).isEqualTo(Arm.entries.lastIndex)
         assertThat(railIndexAt(10f, first, 0f)).isEqualTo(0)
+    }
+
+    @Test fun scrubHoldsTheCurrentArmUntilTheFingerIsNearTheNextDot() {
+        val pitch = 26f
+        val first = 13f
+        val step = pitch * RAIL_SCRUB_STICKY
+        assertThat(railScrubIndex(first + step - 1f, current = 0, first, pitch)).isEqualTo(0)
+        assertThat(railScrubIndex(first + step + 0.5f, current = 0, first, pitch)).isEqualTo(1)
+        val center2 = first + 2 * pitch
+        assertThat(railScrubIndex(center2 - step + 1f, current = 2, first, pitch)).isEqualTo(2)
+        assertThat(railScrubIndex(center2 - step - 0.5f, current = 2, first, pitch)).isEqualTo(1)
+        assertThat(railScrubIndex(first + pitch * 4, current = 0, first, pitch)).isEqualTo(4)
+        assertThat(railScrubIndex(first + pitch * 20, current = 0, first, pitch)).isEqualTo(Arm.entries.lastIndex)
+        assertThat(railScrubIndex(first, current = 5, first, pitch)).isEqualTo(0)
     }
 
     @Test fun railStaysUnderTheSystemGestureExclusionLimit() {

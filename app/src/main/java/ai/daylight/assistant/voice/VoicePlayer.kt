@@ -29,6 +29,7 @@ class VoicePlayer(private val context: Context) {
     private var visualizer: Visualizer? = null
     private var completion: ((Throwable?) -> Unit)? = null
     @Volatile private var streamStopped = false
+    @Volatile private var levelGeneration = 0
 
     @Volatile
     private var currentLevel = 0f
@@ -36,6 +37,7 @@ class VoicePlayer(private val context: Context) {
     fun play(
         file: File,
         onStarted: () -> Unit = {},
+        duplex: Boolean = false,
         onComplete: (Throwable?) -> Unit
     ) {
         stop()
@@ -45,15 +47,11 @@ class VoicePlayer(private val context: Context) {
         try {
             instance.apply {
                 setDataSource(file.absolutePath)
-                // Play through the normal media volume stream (the phone's main volume rocker),
-                // exactly like music/media playback. Spoken replies keep the SPEECH content type
-                // so the framework does not apply telephony-style narrowband down-sampling.
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
+                // Read-aloud uses the media stream. Voice chat uses the voice-communication
+                // stream so the platform echo canceller can subtract Kryzz from the mic.
+                // Spoken replies keep the SPEECH content type so the framework does not
+                // apply telephony-style narrowband down-sampling.
+                setAudioAttributes(speechAttributes(duplex))
                 setOnCompletionListener { finish(null) }
                 setOnErrorListener { _, what, extra ->
                     finish(IllegalStateException("Audio playback failed ($what/$extra)."))
@@ -89,6 +87,7 @@ class VoicePlayer(private val context: Context) {
     suspend fun playPcm(
         chunks: Flow<ByteArray>,
         sampleRate: Int = VoiceConfig.FISH_PCM_SAMPLE_RATE,
+        duplex: Boolean = false,
         onStarted: () -> Unit = {}
     ) = withContext(Dispatchers.IO) {
         stop()
@@ -99,12 +98,7 @@ class VoicePlayer(private val context: Context) {
             AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(sampleRate * 2) // ~1 s of PCM16 mono so a short Fish burst cannot empty the track
         val instance = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
+            .setAudioAttributes(speechAttributes(duplex))
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
@@ -234,6 +228,11 @@ class VoicePlayer(private val context: Context) {
         }
     }
 
+    private fun speechAttributes(duplex: Boolean): AudioAttributes = AudioAttributes.Builder()
+        .setUsage(if (duplex) AudioAttributes.USAGE_VOICE_COMMUNICATION else AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+
     private fun finish(error: Throwable?) {
         val callback = completion
         completion = null
@@ -245,16 +244,17 @@ class VoicePlayer(private val context: Context) {
 
     private fun attachLevelCapture(sessionId: Int) {
         releaseLevelCapture()
+        val generation = levelGeneration
         runCatching {
             visualizer = Visualizer(sessionId).apply {
                 setCaptureSize(Visualizer.getCaptureSizeRange()[1])
                 setDataCaptureListener(
                     object : Visualizer.OnDataCaptureListener {
                         override fun onWaveFormDataCapture(visualizer: Visualizer, waveform: ByteArray, samplingRate: Int) {
-                            var sum = 0L
-                            for (sample in waveform) sum += (sample * sample).toLong()
-                            val rms = sqrt(sum.toDouble() / waveform.size.coerceAtLeast(1))
-                            currentLevel = (rms / 96.0).toFloat().coerceIn(0f, 1f)
+                            // stop() releases this visualizer while a capture callback can
+                            // still be in flight. A stale callback must not touch it.
+                            if (generation != levelGeneration || waveform.isEmpty()) return
+                            currentLevel = visualizerWaveformLevel(waveform)
                         }
 
                         override fun onFftDataCapture(visualizer: Visualizer, fft: ByteArray, samplingRate: Int) = Unit
@@ -269,10 +269,12 @@ class VoicePlayer(private val context: Context) {
     }
 
     private fun releaseLevelCapture() {
+        levelGeneration++
         currentLevel = 0f
-        runCatching { visualizer?.enabled = false }
-        runCatching { visualizer?.release() }
+        val dying = visualizer
         visualizer = null
+        runCatching { dying?.enabled = false }
+        runCatching { dying?.release() }
     }
 
     private fun pcmLevel(chunk: ByteArray): Float {
@@ -313,4 +315,22 @@ class VoicePlayer(private val context: Context) {
             return out to nextLeftover
         }
     }
+}
+
+/**
+ * Loudness of a [Visualizer] waveform, 0..1.
+ *
+ * The bytes are unsigned and centred on 128. Treating them as signed squares silence
+ * (every sample 128, which is -128 as a Kotlin [Byte]) up to full scale, so the barge-in
+ * comparison had no real playback level to measure speaker leak against.
+ */
+internal fun visualizerWaveformLevel(waveform: ByteArray): Float {
+    if (waveform.isEmpty()) return 0f
+    var sum = 0.0
+    for (sample in waveform) {
+        val centered = (sample.toInt() and 0xFF) - 128
+        sum += centered * centered
+    }
+    val rms = sqrt(sum / waveform.size)
+    return (rms / 64.0).toFloat().coerceIn(0f, 1f)
 }

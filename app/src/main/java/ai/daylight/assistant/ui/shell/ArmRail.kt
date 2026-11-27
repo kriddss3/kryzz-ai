@@ -24,9 +24,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -63,7 +65,9 @@ internal object ArmRailSpec {
 
     /** Dot centre from the right edge: the kit's 6dp inset plus half a dot. */
     val EndInset = 8.dp
-    val LabelGap = 3.dp
+
+    /** The scrub name sits this far left of the dot, clear of the thumb on the edge. */
+    val LabelClearance = 72.dp
 
     /** The active bar moves one slot per step (Talk to Tune is 7 steps, about 280ms). */
     const val BAR_STEP_MS = 40L
@@ -72,8 +76,10 @@ internal object ArmRailSpec {
 /**
  * The 8-dot arm rail on the right edge. The current arm is a yellow bar, a busy arm a
  * grey dot, an unlit arm a hollow ring. Tap a dot to open its arm, or press and drag to
- * scrub: each dot passed gives a haptic tick and shows the arm's name, and the arm under
- * the finger opens on release (so scrubbing past Voice never starts the microphone).
+ * scrub: each dot passed gives a haptic tick and shows the arm's name to the left of
+ * the thumb, and the arm under the finger opens on release (so scrubbing past Voice
+ * never starts the microphone). The finger has to travel most of the way to the next
+ * dot before the arm changes.
  *
  * The rail is laid out next to the NavHost, never on top of it, and it opts out of the
  * system back gesture so a drag on it can't trigger Back.
@@ -83,7 +89,8 @@ fun ArmRail(
     active: Arm?,
     busy: Set<Arm>,
     onOpen: (Arm) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenAt: ((Arm, Offset?) -> Unit)? = null,
 ) {
     val c = DotTheme.c
     val arms = Arm.entries
@@ -91,9 +98,11 @@ fun ArmRail(
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
     val currentOnOpen by rememberUpdatedState(onOpen)
+    val currentOnOpenAt by rememberUpdatedState(onOpenAt)
+    var railCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var hover by remember { mutableStateOf<Int?>(null) }
     val labelStyle = remember {
-        TextStyle(fontFamily = MonoFamily, fontWeight = FontWeight.Bold, fontSize = 9.sp, letterSpacing = 0.12.em)
+        TextStyle(fontFamily = MonoFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 0.12.em)
     }
     val pitchPx = with(density) { ArmRailSpec.Pitch.toPx() }
     // Phase D: the yellow bar travels to a new arm one slot per step instead of jumping.
@@ -115,6 +124,7 @@ fun ArmRail(
         Column(
             Modifier
                 .width(ArmRailSpec.Width)
+                .onGloballyPositioned { railCoords = it }
                 .systemGestureExclusion { coords ->
                     // Only the dots' own span (196dp), which keeps us under Android's 200dp
                     // per-edge exclusion limit.
@@ -128,6 +138,9 @@ fun ArmRail(
                         val start = railIndexAt(down.position.y, firstCenter, pitchPx, arms.size)
                         var index = start
                         var dragging = false
+                        // A resting thumb jitters past the default slop. Require a clearer drag
+                        // before the rail starts following the finger.
+                        val scrubSlop = maxOf(viewConfiguration.touchSlop * 2f, 18.dp.toPx())
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -135,17 +148,20 @@ fun ArmRail(
                                 change.consume()
                                 hover = null
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                currentOnOpen(arms[if (dragging) index else start])
+                                val targetArm = arms[if (dragging) index else start]
+                                val origin = railCoords?.takeIf { it.isAttached }?.localToRoot(change.position)
+                                val openAt = currentOnOpenAt
+                                if (openAt != null) openAt(targetArm, origin) else currentOnOpen(targetArm)
                                 return@awaitEachGesture
                             }
-                            if (!dragging && abs(change.position.y - down.position.y) > viewConfiguration.touchSlop) {
+                            if (!dragging && abs(change.position.y - down.position.y) > scrubSlop) {
                                 dragging = true
                                 hover = index
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                             if (dragging) {
                                 change.consume()
-                                val next = railIndexAt(change.position.y, firstCenter, pitchPx, arms.size)
+                                val next = railScrubIndex(change.position.y, index, firstCenter, pitchPx, arms.size)
                                 if (next != index) {
                                     index = next
                                     hover = next
@@ -193,17 +209,27 @@ fun ArmRail(
                     val w = layout.size.width.toFloat()
                     val h = layout.size.height.toFloat()
                     val cy = pitchPx / 2f + shownIndex * pitchPx
-                    val lx = cx - r - ArmRailSpec.LabelGap.toPx() - h / 2f
-                    // Vertical, reading bottom to top, centred on the dot.
-                    rotate(-90f, pivot = Offset(lx, cy)) {
-                        drawText(layout, topLeft = Offset(lx - w / 2f, cy - h / 2f))
-                    }
+                    // Horizontal, to the left of the thumb. The rail column is only 24dp,
+                    // so this draws out over the page; the finger stays on the dots.
+                    val pad = 6.dp.toPx()
+                    val right = cx - ArmRailSpec.LabelClearance.toPx()
+                    val left = right - w
+                    val top = cy - h / 2f
+                    drawRoundRect(
+                        c.bg,
+                        topLeft = Offset(left - pad, top - pad),
+                        size = Size(w + pad * 2f, h + pad * 2f),
+                        cornerRadius = CornerRadius(2.dp.toPx())
+                    )
+                    drawText(layout, topLeft = Offset(left, top))
                 }
         ) {
             arms.forEach { arm ->
+                var itemCoords by remember(arm) { mutableStateOf<LayoutCoordinates?>(null) }
                 Box(
                     Modifier
                         .size(ArmRailSpec.Width, ArmRailSpec.Pitch)
+                        .onGloballyPositioned { itemCoords = it }
                         .semantics {
                             contentDescription = arm.label
                             role = Role.Tab
@@ -215,7 +241,9 @@ fun ArmRail(
                                 else -> ""
                             }
                             onClick(label = "Open ${arm.label}") {
-                                currentOnOpen(arm)
+                                val origin = itemCoords?.takeIf { it.isAttached }?.boundsInRoot()?.center
+                                val openAt = currentOnOpenAt
+                                if (openAt != null) openAt(arm, origin) else currentOnOpen(arm)
                                 true
                             }
                         }

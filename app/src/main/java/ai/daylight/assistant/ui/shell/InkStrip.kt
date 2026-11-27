@@ -15,7 +15,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onSizeChanged
@@ -30,7 +29,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import ai.daylight.assistant.ui.dot.DotMotion
-import ai.daylight.assistant.ui.dot.DotPalette
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.effects.DotFont5x7
 import ai.daylight.assistant.ui.dot.effects.dotTextSpoken
@@ -142,9 +140,6 @@ internal object InkMotion {
 /** What TalkBack says a tap on the strip does. */
 private const val INK_STRIP_CLICK_LABEL = "Open the Inkwell"
 
-/** Unlit strip dots sit one step above the background (#151515 snapped to surface). */
-internal fun inkUnlitColor(c: DotPalette): Color = if (c.dark) c.surface else c.surfaceRaised
-
 /** How many characters fit on a strip [cols] dots wide. */
 internal fun inkStripCapacity(cols: Int): Int =
     // Text runs from TEXT_START_COL to cols - 2 (the last column stays dark); n characters
@@ -152,9 +147,9 @@ internal fun inkStripCapacity(cols: Int): Int =
     ((cols - InkStripSpec.TEXT_START_COL) / DotFont5x7.CELL_COLS).coerceAtLeast(0)
 
 /**
- * The LED ink strip: one line of 5x7 dot text on a field of unlit dots, under the status
- * bar on every screen. A two-dot yellow mark at the start blinks while something is live,
- * a new line wipes in column by column, and a tap opens the Inkwell (C10).
+ * The LED ink strip: one line of 5x7 dot text floating transparently over the background,
+ * under the status bar on every screen. A two-dot yellow mark at the start blinks while
+ * something is live, a new line wipes in column by column, and a tap opens the Inkwell (C10).
  */
 @Composable
 fun InkStrip(state: InkStripState, fallback: InkLine, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
@@ -227,7 +222,6 @@ fun InkStripLine(text: String, live: Boolean, modifier: Modifier = Modifier, onC
         }
     }
 
-    val unlit = inkUnlitColor(c)
     val tap = if (onClick != null) Modifier.clickable(onClickLabel = INK_STRIP_CLICK_LABEL, onClick = onClick) else Modifier
     Spacer(
         modifier
@@ -248,15 +242,9 @@ fun InkStripLine(text: String, live: Boolean, modifier: Modifier = Modifier, onC
                 val cols = (size.width / p).toInt()
                 val top = (size.height - DotFont5x7.ROWS * p) / 2f
                 val area = InkMotion.areaColumns(cols)
-                // The unlit field never changes for a size: lit dots are drawn over it.
-                val field = ArrayList<Offset>(cols * DotFont5x7.ROWS)
-                for (col in 0 until cols) for (row in 0 until DotFont5x7.ROWS) {
-                    field += Offset(col * p + p / 2f, top + row * p + p / 2f)
-                }
                 val d = p * InkStripSpec.DOT_FRACTION
                 onDrawBehind {
                     if (cols <= 0) return@onDrawBehind
-                    drawPoints(field, PointMode.Points, unlit, strokeWidth = d, cap = StrokeCap.Round)
                     val shownText = anim.text
                     val oldText = anim.old
                     val front = anim.front.intValue

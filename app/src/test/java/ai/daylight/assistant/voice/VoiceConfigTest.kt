@@ -5,9 +5,8 @@ import org.junit.Test
 
 class VoiceConfigTest {
     @Test fun defaultsPinTheAgreedLowLatencyPipeline() {
-        // Default switched to Grok STT in v5.1.3 (~100 ms faster than Whisper-large on the same
-        // /audio/transcriptions endpoint); users on the previous default keep their saved choice.
-        assertThat(VoiceConfig.DEFAULT_STT_MODEL).isEqualTo("x-ai/grok-stt-1.0")
+        // Default switched to Grok STT 2.0 on OpenRouter /audio/transcriptions.
+        assertThat(VoiceConfig.DEFAULT_STT_MODEL).isEqualTo("x-ai/grok-stt-2.0")
         assertThat(VoiceConfig.DEFAULT_STT_LANGUAGE).isEqualTo("en")
         // 5.6.3: DeepSeek V4 Flash was dropped from the voice reply list; the default brain is
         // now Gemini 2.5 Flash Lite.
@@ -26,9 +25,10 @@ class VoiceConfigTest {
         assertThat(prompt).contains("[happy]")
         assertThat(prompt).contains("[calm]")
         assertThat(prompt).contains("[whispering]")
-        assertThat(prompt).contains("[clear throat]")
+        assertThat(prompt).doesNotContain("[clear throat]")
         assertThat(prompt).contains("[long pause]")
-        assertThat(prompt).contains("Use a tag on most sentences")
+        assertThat(prompt).contains("Stay the same speaker")
+        assertThat(prompt).contains("Most sentences get no tag")
     }
 
     @Test fun recordingLimitsKeepMultipartWellUnderTheUploadCap() {
@@ -69,7 +69,10 @@ class VoiceConfigTest {
     @Test fun officialEmotionAllowlistCoversS21BasicSet() {
         assertThat(FishEmotions.basic).containsAtLeast("happy", "sad", "calm", "excited", "curious")
         assertThat(FishEmotions.isOfficial("whispering")).isTrue()
-        assertThat(FishEmotions.isOfficial("clear throat")).isTrue()
+        assertThat(FishEmotions.isOfficial("clear throat")).isFalse()
+        assertThat(FishEmotions.keep("clear throat")).isFalse()
+        assertThat(FishEmotions.keep("clears throat")).isFalse()
+        assertThat("[clear throat] Hello there.".withFishEmotionTags()).isEqualTo("Hello there.")
         assertThat(FishEmotions.isOfficial("long pause")).isTrue()
         assertThat(FishEmotions.isOfficial("not-a-mood")).isFalse()
     }
@@ -123,7 +126,8 @@ class VoiceConfigTest {
     }
 
     @Test fun coerceVoiceSttModelAcceptsGrokAndNemotronAndFallsBack() {
-        assertThat(coerceVoiceSttModel("x-ai/grok-stt-1.0")).isEqualTo("x-ai/grok-stt-1.0")
+        assertThat(coerceVoiceSttModel("x-ai/grok-stt-2.0")).isEqualTo("x-ai/grok-stt-2.0")
+        assertThat(coerceVoiceSttModel("x-ai/grok-stt-1.0")).isEqualTo(VoiceConfig.GROK_STT_MODEL)
         assertThat(coerceVoiceSttModel("xai/grok-stt")).isEqualTo(VoiceConfig.GROK_STT_MODEL)
         assertThat(coerceVoiceSttModel(VoiceConfig.NEMOTRON_STT_MODEL)).isEqualTo(VoiceConfig.NEMOTRON_STT_MODEL)
         assertThat(coerceVoiceSttModel("nope")).isEqualTo(VoiceConfig.DEFAULT_STT_MODEL)

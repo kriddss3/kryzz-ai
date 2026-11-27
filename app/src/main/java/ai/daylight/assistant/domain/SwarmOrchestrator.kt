@@ -84,7 +84,12 @@ class SwarmOrchestrator(
     private val json: Json,
     /** Live swarm progress so the UI can render the planner/subagent/synthesis phases. */
     val status: MutableStateFlow<SwarmStatus?> = MutableStateFlow(null),
-    private val onFirstUserMessage: (conversationId: String, message: String) -> Unit = { _, _ -> }
+    private val onFirstUserMessage: (conversationId: String, message: String) -> Unit = { _, _ -> },
+    private val textProvider: (ChatProvider) -> TextProviderClient = {
+        if (it == ChatProvider.MINIMAX) minimax else openRouter
+    },
+    private val textProviderKey: (ChatProvider) -> String? = { credentials.providerKey(it) },
+    private val onTurnCompleted: (conversationId: String, userText: String, assistantText: String) -> Unit = { _, _, _ -> }
 ) {
     private lateinit var activeKey: String
     private lateinit var activeClient: TextProviderClient
@@ -98,15 +103,11 @@ class SwarmOrchestrator(
         require(clean.isNotEmpty())
         val settings = preferences.state.first()
         val provider = settings.chatProvider
-        val key = when (provider) {
-            ChatProvider.OPENROUTER -> credentials.openRouterKey()
-            ChatProvider.MINIMAX -> credentials.minimaxKey()
-        } ?: throw AssistantApiException(
+        val key = textProviderKey(provider) ?: throw AssistantApiException(
             ErrorKind.INVALID_KEY,
-            if (provider == ChatProvider.MINIMAX) "Add a MiniMax API key in Settings before sending a message."
-            else "Add an OpenRouter API key in Settings before sending a message."
+            "Add a ${provider.label} API key in Settings before sending a message."
         )
-        activeClient = if (provider == ChatProvider.MINIMAX) minimax else openRouter
+        activeClient = textProvider(provider)
         activeKey = key
         val now = System.currentTimeMillis()
         if (dao.conversation(conversationId) == null) {
@@ -132,12 +133,13 @@ class SwarmOrchestrator(
             research = capability in setOf(AgentCapability.DEEP_RESEARCH, AgentCapability.WIDE_SEARCH)
         )
         val model = turnSettings.model.ifBlank { settings.defaultModel }
-        // MiniMax takes no reasoning field, as in AgentExecutor.
-        val reasoning = if (provider == ChatProvider.MINIMAX) null else {
+        // Only OpenRouter takes the ReasoningConfig payload.
+        val reasoning = if (provider != ChatProvider.OPENROUTER) null else {
             turnSettings.reasoning.apiValue?.let { ReasoningConfig(effort = it, exclude = true) }
         }
         val preset = AssistantPreset.byId(settings.presetId)
         val basePrompt = if (preset.id == "custom") settings.customPrompt.ifBlank { AssistantPreset.balanced.prompt } else preset.prompt
+        val memoryContext = if (settings.memoryEnabled) memoryRepository.buildMemoryContext(clean) else ""
 
         try {
             // ── Plan ────────────────────────────────────────────────────────
@@ -154,7 +156,7 @@ class SwarmOrchestrator(
                                 "{\"subtasks\":[{\"title\":\"short label\",\"instruction\":\"self-contained instructions\"}]}. " +
                                 "Every instruction must stand alone without the other subtasks. Capability guidance: ${capability.instruction}"
                         ),
-                        ApiMessage("user", clean)
+                        ApiMessage("user", if (memoryContext.isNotBlank()) "$memoryContext\n\n$clean" else clean)
                     ),
                     reasoning = reasoning,
                     maxTokens = 1_200
@@ -184,8 +186,9 @@ class SwarmOrchestrator(
 
             // ── Synthesis ───────────────────────────────────────────────────
             status.update { it?.copy(phase = SwarmPhase.SYNTHESIZING) }
-            synthesize(model, reasoning, conversationId, clean, capability, basePrompt, subtasks, results)
+            val finalReply = synthesize(model, reasoning, conversationId, clean, capability, basePrompt, memoryContext, subtasks, results)
             status.update { it?.copy(phase = SwarmPhase.DONE) }
+            if (finalReply.isNotBlank()) onTurnCompleted(conversationId, clean, finalReply)
         } catch (cancelled: CancellationException) {
             status.update { it?.copy(phase = SwarmPhase.FAILED) }
             throw cancelled
@@ -281,9 +284,10 @@ class SwarmOrchestrator(
         task: String,
         capability: AgentCapability,
         basePrompt: String,
+        memoryContext: String,
         subtasks: List<SwarmSubtask>,
         results: List<String?>
-    ) {
+    ): String {
         val messageId = UUID.randomUUID().toString()
         dao.upsertMessage(
             MessageEntity(
@@ -293,6 +297,7 @@ class SwarmOrchestrator(
             )
         )
         val briefing = buildString {
+            if (memoryContext.isNotBlank()) append(memoryContext).append("\n\n")
             append("Original task: ").append(task).append("\n\n")
             subtasks.forEachIndexed { index, subtask ->
                 val result = results[index]
@@ -339,11 +344,13 @@ class SwarmOrchestrator(
                     "The selected model returned no text. Try a different model or lower its reasoning effort."
                 )
             }
+            val finalText = text.scrubThinkTags()
             dao.finishMessage(
-                messageId, text.scrubThinkTags(), MessageStatus.COMPLETE.name, "[]",
+                messageId, finalText, MessageStatus.COMPLETE.name, "[]",
                 usage?.promptTokens, usage?.completionTokens, usage?.totalTokens, usage?.cost
             )
             dao.touchConversation(conversationId, System.currentTimeMillis())
+            return finalText
         } catch (cancelled: CancellationException) {
             dao.updateMessageContent(messageId, text.scrubThinkTags(), MessageStatus.CANCELLED.name)
             throw cancelled

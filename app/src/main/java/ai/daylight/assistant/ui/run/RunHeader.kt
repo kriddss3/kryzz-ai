@@ -16,14 +16,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -36,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
@@ -54,9 +53,9 @@ object RunQuality {
 
     @DrawableRes
     fun icon(quality: AgentQuality): Int = when (quality) {
-        AgentQuality.FAST -> R.drawable.ic_kz_bolt
-        AgentQuality.BALANCED -> R.drawable.ic_kz_balance
-        AgentQuality.MAX -> R.drawable.ic_kz_max
+        AgentQuality.FAST -> R.drawable.kz_led_fast
+        AgentQuality.BALANCED -> R.drawable.kz_led_balanced
+        AgentQuality.MAX -> R.drawable.kz_led_max
     }
 
     /** "Cap $0.50 a run", with Max's raised floor; "No cap" when the cap is off. */
@@ -122,7 +121,7 @@ fun QualityPill(quality: AgentQuality, onClick: () -> Unit, modifier: Modifier =
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(painterResource(RunQuality.icon(quality)), null, Modifier.size(14.dp), tint = c.textPrimary)
+            KryzzGlyph(RunQuality.icon(quality), Modifier.size(14.dp), tint = c.textPrimary)
             Text(quality.label.uppercase(Locale.US), style = DotType.Label, color = c.textSecondary)
             SignalDots(RunQuality.signal(quality), if (RunQuality.accentSignal(quality)) c.accentText else c.textPrimary)
         }
@@ -160,7 +159,7 @@ fun QualitySheet(selected: AgentQuality, capCents: Int, onSelect: (AgentQuality)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(painterResource(RunQuality.icon(quality)), null, Modifier.size(22.dp), tint = c.textPrimary)
+                KryzzGlyph(RunQuality.icon(quality), Modifier.size(22.dp), tint = c.textPrimary)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(quality.label, style = DotType.Body.copy(fontSize = 16.sp), color = c.textPrimary)

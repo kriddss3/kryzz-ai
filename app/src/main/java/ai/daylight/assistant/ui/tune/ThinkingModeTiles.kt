@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -22,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.domain.AgentQuality
 import ai.daylight.assistant.ui.dot.DotGrey
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotRadius
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
@@ -72,7 +71,7 @@ private fun ModeTile(quality: AgentQuality, chosen: Boolean, onClick: () -> Unit
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(painterResource(RunQuality.icon(quality)), null, Modifier.size(18.dp), tint = fg)
+        KryzzGlyph(RunQuality.icon(quality), Modifier.size(18.dp), tint = fg)
         Spacer(Modifier.width(6.dp))
         Text(
             quality.label,

@@ -6,23 +6,27 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -50,26 +54,25 @@ import ai.daylight.assistant.data.remote.OpenRouterModel
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
 import ai.daylight.assistant.domain.availableReasoningEfforts
-import ai.daylight.assistant.domain.capabilityLabels
+import ai.daylight.assistant.domain.textModelBoard
 import ai.daylight.assistant.ui.dot.DotField
 import ai.daylight.assistant.ui.dot.DotIconButton
-import ai.daylight.assistant.ui.dot.DotPill
-import ai.daylight.assistant.ui.dot.DotRadius
-import ai.daylight.assistant.ui.dot.DotTag
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.talk.DotSheet
 import ai.daylight.assistant.ui.talk.SheetLabel
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
 import ai.daylight.assistant.ui.tune.TuneCaption
 import ai.daylight.assistant.ui.tune.TuneChoiceRow
 import ai.daylight.assistant.ui.tune.TunePage
+import ai.daylight.assistant.ui.tune.TuneSection
 import java.util.Locale
 
 /**
- * Models: pick the model for each purpose (chat, Run, research, Max, image, video, audio).
- * Text models carry a favourite heart and a per-model thinking level; the selected card has
- * a white border and a check (kit §12).
+ * Models: pick the model for each purpose. The list is a Tune board: a word index for the
+ * purpose, then recommended, saved, and the rest as hairline rows. The selected row carries
+ * the yellow dot, the favourite, and the thinking level.
  */
 @Composable
 fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -> Unit) {
@@ -95,9 +98,11 @@ fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -
         ModelPurpose.VIDEO -> settings.videoModel
         ModelPurpose.AUDIO -> settings.audioModel
     }
-    val chatFiltered = remember(models, query, settings.favoriteModels, companyFilter) {
+    val chatFiltered = remember(models, query, companyFilter) {
         filterCatalog(models, query, companyFilter)
-            .sortedWith(compareByDescending<OpenRouterModel> { it.id in settings.favoriteModels }.thenBy { it.name.lowercase() })
+    }
+    val board = remember(chatFiltered, settings.favoriteModels) {
+        textModelBoard(chatFiltered, settings.favoriteModels)
     }
     val mediaFiltered = remember(purpose, imageModels, videoModels, audioModels, query, companyFilter) {
         (when (purpose) {
@@ -109,7 +114,7 @@ fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -
             val matchesQuery = query.isBlank() || it.name.contains(query, true) || it.id.contains(query, true)
             val matchesCompany = companyFilter == null || providerBrandFor(it.id).name == companyFilter
             matchesQuery && matchesCompany
-        }
+        }.sortedBy { it.name.lowercase() }
     }
     val companies = remember(purpose, models, imageModels, videoModels, audioModels) {
         val source = when (purpose) {
@@ -121,25 +126,33 @@ fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -
         source.map { providerBrandFor(it).name }.distinct().sorted()
     }
     val textPurposes = setOf(ModelPurpose.CHAT, ModelPurpose.AGENT, ModelPurpose.RESEARCH, ModelPurpose.MAX)
+    val inUse = inUseName(
+        currentId,
+        if (purpose in textPurposes) models else emptyList(),
+        when (purpose) {
+            ModelPurpose.IMAGE -> imageModels
+            ModelPurpose.VIDEO -> videoModels
+            ModelPurpose.AUDIO -> audioModels
+            else -> emptyList()
+        },
+    )
 
     TunePage(
         "Models",
         onBack,
         scrollable = false,
+        mark = R.drawable.kz_led_model,
         actions = {
             DotIconButton(R.drawable.ic_kz_retry, "Refresh models", vm::refresh, tint = DotTheme.c.textSecondary)
         }
     ) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(ModelPurpose.entries) { item ->
-                DotPill(item.heading(), selected = purpose == item, onClick = { vm.purpose.value = item }, icon = item.icon(), role = Role.Tab)
-            }
-        }
+        TuneCaption("In use  $inUse")
+        PurposeIndex(purpose) { vm.purpose.value = it }
         Spacer(Modifier.height(4.dp))
         DotField(
             value = query,
             onValueChange = { vm.query.value = it },
-            placeholder = "Search ${purpose.heading().lowercase(Locale.US)} models",
+            placeholder = "Search ${purpose.word().lowercase(Locale.US)} models",
             leadingIcon = R.drawable.ic_kz_search
         )
         if (companies.isNotEmpty()) {
@@ -174,99 +187,205 @@ fun ModelsScreen(vm: ModelsViewModel, initialPurpose: ModelPurpose, onBack: () -
                         ?: "No speech model matches. Add or check your OpenRouter key, then refresh.",
                     onRetry = vm::refresh
                 )
-                target in textPurposes -> LazyColumn(
+                target in textPurposes -> TextModelBoardList(
+                    recommended = board.recommended,
+                    saved = board.saved,
+                    rest = board.rest,
+                    currentId = currentId,
+                    favorites = settings.favoriteModels,
+                    reasoning = settings.modelReasoning,
+                    onSelect = vm::select,
+                    onFavorite = vm::favorite,
+                    onReasoning = vm::setReasoning,
+                )
+                else -> LazyColumn(
+                    Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(chatFiltered, key = { it.id }) { model ->
-                        TextModelCard(
-                            model = model,
+                    items(mediaFiltered, key = { it.id }) { model ->
+                        BoardRow(
+                            title = model.name,
+                            caption = mediaCaption(model),
+                            icon = target.icon(),
                             selected = model.id == currentId,
-                            favorite = model.id in settings.favoriteModels,
-                            reasoningEffort = settings.modelReasoning[model.id] ?: ReasoningEffort.AUTO,
-                            onSelect = { vm.select(model.id) },
-                            onFavorite = { vm.favorite(model.id) },
-                            onReasoning = { vm.setReasoning(model.id, it) }
+                            onClick = { vm.select(model.id) },
                         )
                     }
-                }
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(mediaFiltered, key = { it.id }) { model -> MediaModelCard(model, purpose, model.id == currentId) { vm.select(model.id) } }
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TextModelCard(
+private fun PurposeIndex(selected: ModelPurpose, onSelect: (ModelPurpose) -> Unit) {
+    val c = DotTheme.c
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(top = 10.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ModelPurpose.entries.forEach { item ->
+            val on = item == selected
+            Text(
+                item.word().uppercase(Locale.US),
+                Modifier
+                    .minimumInteractiveComponentSize()
+                    .clickable(role = Role.Tab, onClickLabel = item.word()) { onSelect(item) }
+                    .semantics { this.selected = on }
+                    .padding(vertical = 8.dp),
+                style = DotType.Label,
+                color = if (on) c.textPrimary else c.textTertiary,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TextModelBoardList(
+    recommended: List<OpenRouterModel>,
+    saved: List<OpenRouterModel>,
+    rest: List<OpenRouterModel>,
+    currentId: String,
+    favorites: Set<String>,
+    reasoning: Map<String, ReasoningEffort>,
+    onSelect: (String) -> Unit,
+    onFavorite: (String) -> Unit,
+    onReasoning: (String, ReasoningEffort) -> Unit,
+) {
+    val showAll = recommended.isNotEmpty() || saved.isNotEmpty()
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        if (recommended.isNotEmpty()) {
+            item(key = "section-recommended") { BoardHeading("Recommended", first = true) }
+            items(recommended, key = { "rec-${it.id}" }) { model ->
+                TextBoardRow(model, model.id == currentId, model.id in favorites, reasoning[model.id] ?: ReasoningEffort.AUTO, onSelect, onFavorite, onReasoning)
+            }
+        }
+        if (saved.isNotEmpty()) {
+            item(key = "section-saved") { BoardHeading("Saved", first = recommended.isEmpty()) }
+            items(saved, key = { "saved-${it.id}" }) { model ->
+                TextBoardRow(model, model.id == currentId, favorite = true, reasoning[model.id] ?: ReasoningEffort.AUTO, onSelect, onFavorite, onReasoning)
+            }
+        }
+        if (rest.isNotEmpty()) {
+            if (showAll) item(key = "section-all") { BoardHeading("All", first = false) }
+            items(rest, key = { it.id }) { model ->
+                TextBoardRow(model, model.id == currentId, model.id in favorites, reasoning[model.id] ?: ReasoningEffort.AUTO, onSelect, onFavorite, onReasoning)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoardHeading(title: String, first: Boolean) {
+    TuneSection(title, Modifier.padding(top = if (first) 4.dp else 18.dp))
+}
+
+@Composable
+private fun TextBoardRow(
     model: OpenRouterModel,
     selected: Boolean,
     favorite: Boolean,
     reasoningEffort: ReasoningEffort,
-    onSelect: () -> Unit,
-    onFavorite: () -> Unit,
-    onReasoning: (ReasoningEffort) -> Unit
+    onSelect: (String) -> Unit,
+    onFavorite: (String) -> Unit,
+    onReasoning: (String, ReasoningEffort) -> Unit,
 ) {
-    val c = DotTheme.c
-    val provider = providerBrandFor(model.id)
-    ModelCardFrame(
-        selected = selected,
-        onClick = onSelect,
-        role = Role.RadioButton,
-        modifier = Modifier.semantics { this.selected = selected }
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            ProviderMark(provider)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                ModelName(model.name)
-                Text(
-                    "${provider.name} · ${model.id}",
-                    style = DotType.Data.copy(fontSize = 11.sp),
-                    color = c.textTertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+    Column(Modifier.fillMaxWidth()) {
+        BoardRow(
+            title = model.name,
+            caption = textCaption(model),
+            icon = R.drawable.kz_led_model,
+            selected = selected,
+            onClick = { onSelect(model.id) },
+            trailing = {
+                DotIconButton(
+                    R.drawable.kz_led_favorite,
+                    if (favorite) "Remove favorite" else "Favorite",
+                    { onFavorite(model.id) },
+                    tint = if (favorite) DotTheme.c.textPrimary else DotTheme.c.textTertiary,
+                    iconSize = 18.dp,
+                    accent = if (favorite) DotTheme.c.accent else DotTheme.c.textTertiary,
                 )
-            }
-            DotIconButton(
-                if (favorite) R.drawable.ic_kz_heart_filled else R.drawable.ic_kz_heart,
-                if (favorite) "Remove favorite" else "Favorite",
-                onFavorite,
-                Modifier.padding(end = if (selected) 22.dp else 0.dp),
-                tint = if (favorite) c.textPrimary else c.textTertiary,
-                iconSize = 18.dp
-            )
-        }
-        if (model.description.isNotBlank()) {
-            Text(model.description, maxLines = 2, overflow = TextOverflow.Ellipsis, style = DotType.BodySmall, color = c.textSecondary)
-        }
-        SpecLine(
-            model.contextLength?.let { "CTX ${it.compactTokens()}" }.orEmpty(),
-            model.pricing?.prompt?.let { "IN ${it.tokenPrice()}" }.orEmpty(),
-            model.pricing?.completion?.let { "OUT ${it.tokenPrice()}" }.orEmpty()
+            },
         )
-        val labels = model.capabilityLabels()
-        if (labels.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                labels.forEach { CapabilityTag(it) }
-            }
+        if (selected) {
+            ReasoningSelector(model, reasoningEffort) { onReasoning(model.id, it) }
         }
-        ReasoningSelector(model, reasoningEffort, onReasoning)
     }
 }
 
-/** The per-model thinking level: a pill that opens a sheet, or a fixed note. */
+/** One hairline row. The yellow dot is the only mark that this row is in use. */
+@Composable
+private fun BoardRow(
+    title: String,
+    caption: String,
+    icon: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val c = DotTheme.c
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(thickness = 1.dp, color = c.surfaceRaised)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 52.dp)
+                .semantics { this.selected = selected }
+                .clickable(role = Role.RadioButton, onClickLabel = "Select $title", onClick = onClick)
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            KryzzGlyph(icon, Modifier.size(20.dp), tint = if (selected) c.textPrimary else c.textSecondary)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = DotType.Body.copy(fontSize = 15.sp, lineHeight = 19.sp),
+                    color = c.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (caption.isNotBlank()) {
+                    Text(
+                        caption.uppercase(Locale.US),
+                        Modifier.padding(top = 1.dp),
+                        style = DotType.Caption.copy(fontSize = 10.sp, lineHeight = 14.sp),
+                        color = c.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (trailing != null) trailing()
+            if (selected) {
+                Box(
+                    Modifier
+                        .padding(end = 8.dp)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(c.accent)
+                )
+            }
+        }
+    }
+}
+
+/** The per-model thinking level, shown only on the row that is in use. */
 @Composable
 private fun ReasoningSelector(model: OpenRouterModel, selected: ReasoningEffort, onSelect: (ReasoningEffort) -> Unit) {
     val c = DotTheme.c
     val available = model.availableReasoningEfforts()
     if (available.size == 1) {
-        TuneCaption("Thinking fixed by the model")
+        TuneCaption("Thinking fixed by the model", Modifier.padding(start = 34.dp, bottom = 8.dp))
         return
     }
     var open by remember { mutableStateOf(false) }
@@ -275,16 +394,25 @@ private fun ReasoningSelector(model: OpenRouterModel, selected: ReasoningEffort,
     } else ""
     Row(
         Modifier
-            .minimumInteractiveComponentSize()
-            .clip(DotRadius.Pill)
-            .clickable(role = Role.Button, onClickLabel = "Change thinking level") { open = true }
-            .height(36.dp)
-            .border(1.dp, c.borderStrong, DotRadius.Pill)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(start = 34.dp)
+            .heightIn(min = 48.dp)
+            .clickable(role = Role.Button, onClickLabel = "Change thinking level") { open = true },
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("THINKING: ${selected.label}$defaultSuffix".uppercase(Locale.US), style = DotType.Label, color = c.textPrimary, maxLines = 1)
-        Icon(painterResource(R.drawable.ic_kz_chevron_down), null, Modifier.padding(start = 6.dp).size(14.dp), tint = c.textTertiary)
+        KryzzGlyph(R.drawable.kz_led_thinking, Modifier.padding(end = 8.dp).size(16.dp), tint = c.textSecondary)
+        Text(
+            "Thinking  ${selected.label}$defaultSuffix".uppercase(Locale.US),
+            style = DotType.Label,
+            color = c.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Icon(
+            painterResource(R.drawable.ic_kz_chevron_down),
+            null,
+            Modifier.padding(start = 6.dp).size(14.dp),
+            tint = c.textTertiary,
+        )
     }
     if (open) {
         DotSheet(onDismiss = { open = false }) {
@@ -297,62 +425,36 @@ private fun ReasoningSelector(model: OpenRouterModel, selected: ReasoningEffort,
                     {
                         open = false
                         onSelect(effort)
-                    }
+                    },
+                    icon = effort.ledIcon(),
                 )
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun MediaModelCard(model: MediaModel, purpose: ModelPurpose, selected: Boolean, onSelect: () -> Unit) {
-    val c = DotTheme.c
-    val provider = providerBrandFor(model.id)
-    ModelCardFrame(
-        selected = selected,
-        onClick = onSelect,
-        role = Role.RadioButton,
-        modifier = Modifier.semantics { this.selected = selected }
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            ProviderMark(provider)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f).padding(end = if (selected) 24.dp else 0.dp)) {
-                ModelName(model.name)
-                Text(
-                    "${provider.name} · ${model.id}",
-                    style = DotType.Data.copy(fontSize = 11.sp),
-                    color = c.textTertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        if (model.description.isNotBlank()) {
-            Text(model.description, maxLines = 3, overflow = TextOverflow.Ellipsis, style = DotType.BodySmall, color = c.textSecondary)
-        }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            DotTag("Text prompt")
-            DotTag(
-                when (purpose) {
-                    ModelPurpose.IMAGE -> "Image output"
-                    ModelPurpose.VIDEO -> "Video output"
-                    ModelPurpose.AUDIO -> "Audio output"
-                    else -> "Media output"
-                }
-            )
-        }
-        SpecLine(
-            model.supportedResolutions.takeIf { it.isNotEmpty() }?.joinToString(" / ").orEmpty(),
-            model.supportedAspectRatios.takeIf { it.isNotEmpty() }?.joinToString(" / ").orEmpty(),
-            if (model.supportsStreaming) "Streaming" else ""
-        )
-    }
+private fun inUseName(id: String, text: List<OpenRouterModel>, media: List<MediaModel>): String {
+    text.find { it.id == id }?.name?.takeIf { it.isNotBlank() }?.let { return it }
+    media.find { it.id == id }?.name?.takeIf { it.isNotBlank() }?.let { return it }
+    return id.substringAfter('/').ifBlank { "None" }
 }
 
-private fun ModelPurpose.heading(): String = when (this) {
-    ModelPurpose.CHAT -> "Everyday chat"
+private fun textCaption(model: OpenRouterModel): String = listOf(
+    providerBrandFor(model.id).name,
+    "${model.pricing?.prompt.tokenPrice()} in",
+    "${model.pricing?.completion.tokenPrice()} out",
+    model.contextLength.compactTokens(),
+).joinToString("   ")
+
+private fun mediaCaption(model: MediaModel): String = listOfNotNull(
+    providerBrandFor(model.id).name.takeIf { it.isNotBlank() },
+    model.supportedResolutions.takeIf { it.isNotEmpty() }?.joinToString(" / "),
+    model.supportedAspectRatios.takeIf { it.isNotEmpty() }?.joinToString(" / "),
+    "Streaming".takeIf { model.supportsStreaming },
+).joinToString("   ")
+
+private fun ModelPurpose.word(): String = when (this) {
+    ModelPurpose.CHAT -> "Everyday"
     ModelPurpose.AGENT -> "Agent"
     ModelPurpose.RESEARCH -> "Research"
     ModelPurpose.MAX -> "Max"
@@ -362,11 +464,22 @@ private fun ModelPurpose.heading(): String = when (this) {
 }
 
 private fun ModelPurpose.icon(): Int = when (this) {
-    ModelPurpose.CHAT -> R.drawable.ic_kz_chat
-    ModelPurpose.AGENT -> R.drawable.ic_kz_agent
-    ModelPurpose.RESEARCH -> R.drawable.ic_kz_search
-    ModelPurpose.MAX -> R.drawable.ic_kz_max
-    ModelPurpose.IMAGE -> R.drawable.ic_kz_image
-    ModelPurpose.VIDEO -> R.drawable.ic_kz_video
-    ModelPurpose.AUDIO -> R.drawable.ic_kz_voice_wave
+    ModelPurpose.CHAT -> R.drawable.kz_led_everyday_chat
+    ModelPurpose.AGENT -> R.drawable.kz_led_agent
+    ModelPurpose.RESEARCH -> R.drawable.kz_led_research
+    ModelPurpose.MAX -> R.drawable.kz_led_max
+    ModelPurpose.IMAGE -> R.drawable.kz_led_image
+    ModelPurpose.VIDEO -> R.drawable.kz_led_video
+    ModelPurpose.AUDIO -> R.drawable.kz_led_audio
+}
+
+private fun ReasoningEffort.ledIcon(): Int = when (this) {
+    ReasoningEffort.AUTO -> R.drawable.kz_led_model_default
+    ReasoningEffort.NONE -> R.drawable.kz_led_thinking_off
+    ReasoningEffort.MINIMAL -> R.drawable.kz_led_minimal
+    ReasoningEffort.LOW -> R.drawable.kz_led_low
+    ReasoningEffort.MEDIUM -> R.drawable.kz_led_medium
+    ReasoningEffort.HIGH -> R.drawable.kz_led_high
+    ReasoningEffort.XHIGH -> R.drawable.kz_led_extra_high
+    ReasoningEffort.MAX -> R.drawable.kz_led_maximum
 }

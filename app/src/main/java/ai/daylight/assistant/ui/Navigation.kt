@@ -32,8 +32,10 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -68,11 +70,16 @@ import ai.daylight.assistant.ui.make.MakeScreen
 import ai.daylight.assistant.ui.make.MakeViewModel
 import ai.daylight.assistant.ui.make.makeModel
 import ai.daylight.assistant.ui.about.AboutScreen
+import ai.daylight.assistant.ui.dot.DotSecondaryColor
+import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.effects.DotEnter
 import ai.daylight.assistant.ui.dot.effects.DotExit
 import ai.daylight.assistant.ui.dot.effects.DotPopEnter
+import ai.daylight.assistant.ui.dot.effects.DotSplashState
+import ai.daylight.assistant.ui.dot.effects.LocalDotSplash
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.ArmRail
+import ai.daylight.assistant.ui.shell.ChatsMenuButton
 import ai.daylight.assistant.ui.shell.ArmRailSpec
 import ai.daylight.assistant.ui.shell.InkStrip
 import ai.daylight.assistant.ui.shell.InkStripState
@@ -141,7 +148,8 @@ internal fun topLevelTabForRoute(route: String?): MainTab? = when {
 fun AppNavigation(
     container: AppContainer,
     onboardingComplete: Boolean,
-    dotBackground: Boolean = false
+    dotBackground: Boolean = false,
+    secondaryColorId: String = DotSecondaryColor.AMBER.id
 ) {
     key(onboardingComplete) {
         val nav = rememberNavController()
@@ -160,29 +168,24 @@ fun AppNavigation(
             mutableMapOf<String, Pair<AssistantMode, AgentCapability>>()
         }
         var activeConversationId by rememberSaveable { mutableStateOf<String?>(null) }
-        // Eight Arms shell: the ink strip's line and the rail's busy dots.
+        // Eight Arms shell: the ink strip's line, the rail's busy dots, and the Talk splash.
         val inkStrip = remember { InkStripState() }
         val screenBack = remember { ScreenBackState() }
+        val dotSplash = remember { DotSplashState() }
+        val secondaryColor = DotSecondaryColor.from(secondaryColorId).colorFor(DotTheme.c.dark)
         val currentVoice = currentEntry?.arguments?.getString("voice")?.toBoolean() ?: false
         val activeArm: Arm? = if (railVisibleForRoute(currentRoute)) {
             inkStrip.reportedArm ?: armForRoute(currentRoute, currentMode, currentVoice)
         } else {
             null
         }
-        // The conversation each chat arm returns to. One conversation belongs to one arm:
-        // switching a fresh chat to Agent moves it from Talk to Run.
-        var talkConversationId by rememberSaveable { mutableStateOf<String?>(null) }
+        // Run returns to its last conversation. Talk starts a new chat on every entry,
+        // so only Run's id is remembered. A chat switched to Run leaves Talk for good.
         var runConversationId by rememberSaveable { mutableStateOf<String?>(null) }
         fun recordArmConversation(arm: Arm, id: String) {
             when (arm) {
-                Arm.TALK -> {
-                    talkConversationId = id
-                    if (runConversationId == id) runConversationId = null
-                }
-                Arm.RUN -> {
-                    runConversationId = id
-                    if (talkConversationId == id) talkConversationId = null
-                }
+                Arm.TALK -> if (runConversationId == id) runConversationId = null
+                Arm.RUN -> runConversationId = id
                 else -> Unit
             }
         }
@@ -394,18 +397,17 @@ fun AppNavigation(
                 }
             }
         }
-        /** Talk and Run return to their last conversation, or start a fresh one. */
-        fun openArmConversation(arm: Arm) {
-            val mode = if (arm == Arm.RUN) AssistantMode.AGENT else AssistantMode.CHAT
-            val remembered = if (arm == Arm.RUN) runConversationId else talkConversationId
+        /** Run returns to its last conversation, or starts a fresh one. */
+        fun openRunConversation() {
             scope.launch {
+                val remembered = runConversationId
                 if (remembered != null && container.conversations.conversation(remembered) != null) {
                     val capability = rememberedChatRoutes[remembered]?.second ?: AgentCapability.AUTO
                     withContext(Dispatchers.Main.immediate) {
-                        showConversation(remembered, mode, capability)
+                        showConversation(remembered, AssistantMode.AGENT, capability)
                     }
                 } else {
-                    withContext(Dispatchers.Main.immediate) { newConversationFromLibrary(mode) }
+                    withContext(Dispatchers.Main.immediate) { newConversationFromLibrary(AssistantMode.AGENT) }
                 }
             }
         }
@@ -413,7 +415,7 @@ fun AppNavigation(
         // `activeArm` would stay frozen at its first value (Talk taps were ignored).
         val currentArm = rememberUpdatedState(activeArm)
         val currentRouteState = rememberUpdatedState(currentRoute)
-        fun openArm(arm: Arm) {
+        fun openArm(arm: Arm, origin: Offset? = null) {
             // On a bot's page the Crew dot leads back to the bot list.
             if (arm == Arm.CREW && currentRouteState.value == Routes.BOT) {
                 nav.popBackStack(Routes.CREW, inclusive = false)
@@ -421,8 +423,12 @@ fun AppNavigation(
             }
             if (arm == currentArm.value) return
             panelOpen = false
+            if (arm == Arm.TALK) {
+                dotSplash.trigger(origin = origin, targetColor = secondaryColor, persistTint = false)
+            }
             when (arm) {
-                Arm.TALK, Arm.RUN -> openArmConversation(arm)
+                Arm.TALK -> newConversationFromLibrary(AssistantMode.CHAT)
+                Arm.RUN -> openRunConversation()
                 Arm.VOICE -> newConversationFromLibrary(AssistantMode.CHAT, voice = true)
                 Arm.TUNE -> openTopLevel(Routes.SETTINGS)
                 Arm.LINK -> navigateArm(Routes.LINK)
@@ -464,6 +470,9 @@ fun AppNavigation(
                 }
                 return
             }
+            if (capability == null) {
+                dotSplash.trigger(origin = null, targetColor = secondaryColor, persistTint = false)
+            }
             scope.launch {
                 container.conversations.deleteEmptyExcept(chatDraftConversationIds())
                 val id = container.conversations.createConversation()
@@ -476,7 +485,12 @@ fun AppNavigation(
                 }
             }
         }
-        DaylightBackground(dotGrid = dotBackground && dotGridForRoute(currentRoute)) {
+        DaylightBackground(
+            dotGrid = dotBackground && dotGridForRoute(currentRoute),
+            splash = dotSplash,
+            talkTinted = false,
+            secondaryColor = secondaryColor
+        ) {
         KryzzSidePanelHost(
             open = panelOpen,
             onClose = { panelOpen = false },
@@ -502,19 +516,30 @@ fun AppNavigation(
         // 5.1.4/5.1.5). The status bar is consumed here once, so screens that pad for it
         // (TopAppBar, statusBarsPadding) don't add it a second time under the strip.
         val chromeVisible = shellChromeVisibleForRoute(currentRoute, onboardingComplete)
-        CompositionLocalProvider(LocalInkStrip provides inkStrip, LocalScreenBack provides screenBack) {
+        CompositionLocalProvider(LocalInkStrip provides inkStrip, LocalScreenBack provides screenBack, LocalDotSplash provides dotSplash) {
         Column(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
         ) {
         if (chromeVisible) {
-            InkStrip(
-                state = inkStrip,
-                fallback = defaultInkLine(currentRoute),
-                modifier = Modifier.padding(horizontal = 20.dp),
-                onClick = if (currentRoute == Routes.INKWELL) null else ::openInkwell
-            )
+            val showChats = chatsButtonVisible(currentRoute, onboardingComplete)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (showChats) {
+                    ChatsMenuButton(
+                        onClick = { if (panelOpen) panelOpen = false else openLibrary() },
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+                InkStrip(
+                    state = inkStrip,
+                    fallback = defaultInkLine(currentRoute),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = if (showChats) 4.dp else 20.dp, end = 20.dp),
+                    onClick = if (currentRoute == Routes.INKWELL) null else ::openInkwell
+                )
+            }
         }
         Row(Modifier.fillMaxWidth().weight(1f)) {
         NavHost(
@@ -551,11 +576,12 @@ fun AppNavigation(
             val vm: HomeViewModel = viewModel(factory = factory)
             HomeScreen(
                 vm = vm,
-                onOpenArm = ::openArm,
+                onOpenArm = { openArm(it) },
                 onAsk = { text -> startFromHome(text, capability = null) },
                 onMake = { text, capability -> startFromHome(text, capability) },
                 onVoice = { openArm(Arm.VOICE) },
-                onInkwell = ::openInkwell
+                onInkwell = ::openInkwell,
+                onOpenArmAt = { arm, origin -> openArm(arm, origin) }
             )
         }
         composable(Routes.LINK) {
@@ -586,7 +612,11 @@ fun AppNavigation(
         }
         composable(Routes.FIND) {
             val vm: FindViewModel = viewModel(factory = factory)
-            FindScreen(vm = vm, onLibrary = ::openLibrary)
+            FindScreen(
+                vm = vm,
+                onLibrary = ::openLibrary,
+                onUseInMake = { navigateArm(Routes.make(MakeKind.IMAGE)) }
+            )
         }
         composable(Routes.CREW) {
             val vm: CrewViewModel = viewModel(factory = factory)
@@ -658,6 +688,14 @@ fun AppNavigation(
             // Busy dot for the rail and the strip's live mark. The watcher runs in the
             // back-stack entry's scope, so it keeps reporting while Settings covers this
             // chat and stops (clearing the dot) when the entry is destroyed.
+            LaunchedEffect(id) {
+                vm.findRequests.collect { query ->
+                    panelOpen = false
+                    container.find.draft.value = query
+                    if (container.preferences.state.first().searchEnabled) container.find.search(query)
+                    navigateArm(Routes.FIND)
+                }
+            }
             LaunchedEffect(entry.id) {
                 if (busyWatchers.add(entry.id)) {
                     entry.lifecycleScope.launch {
@@ -691,6 +729,7 @@ fun AppNavigation(
                 initialCapability = initialCapability,
                 initialVoice = initialVoice,
                 onBack = ::openLibrary,
+                onCloseVoice = ::goHome,
                 onOpenLibrary = ::openLibrary,
                 onModels = { nav.navigate(Routes.models(it)) },
                 onStartAgent = {
@@ -812,7 +851,12 @@ fun AppNavigation(
             // The rail's column stays on every shell screen so layouts don't jump; the
             // dots are drawn only on arm screens (not on depth pages).
             if (activeArm != null) {
-                ArmRail(active = activeArm, busy = inkStrip.busyArms, onOpen = ::openArm)
+                ArmRail(
+                    active = activeArm,
+                    busy = inkStrip.busyArms,
+                    onOpen = { openArm(it) },
+                    onOpenAt = { arm, origin -> openArm(arm, origin) }
+                )
             } else {
                 Spacer(Modifier.width(ArmRailSpec.Width))
             }

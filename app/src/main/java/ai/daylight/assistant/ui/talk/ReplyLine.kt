@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -29,7 +31,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +48,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -116,9 +121,22 @@ fun ReplyLine(
     val ownRequester = remember { FocusRequester() }
     val requester = focusRequester ?: ownRequester
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
     var focused by remember { mutableStateOf(false) }
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    var imeWasVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(imeBottom) {
+        if (imeBottom > 0) {
+            imeWasVisible = true
+        } else if (imeWasVisible) {
+            imeWasVisible = false
+            if (focused) focusManager.clearFocus()
+        }
+    }
     var holding by remember { mutableStateOf(false) }
     var cancelZone by remember { mutableStateOf(false) }
+    var cancelProgress by remember { mutableFloatStateOf(0f) }
     val holdEnabled = onHoldStart != null && onHoldEnd != null
     val canSend = !generating && (hasText || attachments.isNotEmpty())
     // Phase D: a send ripples yellow dots out from the send button along the line.
@@ -143,7 +161,9 @@ fun ReplyLine(
         if (editing) {
             NoteRow(label = "EDITING", text = "An earlier message", action = "Cancel", onAction = onCancelEdit)
         }
-        HoldToTalkModel.note(holding, cancelZone, dictating, transcribing)?.let { (label, hint) -> HoldNote(label, hint) }
+        HoldToTalkModel.note(holding, cancelZone, dictating, transcribing)?.let { (label, hint) ->
+            HoldNote(label, hint, cancelProgress = cancelProgress)
+        }
         if (attachments.isNotEmpty()) {
             LazyRow(
                 Modifier.padding(bottom = 8.dp),
@@ -161,12 +181,16 @@ fun ReplyLine(
         ) {
             RoundIcon(R.drawable.ic_kz_plus, optionsLabel, onOptions, filled = false)
             Spacer(Modifier.width(6.dp))
-            Box(Modifier.weight(1f).padding(vertical = 8.dp)) {
+            Box(
+                Modifier.weight(1f).heightIn(min = 48.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(vertical = 8.dp)
                         .focusRequester(requester)
                         .onFocusChanged {
                             focused = it.isFocused
@@ -200,12 +224,15 @@ fun ReplyLine(
                         onHoldStart = {
                             holding = true
                             cancelZone = false
+                            cancelProgress = 0f
                             onHoldStart?.invoke()
                         },
                         onCancelZone = { cancelZone = it },
+                        onDragProgress = { _, p -> cancelProgress = p },
                         onHoldEnd = { cancelled ->
                             holding = false
                             cancelZone = false
+                            cancelProgress = 0f
                             onHoldEnd?.invoke(cancelled)
                         },
                         modifier = Modifier.matchParentSize()

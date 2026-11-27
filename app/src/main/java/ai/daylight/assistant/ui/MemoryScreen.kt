@@ -75,16 +75,19 @@ import java.util.Locale
 @Composable
 fun MemoryScreen(vm: MemoryViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val autoLearn by vm.autoMemoryEnabled.collectAsStateWithLifecycle()
     val memories by vm.memories.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
+    var editingMemory by remember { mutableStateOf<MemoryEntity?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
 
     TunePage(
         "Memory",
         onBack,
         scrollable = false,
+        mark = R.drawable.kz_led_memories,
         actions = {
             if (memories.isNotEmpty()) {
                 DotIconButton(R.drawable.ic_kz_trash, "Clear all memories", { confirmClear = true }, tint = DotTheme.c.textSecondary)
@@ -92,9 +95,16 @@ fun MemoryScreen(vm: MemoryViewModel, onBack: () -> Unit) {
         }
     ) {
         TuneRow(
-            R.drawable.ic_kz_memory, "Chat memory",
+            R.drawable.kz_led_chat_memory, "Chat memory",
             if (settings.memoryEnabled) memoryCountCaption(memories.size) else "Paused, nothing is saved or used",
             TuneTrailing.Switch(settings.memoryEnabled, vm::setMemoryEnabled)
+        )
+        TuneRow(
+            R.drawable.kz_led_auto,
+            "Auto-learn from chats",
+            if (!settings.memoryEnabled) "Requires chat memory" else if (autoLearn) "On" else "Off",
+            TuneTrailing.Switch(autoLearn, vm::setAutoMemoryEnabled, enabled = settings.memoryEnabled),
+            detail = "Automatically learns and updates durable facts after conversations"
         )
         Spacer(Modifier.height(12.dp))
         DotField(
@@ -128,6 +138,7 @@ fun MemoryScreen(vm: MemoryViewModel, onBack: () -> Unit) {
                     MemoryRow(
                         memory = memory,
                         onEnabled = { vm.setEnabled(memory.id, it) },
+                        onEdit = { editingMemory = memory },
                         onPin = { vm.togglePinned(memory.id, !memory.pinned) },
                         onDelete = { vm.delete(memory.id) }
                     )
@@ -149,6 +160,14 @@ fun MemoryScreen(vm: MemoryViewModel, onBack: () -> Unit) {
         )
     }
 
+    editingMemory?.let { memory ->
+        EditMemoryDialog(
+            memory = memory,
+            onDismiss = { editingMemory = null },
+            onSave = { content, category -> vm.update(memory.id, content, category) }
+        )
+    }
+
     if (confirmClear) {
         DotConfirmDialog(
             title = "Clear all memories?",
@@ -167,11 +186,12 @@ fun MemoryScreen(vm: MemoryViewModel, onBack: () -> Unit) {
 private fun memoryCountCaption(count: Int): String =
     "${if (count == 1) "1 memory" else "$count memories"}, ${MemoryEngine.Category.entries.size} categories"
 
-/** One memory: category and state in mono, the fact in Geist, then switch, pin and delete. */
+/** One memory: category and state in mono, the fact in Geist, then switch, edit, pin and delete. */
 @Composable
 private fun MemoryRow(
     memory: MemoryEntity,
     onEnabled: (Boolean) -> Unit,
+    onEdit: () -> Unit,
     onPin: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -212,6 +232,7 @@ private fun MemoryRow(
             overflow = TextOverflow.Ellipsis
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            DotIconButton(R.drawable.ic_kz_edit, "Edit memory", onEdit, tint = c.textTertiary, iconSize = 18.dp)
             DotIconButton(
                 R.drawable.ic_kz_pin,
                 if (memory.pinned) "Unpin memory" else "Pin memory",
@@ -225,15 +246,70 @@ private fun MemoryRow(
 }
 
 /** Add a memory, in the kit dialog: the fact, its category, then Cancel and Save. */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AddMemoryDialog(
     onDismiss: () -> Unit,
     onAdd: (String, MemoryEngine.Category, (Boolean) -> Unit) -> Unit
 ) {
+    MemoryFormDialog(
+        title = "Add a memory",
+        subtitle = "Saved only on this phone and used when it helps.",
+        confirmLabel = "Save memory",
+        closeDescription = "Close add memory",
+        initialContent = "",
+        initialCategory = MemoryEngine.Category.USER,
+        dialogTag = "add_memory_dialog",
+        onDismiss = onDismiss,
+        onSubmit = { content, category, finish ->
+            onAdd(content, category) { saved ->
+                finish(saved, if (saved) null else "This memory is already saved.")
+            }
+        }
+    )
+}
+
+/** Edit an existing memory's fact and category using the same kit dialog form. */
+@Composable
+private fun EditMemoryDialog(
+    memory: MemoryEntity,
+    onDismiss: () -> Unit,
+    onSave: (String, MemoryEngine.Category) -> Unit
+) {
+    val initialCategory = remember(memory.id, memory.category) {
+        runCatching { MemoryEngine.Category.valueOf(memory.category) }.getOrDefault(MemoryEngine.Category.OTHER)
+    }
+    MemoryFormDialog(
+        title = "Edit memory",
+        subtitle = "Update this fact or its category on this phone.",
+        confirmLabel = "Save changes",
+        closeDescription = "Close edit memory",
+        initialContent = memory.content,
+        initialCategory = initialCategory,
+        dialogTag = "edit_memory_dialog",
+        onDismiss = onDismiss,
+        onSubmit = { content, category, finish ->
+            onSave(content, category)
+            finish(true, null)
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MemoryFormDialog(
+    title: String,
+    subtitle: String,
+    confirmLabel: String,
+    closeDescription: String,
+    initialContent: String,
+    initialCategory: MemoryEngine.Category,
+    dialogTag: String,
+    onDismiss: () -> Unit,
+    onSubmit: (String, MemoryEngine.Category, (Boolean, String?) -> Unit) -> Unit
+) {
     val c = DotTheme.c
-    var content by rememberSaveable { mutableStateOf("") }
-    var category by rememberSaveable { mutableStateOf(MemoryEngine.Category.USER) }
+    var content by rememberSaveable(initialContent) { mutableStateOf(initialContent) }
+    var category by rememberSaveable(initialCategory) { mutableStateOf(initialCategory) }
     var saving by remember { mutableStateOf(false) }
     var saveError by rememberSaveable { mutableStateOf<String?>(null) }
     val focusRequester = remember { FocusRequester() }
@@ -246,27 +322,27 @@ private fun AddMemoryDialog(
         keyboard?.hide()
         saving = true
         saveError = null
-        onAdd(content.trim(), category) { saved ->
+        onSubmit(content.trim(), category) { saved, errorMessage ->
             saving = false
-            if (saved) onDismiss() else saveError = "This memory is already saved."
+            if (saved) onDismiss() else saveError = errorMessage ?: "Could not save memory."
         }
     }
 
-    DotDialog(onDismiss = onDismiss, dismissible = !saving, padded = false, modifier = Modifier.testTag("add_memory_dialog")) {
+    DotDialog(onDismiss = onDismiss, dismissible = !saving, padded = false, modifier = Modifier.testTag(dialogTag)) {
         Row(
             Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 12.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                DotDialogTitle("Add a memory")
+                DotDialogTitle(title)
                 Text(
-                    "Saved only on this phone and used when it helps.",
+                    subtitle,
                     Modifier.padding(top = 4.dp),
                     style = DotType.BodySmall,
                     color = c.textTertiary
                 )
             }
-            DotIconButton(R.drawable.ic_kz_close, "Close add memory", onDismiss, enabled = !saving)
+            DotIconButton(R.drawable.ic_kz_close, closeDescription, onDismiss, enabled = !saving)
         }
         Column(
             Modifier
@@ -319,7 +395,7 @@ private fun AddMemoryDialog(
         ) {
             DotPillButton("Cancel", onDismiss, style = DotButtonStyle.Ghost, enabled = !saving)
             DotPillButton(
-                "Save memory",
+                confirmLabel,
                 { submit() },
                 Modifier.heightIn(min = 48.dp).testTag("save_memory"),
                 enabled = validationError == null,

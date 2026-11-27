@@ -32,6 +32,29 @@ class FileCardModelTest {
         assertThat(FileCardModel.canOpen(output("a.pdf", OutputKind.PDF))).isTrue()
     }
 
+    @Test fun newFileTypesGetTheirIcons() {
+        // v5.13.7: slides, web pages, code, SVG and zips made from Talk.
+        assertThat(FileCardModel.icon(output("pitch.pptx", OutputKind.PRESENTATION))).isEqualTo(R.drawable.ic_kz_file_pptx_dot)
+        assertThat(FileCardModel.icon(output("index.html", OutputKind.TEXT))).isEqualTo(R.drawable.ic_kz_file_code_dot)
+        assertThat(FileCardModel.icon(output("tool.py", OutputKind.TEXT))).isEqualTo(R.drawable.ic_kz_file_code_dot)
+        assertThat(FileCardModel.icon(output("logo.svg", OutputKind.TEXT))).isEqualTo(R.drawable.ic_kz_image_dot)
+        assertThat(FileCardModel.icon(output("site.zip", OutputKind.ARCHIVE))).isEqualTo(R.drawable.ic_kz_file_code_dot)
+        assertThat(FileCardModel.icon(output("contacts.vcf", OutputKind.TEXT))).isEqualTo(R.drawable.ic_kz_file_dot)
+        assertThat(FileCardModel.icon(output("Makefile", OutputKind.TEXT))).isEqualTo(R.drawable.ic_kz_file_dot)
+    }
+
+    @Test fun textFilesCanFallBackToAPlainTextViewer() {
+        val python = GeneratedOutput("p", OutputKind.TEXT, "Tool", "tool.py", "text/x-python", localPath = "/x")
+        val yaml = GeneratedOutput("y", OutputKind.TEXT, "Config", "c.yaml", "application/yaml", localPath = "/x")
+        val plain = GeneratedOutput("t", OutputKind.TEXT, "Notes", "n.txt", "text/plain", localPath = "/x")
+        val pdf = GeneratedOutput("f", OutputKind.PDF, "Doc", "d.pdf", "application/pdf", localPath = "/x")
+        assertThat(FileCardModel.opensAsText(python)).isTrue()
+        assertThat(FileCardModel.opensAsText(yaml)).isTrue()
+        assertThat(FileCardModel.opensAsText(plain)).isFalse() // already plain text
+        assertThat(FileCardModel.opensAsText(pdf)).isFalse()
+        assertThat(FileCardModel.noViewerMessage(pdf)).contains("PDF files")
+    }
+
     @Test fun iconsFollowTheRealFileType() {
         assertThat(FileCardModel.icon(output("summary.docx", OutputKind.DOCUMENT))).isEqualTo(R.drawable.ic_kz_file_docx_dot)
         assertThat(FileCardModel.icon(output("costs.xlsx", OutputKind.SPREADSHEET))).isEqualTo(R.drawable.ic_kz_file_xlsx_dot)
@@ -39,5 +62,7 @@ class FileCardModelTest {
         assertThat(FileCardModel.icon(output("summary.md", OutputKind.DOCUMENT))).isEqualTo(R.drawable.ic_kz_file_dot)
         assertThat(FileCardModel.icon(output("kryzz-image.png", OutputKind.IMAGE))).isEqualTo(R.drawable.ic_kz_image_dot)
         assertThat(FileCardModel.icon(output("data.sqlite", OutputKind.DATABASE))).isEqualTo(R.drawable.ic_kz_grid_dot)
+        assertThat(FileCardModel.icon(output("dentist.ics", OutputKind.CALENDAR))).isEqualTo(R.drawable.ic_kz_file_dot)
+        assertThat(FileCardModel.savesToGallery(output("dentist.ics", OutputKind.CALENDAR))).isFalse()
     }
 }

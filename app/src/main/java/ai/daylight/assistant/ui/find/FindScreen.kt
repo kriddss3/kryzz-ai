@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.FindKind
+import ai.daylight.assistant.domain.FindMode
 import ai.daylight.assistant.domain.FindStatus
 import ai.daylight.assistant.domain.FoundImage
 import ai.daylight.assistant.ui.dot.DotRadius
@@ -69,12 +70,15 @@ import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
 import ai.daylight.assistant.ui.dot.effects.ThinkingDots
+import ai.daylight.assistant.ui.find.FindViewModel.UseInMakeOutcome
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.InkLine
 import ai.daylight.assistant.ui.shell.InkStripEffect
 import ai.daylight.assistant.ui.shell.LocalInkStrip
 import ai.daylight.assistant.ui.shell.ScreenBackHandler
 import ai.daylight.assistant.ui.theme.LocalKryzzMotionEnabled
+import ai.daylight.assistant.ui.tune.DotSegments
+import ai.daylight.assistant.ui.tune.SegmentOption
 import ai.daylight.assistant.ui.tune.TuneEmpty
 import coil.ImageLoader
 import java.util.Locale
@@ -83,14 +87,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Find (kit web-images, C8): free images from Wikimedia Commons. A query field, three
- * filter pills (file type, licence, size) with the count, and a two-column masonry of
- * results that loads more as you scroll. Every tile names its source and licence. Tapping
- * a tile opens the viewer sheet with Save, Source and Share; the credit line goes with
- * every save and share. Find is gated by "Allow web search" in Tune.
+ * Find (kit web-images, C8): free images from Wikimedia Commons and live Web browsing via
+ * Parallel Search. A query field, Images/Web mode switcher, image filter pills, and either
+ * the two-column image masonry or synthesized web results.
  */
 @Composable
-fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit) {
+fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit, onUseInMake: () -> Unit = {}) {
     val c = DotTheme.c
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -100,15 +102,23 @@ fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit) {
     val focusManager = LocalFocusManager.current
     val density = LocalDensity.current
 
+    val mode by vm.mode.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
+    val webState by vm.webState.collectAsStateWithLifecycle()
+    val webDraft by vm.webDraft.collectAsStateWithLifecycle()
     val enabled by vm.searchEnabled.collectAsStateWithLifecycle()
     val saved by vm.savedIds.collectAsStateWithLifecycle()
     val loader = vm.imageLoader
     val off = enabled == false
 
     // Switching web search off stops Find and drops what it found.
-    LaunchedEffect(off) { if (off) vm.stop() }
+    LaunchedEffect(off) {
+        if (off) {
+            vm.stop()
+            vm.stopWeb()
+        }
+    }
 
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     val selected: FoundImage? = state.images.firstOrNull { it.id == selectedId }
@@ -120,21 +130,30 @@ fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit) {
     var filterChoice by rememberSaveable { mutableStateOf<FindFilterChoice?>(null) }
     var savingId by remember { mutableStateOf<Long?>(null) }
     var sharingId by remember { mutableStateOf<Long?>(null) }
+    var usingInMakeId by remember { mutableStateOf<Long?>(null) }
     var sheetHeight by remember { mutableIntStateOf(0) }
 
-    InkStripEffect(FindModel.inkLine(state, off), arm = Arm.FIND)
-    ScreenBackHandler(enabled = selected != null) { selectedId = null }
+    val stripLine = if (mode == FindMode.WEB) {
+        FindModel.webInkLine(webState, off)
+    } else {
+        FindModel.inkLine(state, off)
+    }
+    InkStripEffect(stripLine, arm = Arm.FIND)
+    ScreenBackHandler(enabled = mode == FindMode.IMAGES && selected != null) { selectedId = null }
 
     val focus = remember { FocusRequester() }
-    fun runSearch() {
-        focusManager.clearFocus()
-        keyboard?.hide()
-        selectedId = null
-        vm.search()
-    }
     fun closeKeyboard() {
         focusManager.clearFocus()
         keyboard?.hide()
+    }
+    fun runImageSearch() {
+        closeKeyboard()
+        selectedId = null
+        vm.search()
+    }
+    fun runWebSearch() {
+        closeKeyboard()
+        vm.searchWeb()
     }
 
     // Android 9 has no permission-free gallery insert, so it saves through the file picker.
@@ -210,128 +229,178 @@ fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit) {
                 ) {
                     DotMatrixText("FIND", pitch = 4.2.dp, on = c.textPrimary, off = Color.Transparent)
                 }
-                Spacer(Modifier.height(8.dp))
-                FindQueryField(
-                    value = draft,
-                    onValueChange = vm::setDraft,
-                    onSearch = { runSearch() },
-                    onClear = {
-                        selectedId = null
-                        vm.clear()
-                        runCatching { focus.requestFocus() }
-                        keyboard?.show()
-                    },
-                    focusRequester = focus,
-                    enabled = !off
+                Spacer(Modifier.height(6.dp))
+                DotSegments(
+                    options = listOf(
+                        SegmentOption(FindMode.IMAGES.label, R.drawable.ic_kz_image, tag = "find_mode_images"),
+                        SegmentOption(FindMode.WEB.label, R.drawable.ic_kz_web, tag = "find_mode_web")
+                    ),
+                    selected = mode.ordinal,
+                    onSelect = { index ->
+                        val next = FindMode.entries[index]
+                        if (next != mode) {
+                            closeKeyboard()
+                            selectedId = null
+                            vm.setMode(next)
+                        }
+                    }
                 )
-                Spacer(Modifier.height(2.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    val filters = state.filters
-                    FilterPill(
-                        label = filters.kind.label,
-                        description = "File type: ${filters.kind.label}",
-                        onClick = { closeKeyboard(); filterChoice = FindFilterChoice.KIND },
-                        on = true,
-                        icon = if (filters.kind == FindKind.IMAGES) R.drawable.ic_kz_image else R.drawable.ic_kz_grid
+                Spacer(Modifier.height(10.dp))
+                if (mode == FindMode.WEB) {
+                    FindQueryField(
+                        value = webDraft,
+                        onValueChange = vm::setWebDraft,
+                        onSearch = ::runWebSearch,
+                        onClear = {
+                            vm.clearWeb()
+                            runCatching { focus.requestFocus() }
+                            keyboard?.show()
+                        },
+                        focusRequester = focus,
+                        enabled = !off,
+                        placeholder = "Search the web",
+                        semanticsLabel = "Search the web"
                     )
-                    FilterPill(
-                        label = filters.licence.label,
-                        description = "Licence: ${filters.licence.label}",
-                        onClick = { closeKeyboard(); filterChoice = FindFilterChoice.LICENCE }
+                } else {
+                    FindQueryField(
+                        value = draft,
+                        onValueChange = vm::setDraft,
+                        onSearch = ::runImageSearch,
+                        onClear = {
+                            selectedId = null
+                            vm.clear()
+                            runCatching { focus.requestFocus() }
+                            keyboard?.show()
+                        },
+                        focusRequester = focus,
+                        enabled = !off
                     )
-                    FilterPill(
-                        label = filters.size.label,
-                        description = "Size: ${filters.size.label}",
-                        onClick = { closeKeyboard(); filterChoice = FindFilterChoice.SIZE }
-                    )
-                    if (state.status == FindStatus.DONE && state.images.isNotEmpty() && !off) {
-                        Text(
-                            FindModel.countCaption(state.images.size).uppercase(Locale.US),
-                            Modifier.weight(1f),
-                            style = DotType.Caption,
-                            color = c.textTertiary,
-                            textAlign = TextAlign.End,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val filters = state.filters
+                        FilterPill(
+                            label = filters.kind.label,
+                            description = "File type: ${filters.kind.label}",
+                            onClick = { closeKeyboard(); filterChoice = FindFilterChoice.KIND },
+                            on = true,
+                            icon = if (filters.kind == FindKind.IMAGES) R.drawable.ic_kz_image else R.drawable.ic_kz_grid
                         )
+                        FilterPill(
+                            label = filters.licence.label,
+                            description = "Licence: ${filters.licence.label}",
+                            onClick = { closeKeyboard(); filterChoice = FindFilterChoice.LICENCE }
+                        )
+                        FilterPill(
+                            label = filters.size.label,
+                            description = "Size: ${filters.size.label}",
+                            onClick = { closeKeyboard(); filterChoice = FindFilterChoice.SIZE }
+                        )
+                        if (state.status == FindStatus.DONE && state.images.isNotEmpty() && !off) {
+                            Text(
+                                FindModel.countCaption(state.images.size).uppercase(Locale.US),
+                                Modifier.weight(1f),
+                                style = DotType.Caption,
+                                color = c.textTertiary,
+                                textAlign = TextAlign.End,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
 
-            when {
-                off -> FindMessage {
-                    TuneEmpty(
-                        dotIcon = R.drawable.ic_kz_web_dot,
-                        words = "Search off",
-                        body = "Find looks up free images on Wikimedia Commons, so it needs web search. " +
-                            "It is switched off in Tune.",
-                        action = "Allow web search",
-                        onAction = vm::allowSearch,
-                        actionIcon = R.drawable.ic_kz_web
-                    )
-                }
-                state.status == FindStatus.IDLE -> FindMessage {
-                    TuneEmpty(
-                        dotIcon = R.drawable.ic_kz_search_dot,
-                        words = "Free images",
-                        body = "Search Wikimedia Commons. Every image shows its author and licence, and " +
-                            "Save or Share always carries the credit."
-                    )
-                }
-                state.status == FindStatus.SEARCHING -> FindMessage {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        ThinkingDots(dot = 6.dp)
-                        Text(
-                            "Searching Commons".uppercase(Locale.US),
-                            Modifier.padding(top = 14.dp),
-                            style = DotType.Caption,
-                            color = c.textTertiary
-                        )
-                    }
-                }
-                state.status == FindStatus.FAILED -> FindMessage {
-                    TuneEmpty(
-                        dotIcon = if (state.offline) R.drawable.ic_kz_offline_dot else R.drawable.ic_kz_warning_dot,
-                        words = if (state.offline) "Offline" else "No answer",
-                        body = state.error ?: "The search failed.",
-                        action = "Try again",
-                        onAction = vm::retry,
-                        actionIcon = R.drawable.ic_kz_retry
-                    )
-                }
-                state.images.isEmpty() -> FindMessage {
-                    TuneEmpty(
-                        dotIcon = R.drawable.ic_kz_search_dot,
-                        words = "No matches",
-                        body = FindModel.emptyBody(state)
-                    )
-                }
-                else -> FindGrid(
-                    images = state.images,
-                    selectedId = selectedId,
-                    loader = loader,
-                    loadingMore = state.loadingMore,
-                    moreError = state.moreError,
-                    end = state.nextOffset == null,
-                    bottomPadding = if (selected != null) with(density) { sheetHeight.toDp() } else 0.dp,
-                    serial = state.serial,
-                    onTile = { image ->
-                        closeKeyboard()
-                        selectedId = if (selectedId == image.id) null else image.id
+            if (mode == FindMode.WEB) {
+                FindWebResultsBody(
+                    state = webState,
+                    off = off,
+                    onAllowSearch = vm::allowSearch,
+                    onRetry = vm::retryWeb,
+                    onCopyAnswer = { answer ->
+                        FindMedia.copyText(context, "Answer", answer)
+                        strip?.flash(InkLine("ANSWER COPIED"))
                     },
-                    onLoadMore = vm::loadMore,
-                    onRetryMore = vm::retry,
+                    onOpenUrl = { url ->
+                        if (!FindMedia.openPage(context, url)) strip?.flash(InkLine("FIND NO BROWSER"))
+                    },
                     modifier = Modifier.weight(1f)
                 )
+            } else {
+                when {
+                    off -> FindMessage {
+                        TuneEmpty(
+                            dotIcon = R.drawable.ic_kz_web_dot,
+                            words = "Search off",
+                            body = "Find looks up free images on Wikimedia Commons, so it needs web search. " +
+                                "It is switched off in Tune.",
+                            action = "Allow web search",
+                            onAction = vm::allowSearch,
+                            actionIcon = R.drawable.ic_kz_web
+                        )
+                    }
+                    state.status == FindStatus.IDLE -> FindMessage {
+                        TuneEmpty(
+                            dotIcon = R.drawable.ic_kz_search_dot,
+                            words = "Free images",
+                            body = "Search Wikimedia Commons. Every image shows its author and licence, and " +
+                                "Save or Share always carries the credit."
+                        )
+                    }
+                    state.status == FindStatus.SEARCHING -> FindMessage {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            ThinkingDots(dot = 6.dp)
+                            Text(
+                                "Searching Commons".uppercase(Locale.US),
+                                Modifier.padding(top = 14.dp),
+                                style = DotType.Caption,
+                                color = c.textTertiary
+                            )
+                        }
+                    }
+                    state.status == FindStatus.FAILED -> FindMessage {
+                        TuneEmpty(
+                            dotIcon = if (state.offline) R.drawable.ic_kz_offline_dot else R.drawable.ic_kz_warning_dot,
+                            words = if (state.offline) "Offline" else "No answer",
+                            body = state.error ?: "The search failed.",
+                            action = "Try again",
+                            onAction = vm::retry,
+                            actionIcon = R.drawable.ic_kz_retry
+                        )
+                    }
+                    state.images.isEmpty() -> FindMessage {
+                        TuneEmpty(
+                            dotIcon = R.drawable.ic_kz_search_dot,
+                            words = "No matches",
+                            body = FindModel.emptyBody(state)
+                        )
+                    }
+                    else -> FindGrid(
+                        images = state.images,
+                        selectedId = selectedId,
+                        loader = loader,
+                        loadingMore = state.loadingMore,
+                        moreError = state.moreError,
+                        end = state.nextOffset == null,
+                        bottomPadding = if (selected != null) with(density) { sheetHeight.toDp() } else 0.dp,
+                        serial = state.serial,
+                        onTile = { image ->
+                            closeKeyboard()
+                            selectedId = if (selectedId == image.id) null else image.id
+                        },
+                        onLoadMore = vm::loadMore,
+                        onRetryMore = vm::retry,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
 
         AnimatedVisibility(
-            visible = selected != null,
+            visible = mode == FindMode.IMAGES && selected != null,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = if (motion) slideInVertically { it } else EnterTransition.None,
             exit = if (motion) slideOutVertically { it } else ExitTransition.None
@@ -343,6 +412,7 @@ fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit) {
                     saved = image.id in saved,
                     saving = savingId == image.id,
                     sharing = sharingId == image.id,
+                    usingInMake = usingInMakeId == image.id,
                     onClose = { selectedId = null },
                     onView = { viewing = true },
                     onSave = { save(image) },
@@ -351,7 +421,26 @@ fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit) {
                     },
                     onShare = { share(image) },
                     onLicence = image.licence.url?.let { url -> { FindMedia.openPage(context, url); Unit } },
-                    onUseInMake = { strip?.flash(InkLine("USE IN MAKE NOT YET")) },
+                    onUseInMake = {
+                        if (usingInMakeId == null) {
+                            usingInMakeId = image.id
+                            scope.launch {
+                                try {
+                                    when (vm.useInMake(context, image)) {
+                                        UseInMakeOutcome.ADDED, UseInMakeOutcome.DUPLICATE -> {
+                                            selectedId = null
+                                            onUseInMake()
+                                        }
+                                        UseInMakeOutcome.BUSY -> strip?.flash(InkLine("MAKE IS BUSY"))
+                                        UseInMakeOutcome.FULL -> strip?.flash(InkLine("MAKE ALREADY HAS 4 IMAGES"))
+                                        UseInMakeOutcome.FAILED -> strip?.flash(InkLine("COULD NOT LOAD IMAGE"))
+                                    }
+                                } finally {
+                                    usingInMakeId = null
+                                }
+                            }
+                        }
+                    },
                     modifier = Modifier.onSizeChanged { sheetHeight = it.height }
                 )
             }
@@ -359,31 +448,33 @@ fun FindScreen(vm: FindViewModel, onLibrary: () -> Unit) {
     }
 
     LaunchedEffect(selected == null) { if (selected == null) viewing = false }
-    if (viewing && selected != null) {
+    if (viewing && selected != null && mode == FindMode.IMAGES) {
         FindImageViewer(selected, loader, onDismiss = { viewing = false })
     }
 
-    filterChoice?.let { choice ->
-        FindFilterSheet(
-            choice = choice,
-            filters = state.filters,
-            onKind = { kind ->
-                filterChoice = null
-                selectedId = null
-                vm.setKind(kind)
-            },
-            onLicence = { licence ->
-                filterChoice = null
-                selectedId = null
-                vm.setLicence(licence)
-            },
-            onSize = { size ->
-                filterChoice = null
-                selectedId = null
-                vm.setSize(size)
-            },
-            onDismiss = { filterChoice = null }
-        )
+    if (mode == FindMode.IMAGES) {
+        filterChoice?.let { choice ->
+            FindFilterSheet(
+                choice = choice,
+                filters = state.filters,
+                onKind = { kind ->
+                    filterChoice = null
+                    selectedId = null
+                    vm.setKind(kind)
+                },
+                onLicence = { licence ->
+                    filterChoice = null
+                    selectedId = null
+                    vm.setLicence(licence)
+                },
+                onSize = { size ->
+                    filterChoice = null
+                    selectedId = null
+                    vm.setSize(size)
+                },
+                onDismiss = { filterChoice = null }
+            )
+        }
     }
 }
 

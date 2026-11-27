@@ -7,11 +7,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -85,15 +92,28 @@ fun DotSlider(
     label: String = "",
     valueLabel: String = "",
     enabled: Boolean = true,
+    onThumbRootPosition: ((Offset) -> Unit)? = null,
+    activeDotColor: Color? = null,
 ) {
     val c = DotTheme.c
+    val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val current by rememberUpdatedState(index)
     val change by rememberUpdatedState(onIndexChange)
     val finish by rememberUpdatedState(onChangeFinished)
-    fun pick(i: Int) {
+    val thumbRootCallback by rememberUpdatedState(onThumbRootPosition)
+    var sliderCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    fun notifyThumbRoot(i: Int, w: Float, h: Float, insetPx: Float) {
+        val coords = sliderCoords
+        if (coords != null && coords.isAttached) {
+            val local = Offset(DotSliderMath.centre(i, count, w, insetPx), h / 2f)
+            thumbRootCallback?.invoke(coords.localToRoot(local))
+        }
+    }
+    fun pick(i: Int, w: Float, h: Float, insetPx: Float) {
         if (i != current) {
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            notifyThumbRoot(i, w, h, insetPx)
             change(i)
         }
     }
@@ -107,6 +127,7 @@ fun DotSlider(
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
             val w = size.width.toFloat()
+            val h = size.height.toFloat()
             var total = Offset.Zero
             var dragging = false
             while (true) {
@@ -114,7 +135,9 @@ fun DotSlider(
                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                 if (!change.pressed) {
                     // Released: a tap picks the dot under the finger.
-                    if (!dragging && !change.isConsumed) pick(DotSliderMath.indexAt(change.position.x, count, w, inset.toPx()))
+                    if (!dragging && !change.isConsumed) {
+                        pick(DotSliderMath.indexAt(change.position.x, count, w, inset.toPx()), w, h, inset.toPx())
+                    }
                     finish()
                     break
                 }
@@ -124,7 +147,7 @@ fun DotSlider(
                     DotSliderMath.Claim.Drag -> {
                         dragging = true
                         change.consume()
-                        pick(DotSliderMath.indexAt(change.position.x, count, w, inset.toPx()))
+                        pick(DotSliderMath.indexAt(change.position.x, count, w, inset.toPx()), w, h, inset.toPx())
                     }
                     DotSliderMath.Claim.Hold -> change.consume()
                     DotSliderMath.Claim.Wait -> Unit
@@ -137,6 +160,7 @@ fun DotSlider(
         modifier
             .fillMaxWidth()
             .height(48.dp)
+            .onGloballyPositioned { sliderCoords = it }
             .semantics {
                 if (label.isNotEmpty()) contentDescription = label
                 stateDescription = valueLabel
@@ -147,6 +171,14 @@ fun DotSlider(
                     setProgress { target ->
                         val i = target.roundToInt().coerceIn(0, count - 1)
                         if (i != current) {
+                            sliderCoords?.let { coords ->
+                                notifyThumbRoot(
+                                    i,
+                                    coords.size.width.toFloat(),
+                                    coords.size.height.toFloat(),
+                                    with(density) { inset.toPx() },
+                                )
+                            }
                             change(i)
                             finish()
                         }
@@ -174,6 +206,6 @@ fun DotSlider(
         // stands off its neighbours.
         val tx = DotSliderMath.centre(selected, count, w, inset.toPx())
         drawCircle(c.bgAlt, 10.dp.toPx(), Offset(tx, cy))
-        drawCircle(if (enabled) c.textPrimary else c.textDisabled, 7.dp.toPx(), Offset(tx, cy))
+        drawCircle(if (enabled) (activeDotColor ?: c.textPrimary) else c.textDisabled, 7.dp.toPx(), Offset(tx, cy))
     }
 }

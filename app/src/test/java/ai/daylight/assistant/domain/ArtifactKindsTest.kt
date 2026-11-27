@@ -25,10 +25,14 @@ class ArtifactKindsTest {
         assertThat(ArtifactKinds.kindFor("word")).isEqualTo(OutputKind.DOCUMENT)
         assertThat(ArtifactKinds.kindFor("PDF")).isEqualTo(OutputKind.PDF)
         assertThat(ArtifactKinds.kindFor(" sqlite ")).isEqualTo(OutputKind.DATABASE)
+        assertThat(ArtifactKinds.kindFor("ics")).isEqualTo(OutputKind.CALENDAR)
+        assertThat(ArtifactKinds.kindFor("calendar")).isEqualTo(OutputKind.CALENDAR)
     }
 
     @Test fun unknownAndMediaTypesDoNotResolve() {
-        assertThat(ArtifactKinds.kindFor("powerpoint")).isNull()
+        assertThat(ArtifactKinds.kindFor("hologram")).isNull()
+        // v5.13.7: slides are a file type now.
+        assertThat(ArtifactKinds.kindFor("powerpoint")).isEqualTo(OutputKind.PRESENTATION)
         assertThat(ArtifactKinds.kindFor("")).isNull()
         assertThat(ArtifactKinds.kindFor(null)).isNull()
         // Media kinds exist but are never valid create_artifact types.
@@ -57,5 +61,22 @@ class ArtifactKindsTest {
     @Test fun documentContentKeepsMarkdown() {
         val doc = "# Title\nSome **bold** text"
         assertThat(ArtifactKinds.normalizeContent(OutputKind.DOCUMENT, doc)).isEqualTo(doc)
+    }
+
+    @Test fun bareEventBecomesAnImportableCalendar() {
+        val event = """
+            BEGIN:VEVENT
+            SUMMARY:Dentist
+            DTSTART:20261102T140000Z
+            DTEND:20261102T150000Z
+            END:VEVENT
+        """.trimIndent()
+        val calendar = ArtifactKinds.normalizeContent(OutputKind.CALENDAR, "```ics\n$event\n```")
+        assertThat(calendar).contains("BEGIN:VCALENDAR")
+        assertThat(calendar).contains("END:VCALENDAR")
+        assertThat(calendar).contains("SUMMARY:Dentist")
+        assertThat(calendar).contains("UID:")
+        assertThat(ArtifactKinds.calendarIsUsable(calendar)).isTrue()
+        assertThat(ArtifactKinds.calendarIsUsable("Dentist at 3")).isFalse()
     }
 }

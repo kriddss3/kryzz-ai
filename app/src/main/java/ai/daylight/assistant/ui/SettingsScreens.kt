@@ -3,6 +3,12 @@ package ai.daylight.assistant.ui
 import androidx.biometric.BiometricManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,10 +22,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,11 +58,14 @@ import ai.daylight.assistant.domain.AssistantPreset
 import ai.daylight.assistant.domain.ChatDensity
 import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.ui.dot.DotButtonStyle
+import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.DotSecondaryColor
 import ai.daylight.assistant.ui.onboarding.GetKeyLink
 import ai.daylight.assistant.ui.onboarding.KeyLinks
 import ai.daylight.assistant.ui.dot.DotConfirmDialog
 import ai.daylight.assistant.ui.dot.DotField
 import ai.daylight.assistant.ui.dot.DotIconButton
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotNotice
 import ai.daylight.assistant.ui.dot.DotPill
 import ai.daylight.assistant.ui.dot.DotPillButton
@@ -61,11 +73,14 @@ import ai.daylight.assistant.ui.dot.DotTag
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
+import ai.daylight.assistant.ui.dot.effects.LocalDotSplash
 import ai.daylight.assistant.ui.home.HomeBoard
 import ai.daylight.assistant.ui.talk.DotSheet
 import ai.daylight.assistant.ui.talk.OptionRow
 import ai.daylight.assistant.ui.talk.SheetLabel
 import ai.daylight.assistant.ui.tune.DotSegments
+import ai.daylight.assistant.ui.tune.DotSlider
+import ai.daylight.assistant.ui.tune.SecondaryColorSlider
 import ai.daylight.assistant.ui.tune.SegmentOption
 import ai.daylight.assistant.ui.tune.ThemeSegments
 import ai.daylight.assistant.ui.tune.ThinkingModeTiles
@@ -207,6 +222,7 @@ fun TuneRoute(
             onBiometric = vm::setBiometric,
             onTheme = vm::setTheme,
             onDotBackground = vm::setDotBackground,
+            onSecondaryColor = vm::setSecondaryColor,
             onExportChats = {
                 vm.exportChats { json ->
                     pendingExport = json
@@ -243,7 +259,7 @@ fun AppearanceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     val stops = TuneSubpageModel.FONT_SCALE_STOPS
     var scaleIndex by remember(settings.fontScale) { mutableIntStateOf(TuneSubpageModel.nearest(stops, settings.fontScale)) }
 
-    TunePage("Appearance", onBack) {
+    TunePage("Appearance", onBack, mark = R.drawable.kz_led_text_motion) {
         TuneSection("Theme")
         ThemeSegments(settings.themeMode, vm::setTheme)
         Spacer(Modifier.height(28.dp))
@@ -251,7 +267,15 @@ fun AppearanceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         TuneSection("Chat density")
         DotSegments(
             options = ChatDensity.entries.map {
-                SegmentOption(it.displayName(), tag = "chat_density_${it.name.lowercase(Locale.US)}")
+                SegmentOption(
+                    it.displayName(),
+                    icon = when (it) {
+                        ChatDensity.COMPACT -> R.drawable.kz_led_compact
+                        ChatDensity.COMFORTABLE -> R.drawable.kz_led_comfortable
+                        ChatDensity.SPACIOUS -> R.drawable.kz_led_spacious
+                    },
+                    tag = "chat_density_${it.name.lowercase(Locale.US)}",
+                )
             },
             selected = ChatDensity.entries.indexOf(settings.chatDensity).coerceAtLeast(0),
             onSelect = { vm.setChatDensity(ChatDensity.entries[it]) }
@@ -268,126 +292,211 @@ fun AppearanceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
             count = stops.size,
             onIndexChange = { scaleIndex = it },
             onFinished = { vm.setFontScale(stops[scaleIndex]) },
-            caption = "Scales text across Kryzz AI and keeps spacing phone-safe."
+            caption = "Scales text across Kryzz AI and keeps spacing phone-safe.",
+            mark = R.drawable.kz_led_text_size,
         )
         Spacer(Modifier.height(28.dp))
 
         TuneSection("Motion and background")
         TuneRow(
-            R.drawable.ic_kz_bolt, "Animations",
+            R.drawable.kz_led_animations, "Animations",
             if (settings.animationsEnabled) "Short transitions and LED motion" else "Everything stays still",
             TuneTrailing.Switch(settings.animationsEnabled, vm::setAnimationsEnabled),
             modifier = Modifier.testTag("animations_toggle")
         )
         TuneRow(
-            R.drawable.ic_kz_grid, "Dot background", "Talk, Run and Home",
+            R.drawable.kz_led_dot_background, "Dot background", "Talk, Run and Home",
             TuneTrailing.Switch(settings.dotBackground, vm::setDotBackground)
+        )
+        Spacer(Modifier.height(16.dp))
+        SecondaryColorSlider(
+            selectedId = settings.secondaryColorId,
+            onSelect = vm::setSecondaryColor
         )
     }
 }
 
-/** The four keys Kryzz can hold. Each is tested with one small call before it is saved. */
-private enum class KeyProvider(val id: String, val label: String, val detail: String, val link: String? = null) {
-    OPENROUTER("openrouter", "OpenRouter", "Chat, image, video, audio and speech models.", KeyLinks.OPENROUTER),
-    MINIMAX("minimax", "MiniMax", "Chat, image, video and audio from MiniMax."),
-    PARALLEL("parallel", "Parallel Search", "Web search for Run and research.", KeyLinks.PARALLEL),
-    FISH("fish", "Fish Audio", "The voice of spoken replies.", KeyLinks.FISH_AUDIO),
-}
-
 /**
- * Keys (kit §8 KeyEditor): the chat provider, then one row per key. A stored key shows as
- * dots and its last four characters with an ENCRYPTED tag; the key itself never leaves the
- * Keystore. Opening a row shows the field for a new key with an eye toggle.
+ * Keys (kit §8 KeyEditor): the chat provider dropdown, then one row per key. A stored key
+ * shows as dots and its last four characters with an ENCRYPTED tag; the key itself never
+ * leaves the Keystore. Opening a row shows the field for a new key with an eye toggle.
  */
 @Composable
 fun ApiSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
+    val c = DotTheme.c
     val settings by vm.settings.collectAsStateWithLifecycle()
     val tails by vm.keyTails.collectAsStateWithLifecycle()
-    val open by vm.openRouterKey.collectAsStateWithLifecycle()
     val parallel by vm.parallelKey.collectAsStateWithLifecycle()
-    val minimax by vm.minimaxKey.collectAsStateWithLifecycle()
     val fish by vm.fishKey.collectAsStateWithLifecycle()
-    val openState by vm.openRouterCheck.collectAsStateWithLifecycle()
     val parallelState by vm.parallelCheck.collectAsStateWithLifecycle()
-    val minimaxState by vm.minimaxCheck.collectAsStateWithLifecycle()
     val fishState by vm.fishCheck.collectAsStateWithLifecycle()
-    // Re-read the key endings on entry and after every check (a saved key changes them).
-    LaunchedEffect(openState, parallelState, minimaxState, fishState) { vm.refreshKeyTails() }
 
-    var expanded by rememberSaveable { mutableStateOf(KeyProvider.OPENROUTER.id) }
-    LaunchedEffect(settings.chatProvider) {
-        if (expanded == KeyProvider.OPENROUTER.id || expanded == KeyProvider.MINIMAX.id) {
-            expanded = settings.chatProvider.name.lowercase(Locale.US)
-        }
+    val activeProvider = settings.chatProvider
+    val activeCheck by vm.providerCheckFlow(activeProvider).collectAsStateWithLifecycle()
+    LaunchedEffect(activeCheck, parallelState, fishState) { vm.refreshKeyTails() }
+
+    var dropdownOpen by rememberSaveable { mutableStateOf(false) }
+    var showOtherProviders by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(activeProvider.id) }
+    LaunchedEffect(activeProvider) {
+        expanded = activeProvider.id
     }
 
-    TunePage("Keys", onBack) {
+    TunePage("Keys", onBack, mark = R.drawable.kz_led_api_keys) {
         DotNotice(
-            "Chat requests go to your chosen provider (OpenRouter or MiniMax) and the model's own provider. Web search goes separately to Parallel. Voice chat always uses OpenRouter. Check each provider's terms.",
+            "Chat requests go to your chosen chat provider and the model's own provider. Web search goes separately to Parallel. Voice chat always uses OpenRouter. Check each provider's terms.",
             Modifier.padding(bottom = 24.dp),
             icon = R.drawable.ic_kz_shield
         )
         TuneSection("Chat provider")
-        DotSegments(
-            options = ChatProvider.entries.map { SegmentOption(it.label) },
-            selected = ChatProvider.entries.indexOf(settings.chatProvider).coerceAtLeast(0),
-            onSelect = { vm.setChatProvider(ChatProvider.entries[it]) }
-        )
+        Surface(
+            color = c.surfaceRaised,
+            shape = DotRadius.Card,
+            border = BorderStroke(1.dp, c.border),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("chat_provider_dropdown")
+                .clickable(role = Role.Button) { dropdownOpen = !dropdownOpen }
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        activeProvider.label,
+                        style = DotType.Body.copy(fontSize = 15.sp, lineHeight = 19.sp),
+                        color = c.textPrimary
+                    )
+                    Text(
+                        TuneSubpageModel.keyRowCaption(
+                            vm.hasProviderKey(activeProvider),
+                            tails.tailFor(activeProvider)
+                        ),
+                        Modifier.padding(top = 2.dp),
+                        style = DotType.Caption,
+                        color = c.textTertiary
+                    )
+                }
+                Icon(
+                    painterResource(if (dropdownOpen) R.drawable.ic_kz_chevron_up else R.drawable.ic_kz_chevron_down),
+                    contentDescription = if (dropdownOpen) "Close provider menu" else "Open provider menu",
+                    modifier = Modifier.size(20.dp),
+                    tint = c.textSecondary
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = dropdownOpen,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Surface(
+                color = c.surface,
+                shape = DotRadius.Card,
+                border = BorderStroke(1.dp, c.border),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 340.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp)
+                ) {
+                    ChatProvider.entries.forEach { provider ->
+                        val hasKey = vm.hasProviderKey(provider)
+                        val tail = tails.tailFor(provider)
+                        val detail = if (hasKey && !tail.isNullOrBlank()) {
+                            "${provider.description} Key ••••$tail"
+                        } else {
+                            provider.description
+                        }
+                        TuneChoiceRow(
+                            title = provider.label,
+                            detail = detail,
+                            selected = provider == activeProvider,
+                            onClick = {
+                                vm.setChatProvider(provider)
+                                dropdownOpen = false
+                                expanded = provider.id
+                            }
+                        )
+                    }
+                }
+            }
+        }
         TuneDetail(
-            "Who answers in Talk and Run. Switching refreshes the model catalog and resets models the new provider lacks.",
+            "Who answers in Talk and Run. Switching refreshes the model catalog and resets text models the new provider lacks.",
             Modifier.padding(top = 8.dp)
         )
         Spacer(Modifier.height(28.dp))
 
         TuneSection("Keys")
-        KeyProvider.entries.forEach { provider ->
-            val stored = when (provider) {
-                KeyProvider.OPENROUTER -> vm.hasOpenRouter()
-                KeyProvider.MINIMAX -> vm.hasMinimax()
-                KeyProvider.PARALLEL -> vm.hasParallel()
-                KeyProvider.FISH -> vm.hasFish()
-            }
-            val tail = when (provider) {
-                KeyProvider.OPENROUTER -> tails.openRouterTail
-                KeyProvider.MINIMAX -> tails.minimaxTail
-                KeyProvider.PARALLEL -> tails.parallelTail
-                KeyProvider.FISH -> tails.fishTail
-            }
-            KeyEditor(
-                provider = provider,
-                stored = stored,
-                tail = tail,
-                expanded = expanded == provider.id,
-                onToggle = { expanded = if (expanded == provider.id) "" else provider.id },
-                value = when (provider) {
-                    KeyProvider.OPENROUTER -> open
-                    KeyProvider.MINIMAX -> minimax
-                    KeyProvider.PARALLEL -> parallel
-                    KeyProvider.FISH -> fish
-                },
-                onValue = {
-                    when (provider) {
-                        KeyProvider.OPENROUTER -> vm.openRouterKey.value = it
-                        KeyProvider.MINIMAX -> vm.minimaxKey.value = it
-                        KeyProvider.PARALLEL -> vm.parallelKey.value = it
-                        KeyProvider.FISH -> vm.fishKey.value = it
-                    }
-                },
-                check = when (provider) {
-                    KeyProvider.OPENROUTER -> openState
-                    KeyProvider.MINIMAX -> minimaxState
-                    KeyProvider.PARALLEL -> parallelState
-                    KeyProvider.FISH -> fishState
-                },
-                onTest = {
-                    when (provider) {
-                        KeyProvider.OPENROUTER -> vm.saveAndTestOpenRouter()
-                        KeyProvider.MINIMAX -> vm.saveAndTestMiniMax()
-                        KeyProvider.PARALLEL -> vm.saveAndTestParallel()
-                        KeyProvider.FISH -> vm.saveAndTestFish()
-                    }
+        ChatProviderKeyEditor(
+            provider = activeProvider,
+            vm = vm,
+            tails = tails,
+            expanded = expanded == activeProvider.id,
+            onToggle = { expanded = if (expanded == activeProvider.id) "" else activeProvider.id }
+        )
+        KeyEditor(
+            id = "parallel",
+            label = "Parallel Search",
+            detail = "Web search for Find, Run and research.",
+            link = KeyLinks.PARALLEL,
+            stored = vm.hasParallel(),
+            tail = tails.parallelTail,
+            expanded = expanded == "parallel",
+            onToggle = { expanded = if (expanded == "parallel") "" else "parallel" },
+            value = parallel,
+            onValue = { vm.parallelKey.value = it },
+            check = parallelState,
+            onTest = vm::saveAndTestParallel
+        )
+        KeyEditor(
+            id = "fish",
+            label = "Fish Audio",
+            detail = "The voice of spoken replies.",
+            link = KeyLinks.FISH_AUDIO,
+            stored = vm.hasFish(),
+            tail = tails.fishTail,
+            expanded = expanded == "fish",
+            onToggle = { expanded = if (expanded == "fish") "" else "fish" },
+            value = fish,
+            onValue = { vm.fishKey.value = it },
+            check = fishState,
+            onTest = vm::saveAndTestFish
+        )
+
+        val otherProviders = remember(activeProvider) {
+            ChatProvider.entries.filter { it != activeProvider }
+        }.sortedByDescending { vm.hasProviderKey(it) }
+        val configuredOthers = otherProviders.count { vm.hasProviderKey(it) }
+        TuneRow(
+            R.drawable.kz_led_api_keys,
+            "Other chat providers",
+            if (configuredOthers > 0) "$configuredOthers configured" else "${otherProviders.size} more providers",
+            TuneTrailing.Expand(showOtherProviders),
+            onClick = { showOtherProviders = !showOtherProviders }
+        )
+        AnimatedVisibility(visible = showOtherProviders) {
+            Column(Modifier.fillMaxWidth().padding(start = 12.dp)) {
+                otherProviders.forEach { provider ->
+                    ChatProviderKeyEditor(
+                        provider = provider,
+                        vm = vm,
+                        tails = tails,
+                        expanded = expanded == provider.id,
+                        onToggle = { expanded = if (expanded == provider.id) "" else provider.id }
+                    )
                 }
-            )
+            }
         }
         Spacer(Modifier.height(24.dp))
         DotNotice(
@@ -397,12 +506,44 @@ fun ApiSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     }
 }
 
+@Composable
+private fun ChatProviderKeyEditor(
+    provider: ChatProvider,
+    vm: SettingsViewModel,
+    tails: ai.daylight.assistant.ui.tune.TuneKeys,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val value by vm.providerKeyFlow(provider).collectAsStateWithLifecycle()
+    val check by vm.providerCheckFlow(provider).collectAsStateWithLifecycle()
+    LaunchedEffect(check) {
+        if (check is CheckState.Success) vm.refreshKeyTails()
+    }
+    KeyEditor(
+        id = provider.id,
+        label = provider.label,
+        detail = provider.description,
+        link = provider.keyUrl,
+        stored = vm.hasProviderKey(provider),
+        tail = tails.tailFor(provider),
+        expanded = expanded,
+        onToggle = onToggle,
+        value = value,
+        onValue = { vm.providerKeyFlow(provider).value = it },
+        check = check,
+        onTest = { vm.saveAndTestProvider(provider) }
+    )
+}
+
 /** Short spoken expressions used to audition a voice beyond a plain "hello" preview. */
 private val voiceExpressions = listOf("Mmm", "Oh", "Hmm", "Ah", "Wow", "Hmm, okay")
 
 @Composable
 private fun KeyEditor(
-    provider: KeyProvider,
+    id: String,
+    label: String,
+    detail: String,
+    link: String?,
     stored: Boolean,
     tail: String?,
     expanded: Boolean,
@@ -414,17 +555,17 @@ private fun KeyEditor(
 ) {
     val c = DotTheme.c
     TuneRow(
-        R.drawable.ic_kz_key,
-        provider.label,
+        R.drawable.kz_led_api_keys,
+        label,
         TuneSubpageModel.keyRowCaption(stored, tail),
         TuneTrailing.Expand(expanded),
         onClick = onToggle
     )
     if (!expanded) return
-    var reveal by rememberSaveable(provider) { mutableStateOf(false) }
+    var reveal by rememberSaveable(id) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(start = 34.dp, bottom = 20.dp)) {
-        Text(provider.detail, style = DotType.BodySmall, color = c.textTertiary)
-        provider.link?.let { GetKeyLink(it, Modifier.padding(top = 4.dp)) }
+        Text(detail, style = DotType.BodySmall, color = c.textTertiary)
+        link?.let { GetKeyLink(it, Modifier.padding(top = 4.dp)) }
         Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 TuneSubpageModel.maskedKey(stored, tail) ?: "No key stored",
@@ -438,7 +579,7 @@ private fun KeyEditor(
             value = value,
             onValueChange = onValue,
             label = if (stored) "Replace key" else "New key",
-            placeholder = "Paste your ${provider.label} key",
+            placeholder = "Paste your $label key",
             visualTransformation = if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
@@ -455,7 +596,7 @@ private fun KeyEditor(
                     iconSize = 20.dp
                 )
             },
-            fieldModifier = Modifier.testTag("api_key_${provider.id}")
+            fieldModifier = Modifier.testTag("api_key_$id")
         )
         CheckLine(check)
         Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
@@ -521,7 +662,7 @@ fun VoiceSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
         ?: if (customSelected) "Custom voice" else "Choose a voice"
     val engine = FishEngines.options.firstOrNull { it.id == settings.fishModel } ?: FishEngines.options.first()
 
-    TunePage("Voice", onBack) {
+    TunePage("Voice", onBack, mark = R.drawable.kz_led_voice) {
         DotNotice(
             "In a chat with nothing typed, the send button becomes a microphone. Tap it, speak, and Kryzz answers out loud; your words and the reply still appear in the chat. The transcriber hears you, the reply model answers, and Fish Audio speaks."
         )
@@ -759,7 +900,7 @@ fun PersonaSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     }
     val changed = selected != settings.presetId || (selected == "custom" && custom != settings.customPrompt)
 
-    TunePage("Persona", onBack) {
+    TunePage("Persona", onBack, mark = R.drawable.kz_led_persona) {
         TuneSection("How Kryzz answers")
         TuneDetail(
             "A preset changes only the system instruction. It never shows your keys or skips a confirmation for outside actions.",
@@ -822,10 +963,10 @@ fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
     }
     var capIndex by remember(settings.costCapCents) { mutableIntStateOf(TuneModel.capIndex(settings.costCapCents)) }
 
-    TunePage("Tools", onBack) {
+    TunePage("Tools", onBack, mark = R.drawable.kz_led_search_limits) {
         TuneSection("Web search")
         TuneRow(
-            R.drawable.ic_kz_web, "Parallel web search",
+            R.drawable.kz_led_web_search, "Parallel web search",
             detail = "Lets the model look up current information. Searching never needs a confirmation. " +
                 "The same switch lets Find search Wikimedia Commons for free images.",
             trailing = TuneTrailing.Switch(settings.searchEnabled, vm::setSearch)
@@ -875,7 +1016,8 @@ fun ToolSettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
             count = TuneModel.CAP_STOPS.size,
             onIndexChange = { capIndex = it },
             onFinished = { vm.setCostCapCents(TuneModel.capCents(capIndex)) },
-            caption = "Stops tool use once a turn has spent this much, then answers. Uses the cost OpenRouter reports; MiniMax counts tokens instead."
+            caption = "Stops tool use once a turn has spent this much, then answers. Uses the cost OpenRouter reports; MiniMax counts tokens instead.",
+            mark = R.drawable.kz_led_cost_cap,
         )
         Spacer(Modifier.height(24.dp))
         TuneRow(
@@ -908,7 +1050,7 @@ fun PrivacySettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
 
     TunePage("Privacy", onBack) {
         Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 28.dp)) {
-            Icon(painterResource(R.drawable.ic_kz_shield_dot), null, Modifier.size(64.dp), tint = c.textPrimary)
+            KryzzGlyph(R.drawable.kz_led_data_usage, Modifier.size(64.dp), tint = c.textPrimary)
             Spacer(Modifier.height(18.dp))
             DotMatrixText("LOCAL", pitch = 4.2.dp, on = c.textPrimary, off = Color.Transparent, contentDescription = "Local")
             Text(
@@ -921,11 +1063,11 @@ fun PrivacySettingsScreen(vm: SettingsViewModel, onBack: () -> Unit) {
 
         TuneSection("On this phone")
         TuneRow(
-            R.drawable.ic_kz_lock, "Lock the app", TuneModel.lockCaption(biometricAvailable),
+            R.drawable.kz_led_lock, "Lock the app", TuneModel.lockCaption(biometricAvailable),
             TuneTrailing.Switch(settings.biometricLock, vm::setBiometric, enabled = biometricAvailable || settings.biometricLock)
         )
         TuneRow(
-            R.drawable.ic_kz_location, "Approximate location",
+            R.drawable.kz_led_location, "Approximate location",
             TuneModel.locationCaption(settings.locationEnabled, settings.locationLabel),
             TuneTrailing.Switch(settings.locationEnabled, { wanted ->
                 if (wanted && !vm.hasLocationPermission()) {

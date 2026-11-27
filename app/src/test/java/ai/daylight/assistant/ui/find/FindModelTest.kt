@@ -5,6 +5,10 @@ import ai.daylight.assistant.domain.FindKind
 import ai.daylight.assistant.domain.FindSize
 import ai.daylight.assistant.domain.FindState
 import ai.daylight.assistant.domain.FindStatus
+import ai.daylight.assistant.domain.FindWebResult
+import ai.daylight.assistant.domain.FindWebSource
+import ai.daylight.assistant.domain.FindWebState
+import ai.daylight.assistant.domain.FindWebStatus
 import ai.daylight.assistant.domain.FoundImage
 import ai.daylight.assistant.domain.ImageLicence
 import ai.daylight.assistant.domain.LicenceFilter
@@ -87,5 +91,48 @@ class FindModelTest {
         assertThat(FindModel.readableAfterFold(cyrillic)).isFalse()
         assertThat(FindModel.readableAfterFold(FindModel.asciiFold("Bien Orellana Bacarra Jr"))).isTrue()
         assertThat(FindModel.readableAfterFold("")).isFalse()
+    }
+
+    @Test fun webInkLineTracksWebBrowsingStatus() {
+        val source = FindWebSource("Title", "https://example.com", "example.com", null, "snippet")
+        assertThat(FindModel.webInkLine(FindWebState(), off = true)).isEqualTo(InkLine("FIND OFF"))
+        assertThat(FindModel.webInkLine(FindWebState(), off = false)).isEqualTo(InkLine("FIND WEB READY"))
+        assertThat(FindModel.webInkLine(FindWebState(status = FindWebStatus.SEARCHING), off = false))
+            .isEqualTo(InkLine("FIND SEARCHING", live = true))
+        assertThat(FindModel.webInkLine(FindWebState(status = FindWebStatus.SYNTHESIZING), off = false))
+            .isEqualTo(InkLine("FIND SYNTHESIZING", live = true))
+        assertThat(FindModel.webInkLine(FindWebState(status = FindWebStatus.FAILED, error = "boom"), off = false))
+            .isEqualTo(InkLine("FIND FAILED"))
+        assertThat(
+            FindModel.webInkLine(
+                FindWebState(status = FindWebStatus.DONE, result = FindWebResult("q", "a", emptyList(), null)),
+                off = false,
+            )
+        ).isEqualTo(InkLine("FIND NO SOURCES"))
+        assertThat(
+            FindModel.webInkLine(
+                FindWebState(status = FindWebStatus.DONE, result = FindWebResult("q", "a", listOf(source), null)),
+                off = false,
+            )
+        ).isEqualTo(InkLine("FIND 1 SOURCE"))
+        assertThat(
+            FindModel.webInkLine(
+                FindWebState(status = FindWebStatus.DONE, result = FindWebResult("q", "a", listOf(source, source), null)),
+                off = false,
+            )
+        ).isEqualTo(InkLine("FIND 2 SOURCES"))
+
+        listOf(
+            "FIND WEB READY",
+            "FIND SYNTHESIZING",
+            "FIND NO SOURCES",
+            "FIND 12 SOURCES",
+            "MAKE IS BUSY",
+            "MAKE ALREADY HAS 4 IMAGES",
+            "COULD NOT LOAD IMAGE",
+            "ANSWER COPIED",
+        ).forEach {
+            assertThat(InkLine.sanitize(it)).isEqualTo(it)
+        }
     }
 }

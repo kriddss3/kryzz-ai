@@ -72,3 +72,31 @@ fun railIndexAt(y: Float, firstCenter: Float, pitch: Float, count: Int = Arm.ent
     val raw = kotlin.math.floor((y - firstCenter + pitch / 2f) / pitch).toInt()
     return raw.coerceIn(0, count - 1)
 }
+
+/**
+ * Fraction of the pitch a finger must travel from the current dot before the next arm
+ * is selected. Half a pitch (the old rule) switched arms under a resting thumb.
+ */
+const val RAIL_SCRUB_STICKY = 0.85f
+
+/**
+ * Scrub index that stays on [current] until the finger is most of the way to the next
+ * dot. A fast swipe still crosses several arms, because the distance is measured from
+ * the arm currently held, not from the last event.
+ */
+fun railScrubIndex(
+    y: Float,
+    current: Int,
+    firstCenter: Float,
+    pitch: Float,
+    count: Int = Arm.entries.size,
+    sticky: Float = RAIL_SCRUB_STICKY
+): Int {
+    if (count <= 0 || pitch <= 0f) return 0
+    val held = current.coerceIn(0, count - 1)
+    val step = pitch * sticky.coerceIn(0.5f, 1f)
+    if (step <= 0f) return held
+    val delta = y - (firstCenter + held * pitch)
+    if (kotlin.math.abs(delta) < step) return held
+    return (held + (delta / step).toInt()).coerceIn(0, count - 1)
+}

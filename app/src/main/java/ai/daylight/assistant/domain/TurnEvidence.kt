@@ -14,7 +14,20 @@ internal object TurnEvidence {
     private const val MAX_TITLE_CHARS = 100
     private const val MAX_URL_CHARS = 300
 
-    fun annotate(content: String, citations: List<Citation>, outputs: List<GeneratedOutput>): String {
+    /** v5.13.7: source text re-sent for the latest reply's files, all files together. */
+    const val MAX_SOURCE_CHARS = 12_000
+
+    /**
+     * [withSource] (the latest reply that made files) adds each file's source as the model
+     * wrote it, so "add a slide" or "fix the button colour" edits the real file instead of
+     * rewriting it from memory.
+     */
+    fun annotate(
+        content: String,
+        citations: List<Citation>,
+        outputs: List<GeneratedOutput>,
+        withSource: Boolean = false
+    ): String {
         if (citations.isEmpty() && outputs.isEmpty()) return content
         return buildString {
             append(content.trimEnd())
@@ -33,6 +46,22 @@ internal object TurnEvidence {
                 append(outputs.joinToString("; ") { "${it.title.take(MAX_TITLE_CHARS)} (${it.kind.name.lowercase()}, ${it.fileName})" })
                 append(")")
             }
+            if (withSource) appendSources(outputs)
+        }
+    }
+
+    private fun StringBuilder.appendSources(outputs: List<GeneratedOutput>) {
+        var budget = MAX_SOURCE_CHARS
+        outputs.filter { it.kind in ArtifactKinds.fileKinds && !it.content.isNullOrBlank() }.forEach { output ->
+            if (budget <= 0) return
+            val source = output.content.orEmpty()
+            val shown = source.take(budget)
+            budget -= shown.length
+            append("\n\n--- ").append(output.fileName).append(" (source as written; to change the file, call ")
+            append("create_artifact again with file_name ").append(output.fileName).append(" and the complete new content) ---\n")
+            append(shown)
+            if (shown.length < source.length) append("\n[... the rest is not shown ...]")
+            append("\n--- end of ").append(output.fileName).append(" ---")
         }
     }
 }

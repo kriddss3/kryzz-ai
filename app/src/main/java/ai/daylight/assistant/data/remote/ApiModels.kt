@@ -64,7 +64,9 @@ data class ChatRequest(
 @Serializable
 data class ProviderPreferences(
     val sort: String = "latency",
-    @SerialName("allow_fallbacks") val allowFallbacks: Boolean = true
+    @SerialName("allow_fallbacks") val allowFallbacks: Boolean = true,
+    /** Provider slugs to skip. A retry uses this after one route answers 429. */
+    val ignore: List<String> = emptyList()
 )
 
 /** OpenAI-style tool_choice values, including MiniMax's named-function object. */
@@ -170,7 +172,12 @@ data class ChatChunk(
     val usage: Usage? = null,
     val error: ApiError? = null,
     @SerialName("base_resp") val baseResp: MiniMaxBaseResp? = null,
-    val model: String? = null
+    val model: String? = null,
+    /**
+     * OpenRouter names the route that produced this chunk (`"OpenAI"`). A routing object
+     * on other payloads stays a [JsonElement] so it does not fail the decode.
+     */
+    val provider: JsonElement? = null
 )
 
 @Serializable
@@ -230,7 +237,18 @@ data class PromptTokensDetails(
 )
 
 @Serializable
-data class ApiError(val code: Int? = null, val message: String = "Unknown service error")
+data class ApiError(
+    val code: Int? = null,
+    val message: String = "Unknown service error",
+    /** OpenRouter attaches `provider_name` and `error_type` here. Kept loose so odd shapes still decode. */
+    val metadata: JsonElement? = null
+)
+
+/** `metadata.provider_name` when [metadata] is an object. */
+internal fun ApiError.providerName(): String? {
+    val obj = metadata as? JsonObject ?: return null
+    return (obj["provider_name"] as? JsonPrimitive)?.contentOrNull
+}
 
 @Serializable
 data class ErrorEnvelope(val error: ApiError? = null)
@@ -346,12 +364,32 @@ internal object NullAsEmptyStringListSerializer : KSerializer<List<String>> {
     }
 }
 
+/** A picture or clip sent with an OpenRouter image or video request. Null fields are omitted. */
+@Serializable
+data class OpenRouterMediaUrl(val url: String)
+
+@Serializable
+data class OpenRouterInputReference(
+    val type: String,
+    @SerialName("image_url") val imageUrl: OpenRouterMediaUrl? = null,
+    @SerialName("video_url") val videoUrl: OpenRouterMediaUrl? = null,
+)
+
+/** An exact opening or closing frame. [type] has no default: encodeDefaults would drop it. */
+@Serializable
+data class OpenRouterFrameImage(
+    val type: String,
+    @SerialName("image_url") val imageUrl: OpenRouterMediaUrl,
+    @SerialName("frame_type") val frameType: String,
+)
+
 @Serializable
 data class ImageGenerationRequest(
     val model: String,
     val prompt: String,
     val n: Int = 1,
-    @SerialName("output_format") val outputFormat: String = "png"
+    @SerialName("output_format") val outputFormat: String = "png",
+    @SerialName("input_references") val inputReferences: List<OpenRouterInputReference> = emptyList(),
 )
 
 @Serializable
@@ -372,7 +410,9 @@ data class VideoGenerationRequest(
     val prompt: String,
     @SerialName("aspect_ratio") val aspectRatio: String = "16:9",
     val duration: Int = 5,
-    val resolution: String = "720p"
+    val resolution: String = "720p",
+    @SerialName("frame_images") val frameImages: List<OpenRouterFrameImage> = emptyList(),
+    @SerialName("input_references") val inputReferences: List<OpenRouterInputReference> = emptyList(),
 )
 
 @Serializable
@@ -530,7 +570,15 @@ data class MiniMaxImageRequest(
     // only read image_base64 — generation looked like it failed with a garbled model tag.
     @SerialName("aspect_ratio") val aspectRatio: String,
     @SerialName("response_format") val responseFormat: String,
-    val n: Int
+    val n: Int,
+    @SerialName("subject_reference") val subjectReference: List<MiniMaxSubjectReference> = emptyList(),
+)
+
+/** One subject photo for MiniMax image-to-image. [type] is "character"; it must not be defaulted. */
+@Serializable
+data class MiniMaxSubjectReference(
+    val type: String,
+    @SerialName("image_file") val imageFile: String,
 )
 
 @Serializable
@@ -561,6 +609,7 @@ data class MiniMaxVideoContentItem(
     val type: String,
     val text: String? = null,
     @SerialName("image_url") val imageUrl: MiniMaxImageUrl? = null,
+    @SerialName("video_url") val videoUrl: MiniMaxImageUrl? = null,
     val role: String? = null
 )
 
@@ -658,7 +707,9 @@ class AssistantApiException(
     val kind: ErrorKind,
     override val message: String,
     val statusCode: Int? = null,
-    val retryAfterSeconds: Long? = null
+    val retryAfterSeconds: Long? = null,
+    /** Lowercase provider slug that returned a rate limit, when the response named one. */
+    val saturatedProvider: String? = null
 ) : Exception(message)
 
 enum class ErrorKind { INVALID_KEY, INSUFFICIENT_CREDITS, RATE_LIMIT, TIMEOUT, MODEL_UNAVAILABLE, CONTEXT_LENGTH, VALIDATION, NETWORK, CANCELLED, UNKNOWN }

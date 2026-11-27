@@ -332,6 +332,57 @@ class AgentTurnPolicyTest {
         assertThat(plan.toolNames).containsNoneOf(AgentTurnPolicy.GET_WEATHER, AgentTurnPolicy.FETCH_URL)
     }
 
+    @Test fun talkOffersFilesAndEverydayToolsOnEveryTurn() {
+        // v5.13.7: "make me a pdf" missed the old phrase gate, so Talk had no file tool and
+        // the model said it could not make PDFs. Talk now has its tools on every turn.
+        val talk = autoContext().copy(agentMode = false, capabilityAuto = true)
+        val plan = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), talk)
+        assertThat(plan.toolNames).containsAtLeast(
+            AgentTurnPolicy.SEARCH_PAST_CHATS,
+            AgentTurnPolicy.PARALLEL_SEARCH,
+            AgentTurnPolicy.GET_CURRENT_TIME,
+            AgentTurnPolicy.CALCULATE,
+            AgentTurnPolicy.GET_WEATHER,
+            AgentTurnPolicy.FETCH_URL,
+            AgentTurnPolicy.CREATE_ARTIFACT
+        )
+        assertThat(plan.forcedTool).isNull()
+        // Run's planning, questions and memory tools stay out of Talk.
+        assertThat(plan.toolNames).containsNoneOf(
+            AgentTurnPolicy.UPDATE_PLAN,
+            AgentTurnPolicy.ASK_USER,
+            AgentTurnPolicy.REMEMBER_FACT,
+            AgentTurnPolicy.RECALL_MEMORIES
+        )
+        // Slow or side-effecting tools keep their keyword gates, as in Run.
+        assertThat(plan.toolNames).containsNoneOf(
+            AgentTurnPolicy.GENERATE_IMAGE,
+            AgentTurnPolicy.SCHEDULE_TASK,
+            AgentTurnPolicy.CREATE_SKILL,
+            AgentTurnPolicy.CREATE_CODE_PROJECT
+        )
+        val asked = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(),
+            talk.copy(offerMediaImage = true, offerSchedule = true, offerSkillAuto = true, offerCodeAuto = true)
+        )
+        assertThat(asked.toolNames).containsAtLeast(
+            AgentTurnPolicy.GENERATE_IMAGE,
+            AgentTurnPolicy.SCHEDULE_TASK,
+            AgentTurnPolicy.CREATE_SKILL,
+            AgentTurnPolicy.CREATE_CODE_PROJECT
+        )
+        // Without the public web client there is no weather or page reading.
+        val offline = AgentTurnPolicy.planRound(AgentTurnPolicy.TurnProgress(), talk.copy(publicWebAvailable = false))
+        assertThat(offline.toolNames).containsNoneOf(AgentTurnPolicy.GET_WEATHER, AgentTurnPolicy.FETCH_URL)
+        assertThat(offline.toolNames).contains(AgentTurnPolicy.CREATE_ARTIFACT)
+        // Voice never grows a file tool.
+        val voice = AgentTurnPolicy.planRound(
+            AgentTurnPolicy.TurnProgress(),
+            autoContext(voiceMode = true).copy(agentMode = false, capabilityAuto = false)
+        )
+        assertThat(voice.toolNames).doesNotContain(AgentTurnPolicy.CREATE_ARTIFACT)
+    }
+
     @Test fun autoCreateArtifactStaysOfferedAfterAFileExists() {
         // v5.10: a second create_artifact replaces the file instead of the tool vanishing.
         val plan = AgentTurnPolicy.planRound(
@@ -356,7 +407,8 @@ class AgentTurnPolicyTest {
             autoContext().copy(codeCapability = true),
             autoContext().copy(deepResearch = true, searchRoundCap = 2),
             autoContext().copy(offerMediaImage = true, offerMediaVideo = true, offerSchedule = true),
-            autoContext().copy(agentMode = false, capabilityAuto = false) // chat mode
+            autoContext().copy(agentMode = false, capabilityAuto = false), // chat mode
+            autoContext().copy(agentMode = false, offerMediaImage = true, offerSchedule = true) // Talk asked for an image
         )
         val progressions = listOf(
             AgentTurnPolicy.TurnProgress(toolRounds = 1, searchRounds = 1, didSearch = true),

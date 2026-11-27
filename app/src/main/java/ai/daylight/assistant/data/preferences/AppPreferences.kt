@@ -25,6 +25,7 @@ import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ReasoningEffort
 import ai.daylight.assistant.domain.TextPalette
+import ai.daylight.assistant.ui.dot.DotSecondaryColor
 import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoiceReplyModels
@@ -84,8 +85,10 @@ data class SettingsState(
     val backgroundBlur: Float = 0f,
     /** v5.12.6 (Tune): the kit's dot grid behind Talk, Run and Home. Off keeps the plain background. */
     val dotBackground: Boolean = false,
+    val secondaryColorId: String = DotSecondaryColor.AMBER.id,
     val biometricLock: Boolean = false,
     val memoryEnabled: Boolean = false,
+    val autoMemoryEnabled: Boolean = true,
     val agentSwarmEnabled: Boolean = false,
     val locationEnabled: Boolean = false,
     val locationLabel: String = "",
@@ -148,9 +151,11 @@ class AppPreferences(private val context: Context) {
         val surfaceOpacity = floatPreferencesKey("surface_opacity")
         val backgroundBlur = floatPreferencesKey("background_blur")
         val dotBackground = booleanPreferencesKey("dot_background")
+        val secondaryColor = stringPreferencesKey("secondary_color")
         val inkwellSeenAt = longPreferencesKey("inkwell_seen_at")
         val biometric = booleanPreferencesKey("biometric_lock")
         val memoryEnabled = booleanPreferencesKey("memory_enabled")
+        val autoMemoryEnabled = booleanPreferencesKey("auto_memory_enabled")
         val agentSwarmEnabled = booleanPreferencesKey("agent_swarm_enabled")
         val locationEnabled = booleanPreferencesKey("location_enabled")
         val locationLabel = stringPreferencesKey("location_label")
@@ -192,7 +197,7 @@ class AppPreferences(private val context: Context) {
                 audioModel = p[Keys.audioModel] ?: "openai/gpt-4o-mini-tts-2025-12-15",
                 favoriteModels = p[Keys.favorites]?.split('|')?.filter(String::isNotBlank)?.toSet()
                     ?: setOf("openai/gpt-4o-mini"),
-                chatProvider = runCatching { ChatProvider.valueOf(p[Keys.chatProvider] ?: "OPENROUTER") }.getOrDefault(ChatProvider.OPENROUTER),
+                chatProvider = ChatProvider.from(p[Keys.chatProvider]),
                 modelReasoning = decodeReasoning(p[Keys.reasoning]),
                 presetId = p[Keys.preset] ?: "balanced",
                 customPrompt = p[Keys.customPrompt] ?: "",
@@ -220,8 +225,10 @@ class AppPreferences(private val context: Context) {
                 surfaceOpacity = 0.84f,
                 backgroundBlur = 0f,
                 dotBackground = p[Keys.dotBackground] ?: false,
+                secondaryColorId = DotSecondaryColor.from(p[Keys.secondaryColor]).id,
                 biometricLock = p[Keys.biometric] ?: false,
                 memoryEnabled = p[Keys.memoryEnabled] ?: false,
+                autoMemoryEnabled = p[Keys.autoMemoryEnabled] ?: true,
                 agentSwarmEnabled = p[Keys.agentSwarmEnabled] ?: false,
                 locationEnabled = p[Keys.locationEnabled] ?: false,
                 locationLabel = p[Keys.locationLabel] ?: "",
@@ -275,9 +282,11 @@ class AppPreferences(private val context: Context) {
         it[Keys.agentModel] = defaults.agent
         it[Keys.researchModel] = defaults.research
         it[Keys.maxModel] = defaults.max
-        it[Keys.imageModel] = defaults.image
-        it[Keys.videoModel] = defaults.video
-        it[Keys.audioModel] = defaults.audio
+        if (provider == ChatProvider.OPENROUTER || provider == ChatProvider.MINIMAX) {
+            it[Keys.imageModel] = defaults.image
+            it[Keys.videoModel] = defaults.video
+            it[Keys.audioModel] = defaults.audio
+        }
         it[Keys.favorites] = defaults.default
     }
 
@@ -371,6 +380,15 @@ class AppPreferences(private val context: Context) {
             video = "MiniMax-H3",
             audio = "music-01-free"
         )
+        else -> ModelDefaults(
+            default = provider.defaultModel,
+            agent = provider.defaultModel,
+            research = provider.defaultModel,
+            max = provider.defaultModel,
+            image = "",
+            video = "",
+            audio = ""
+        )
     }
     suspend fun setReasoning(modelId: String, effort: ReasoningEffort) = context.dataStore.edit { preferences ->
         val values = decodeReasoning(preferences[Keys.reasoning]).toMutableMap()
@@ -411,6 +429,9 @@ class AppPreferences(private val context: Context) {
     suspend fun setSurfaceOpacity(value: Float) = context.dataStore.edit { it[Keys.surfaceOpacity] = value.coerceIn(0.42f, 0.96f) }
     suspend fun setBackgroundBlur(value: Float) = context.dataStore.edit { it[Keys.backgroundBlur] = value.coerceIn(0f, 28f) }
     suspend fun setDotBackground(value: Boolean) = context.dataStore.edit { it[Keys.dotBackground] = value }
+    suspend fun setSecondaryColor(id: String) = context.dataStore.edit {
+        it[Keys.secondaryColor] = DotSecondaryColor.from(id).id
+    }
 
     /**
      * C10: the newest output the Inkwell has shown (the time its answer was made). Home's
@@ -428,6 +449,7 @@ class AppPreferences(private val context: Context) {
     }
     suspend fun setBiometricLock(value: Boolean) = context.dataStore.edit { it[Keys.biometric] = value }
     suspend fun setMemoryEnabled(value: Boolean) = context.dataStore.edit { it[Keys.memoryEnabled] = value }
+    suspend fun setAutoMemoryEnabled(value: Boolean) = context.dataStore.edit { it[Keys.autoMemoryEnabled] = value }
     suspend fun setAgentSwarmEnabled(value: Boolean) = context.dataStore.edit { it[Keys.agentSwarmEnabled] = value }
     suspend fun setLocationEnabled(value: Boolean) = context.dataStore.edit { it[Keys.locationEnabled] = value }
     suspend fun setCachedLocation(label: String, lat: Double, lon: Double) = context.dataStore.edit {

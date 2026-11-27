@@ -1,5 +1,6 @@
 package ai.daylight.assistant.security
 
+import ai.daylight.assistant.domain.ChatProvider
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -15,32 +16,35 @@ class SecureCredentialStore(context: Context) {
     private val preferences = context.getSharedPreferences("secure_credentials", Context.MODE_PRIVATE)
     private val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
 
-    init {
-        // Voice STT is OpenRouter-only. Drop any leftover xAI key from older builds.
-        if (preferences.contains("xai")) preferences.edit().remove("xai").apply()
-    }
+    fun hasKey(id: String): Boolean = preferences.contains(id)
+    fun key(id: String): String? = decrypt(preferences.getString(id, null))
+    fun setKey(id: String, value: String?) = put(id, value)
 
-    fun hasOpenRouterKey(): Boolean = preferences.contains(OPENROUTER)
-    fun hasParallelKey(): Boolean = preferences.contains(PARALLEL)
-    fun hasFishKey(): Boolean = preferences.contains(FISH)
-    fun hasMinimaxKey(): Boolean = preferences.contains(MINIMAX)
-    fun openRouterKey(): String? = decrypt(preferences.getString(OPENROUTER, null))
-    fun parallelKey(): String? = decrypt(preferences.getString(PARALLEL, null))
-    fun fishKey(): String? = decrypt(preferences.getString(FISH, null))
-    fun minimaxKey(): String? = decrypt(preferences.getString(MINIMAX, null))
+    fun hasProviderKey(provider: ChatProvider): Boolean = hasKey(provider.id)
+    fun providerKey(provider: ChatProvider): String? = key(provider.id)
+    fun setProviderKey(provider: ChatProvider, value: String?) = setKey(provider.id, value)
 
-    fun setOpenRouterKey(value: String) = put(OPENROUTER, value)
-    fun setParallelKey(value: String) = put(PARALLEL, value)
-    fun setFishKey(value: String) = put(FISH, value)
-    fun setMinimaxKey(value: String) = put(MINIMAX, value)
+    fun hasOpenRouterKey(): Boolean = hasProviderKey(ChatProvider.OPENROUTER)
+    fun hasParallelKey(): Boolean = hasKey(PARALLEL)
+    fun hasFishKey(): Boolean = hasKey(FISH)
+    fun hasMinimaxKey(): Boolean = hasProviderKey(ChatProvider.MINIMAX)
+    fun openRouterKey(): String? = providerKey(ChatProvider.OPENROUTER)
+    fun parallelKey(): String? = key(PARALLEL)
+    fun fishKey(): String? = key(FISH)
+    fun minimaxKey(): String? = providerKey(ChatProvider.MINIMAX)
+
+    fun setOpenRouterKey(value: String) = setProviderKey(ChatProvider.OPENROUTER, value)
+    fun setParallelKey(value: String) = setKey(PARALLEL, value)
+    fun setFishKey(value: String) = setKey(FISH, value)
+    fun setMinimaxKey(value: String) = setProviderKey(ChatProvider.MINIMAX, value)
 
     fun clear() {
         preferences.edit().clear().apply()
         if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS)
     }
 
-    private fun put(name: String, value: String) {
-        val clean = value.trim()
+    private fun put(name: String, value: String?) {
+        val clean = value?.trim().orEmpty()
         if (clean.isEmpty()) preferences.edit().remove(name).apply()
         else preferences.edit().putString(name, encrypt(clean)).apply()
     }
@@ -84,9 +88,7 @@ class SecureCredentialStore(context: Context) {
         const val KEY_ALIAS = "daylight_api_credentials_v1"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_SIZE = 12
-        const val OPENROUTER = "openrouter"
         const val PARALLEL = "parallel"
         const val FISH = "fish_audio"
-        const val MINIMAX = "minimax"
     }
 }

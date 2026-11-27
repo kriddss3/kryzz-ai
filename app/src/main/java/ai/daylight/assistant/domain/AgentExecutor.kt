@@ -31,6 +31,7 @@ import ai.daylight.assistant.data.remote.FunctionDefinition
 import ai.daylight.assistant.data.remote.ImageGenerationRequest
 import ai.daylight.assistant.data.remote.MiniMaxClient
 import ai.daylight.assistant.data.remote.MiniMaxImagePayload
+import ai.daylight.assistant.data.remote.MiniMaxImageUrl
 import ai.daylight.assistant.data.remote.MiniMaxMusicRequest
 import ai.daylight.assistant.data.remote.MiniMaxTtsRequest
 import ai.daylight.assistant.data.remote.MiniMaxVideoContentItem
@@ -40,6 +41,9 @@ import ai.daylight.assistant.data.remote.miniMaxImageRequest
 import ai.daylight.assistant.data.remote.requireImagePayload
 import ai.daylight.assistant.data.remote.throwIfFailed
 import ai.daylight.assistant.data.remote.OpenRouterClient
+import ai.daylight.assistant.data.remote.OpenRouterFrameImage
+import ai.daylight.assistant.data.remote.OpenRouterInputReference
+import ai.daylight.assistant.data.remote.OpenRouterMediaUrl
 import ai.daylight.assistant.data.remote.ParallelClient
 import ai.daylight.assistant.data.remote.ParallelSearchArgs
 import ai.daylight.assistant.data.remote.ParallelSearchRequest
@@ -67,6 +71,8 @@ import ai.daylight.assistant.security.SecureCredentialStore
 import ai.daylight.assistant.data.local.SkillEntity
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoiceHearing
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.os.SystemClock
 import android.util.Base64
 import java.io.File
@@ -122,8 +128,16 @@ class AgentExecutor(
      * filler phrase so the user isn't sitting in silence while the round-trip completes.
      */
     val voiceFillerRequest: MutableSharedFlow<String> = MutableSharedFlow(extraBufferCapacity = 4),
-    private val onFirstUserMessage: (conversationId: String, message: String) -> Unit = { _, _ -> }
+    private val onFirstUserMessage: (conversationId: String, message: String) -> Unit = { _, _ -> },
+    private val textProvider: (ChatProvider) -> TextProviderClient = {
+        if (it == ChatProvider.MINIMAX) minimax else openRouter
+    },
+    private val textProviderKey: (ChatProvider) -> String? = { credentials.providerKey(it) },
+    private val onTurnCompleted: (conversationId: String, userText: String, assistantText: String) -> Unit = { _, _, _ -> }
 ) {
+    fun emitMemorySaved(conversationId: String) {
+        toolActivity.tryEmit(ToolActivity(conversationId, TOOL_MEMORY_SAVE, started = true))
+    }
     /**
      * The interactive question card currently waiting for the user (agent `ask_user` tool),
      * or null. The chat UI renders this as a floating card; answering it completes the
@@ -164,7 +178,8 @@ class AgentExecutor(
         capability: AgentCapability = AgentCapability.AUTO,
         attachments: List<ChatAttachment> = emptyList(),
         voiceMode: Boolean = false,
-        media: MediaOptions? = null
+        media: MediaOptions? = null,
+        skipAutoMemory: Boolean = false
     ): String? {
         val clean = text.trim()
         require(clean.isNotEmpty())
@@ -190,12 +205,17 @@ class AgentExecutor(
             // A new fact was saved: let the chat show the brief "Remembering that…" chip.
             toolActivity.tryEmit(ToolActivity(conversationId, TOOL_MEMORY_SAVE, started = true))
         }
+        val talkMake = if (!voiceMode && mode == AssistantMode.CHAT && attachments.isEmpty()) {
+            TalkCommands.parse(clean) as? TalkCommand.Make
+        } else null
         return when {
-            voiceMode -> generateReply(conversationId, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true)
+            voiceMode -> generateReply(conversationId, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true, skipAutoMemory = skipAutoMemory)
+            talkMake != null && talkMake.kind == MakeKind.VIDEO -> { generateVideo(conversationId, talkMake.prompt, media); null }
+            talkMake != null -> { generateImage(conversationId, talkMake.prompt, media); null }
             savedMode == AssistantMode.AGENT && capability == AgentCapability.IMAGE -> { generateImage(conversationId, clean, media); null }
             savedMode == AssistantMode.AGENT && capability == AgentCapability.VIDEO -> { generateVideo(conversationId, clean, media); null }
             savedMode == AssistantMode.AGENT && capability == AgentCapability.AUDIO -> { generateAudio(conversationId, clean); null }
-            else -> generateReply(conversationId, savedMode, capability)
+            else -> generateReply(conversationId, savedMode, capability, skipAutoMemory = skipAutoMemory)
         }
     }
 
@@ -223,6 +243,9 @@ class AgentExecutor(
         var heard: String? = null
         val turn = VoiceAudioTurn(audio, userId) { words ->
             heard = words
+            // "make …" / "find …" leave this reply and run as a Talk command. The placeholder
+            // row is removed by the catch below, so it is never saved as something Kryzz heard.
+            if (words.isNotBlank() && TalkCommands.parse(words) != null) throw TalkCommandInterrupt(words)
             if (words.isNotBlank()) {
                 dao.updateMessageContent(userId, words, MessageStatus.COMPLETE.name)
                 if (firstTurn) onFirstUserMessage(conversationId, words)
@@ -234,6 +257,9 @@ class AgentExecutor(
         }
         val answer = try {
             generateReply(conversationId, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true, voiceAudio = turn)
+        } catch (handoff: TalkCommandInterrupt) {
+            withContext(NonCancellable) { dao.deleteMessagesFrom(conversationId, now) }
+            throw handoff
         } catch (cancelled: CancellationException) {
             // Closed before the model said what it heard: nothing worth keeping.
             if (heard == null) withContext(NonCancellable) { dao.deleteMessagesFrom(conversationId, now) }
@@ -256,19 +282,16 @@ class AgentExecutor(
         requestedMode: AssistantMode? = null,
         requestedCapability: AgentCapability? = null,
         voiceMode: Boolean = false,
-        voiceAudio: VoiceAudioTurn? = null
+        voiceAudio: VoiceAudioTurn? = null,
+        skipAutoMemory: Boolean = false
     ): String? {
         val settings = preferences.state.first()
         val provider = if (voiceMode) ChatProvider.OPENROUTER else settings.chatProvider
-        val key = when (provider) {
-            ChatProvider.OPENROUTER -> credentials.openRouterKey()
-            ChatProvider.MINIMAX -> credentials.minimaxKey()
-        } ?: throw AssistantApiException(
+        val key = textProviderKey(provider) ?: throw AssistantApiException(
             ErrorKind.INVALID_KEY,
-            if (provider == ChatProvider.MINIMAX) "Add a MiniMax API key in Settings before sending a message."
-            else "Add an OpenRouter API key in Settings before sending a message."
+            "Add a ${provider.label} API key in Settings before sending a message."
         )
-        val client: TextProviderClient = if (provider == ChatProvider.MINIMAX) minimax else openRouter
+        val client: TextProviderClient = textProvider(provider)
         val conversation = dao.conversation(conversationId) ?: return null
         val allMessages = dao.messages(conversationId)
         val lastUser = allMessages.lastOrNull { it.role == "USER" }
@@ -287,7 +310,7 @@ class AgentExecutor(
             else -> preset.prompt
         }.let { base -> if (bot == null) base else BotPersona.systemPrompt(base, bot.name, bot.persona) }
         val enabledSkills = if (!voiceMode && mode == AssistantMode.AGENT && capability != AgentCapability.SKILL_MAKER) dao.enabledSkills().take(16) else emptyList()
-        val memoryContext = if (settings.memoryEnabled && !voiceMode) memoryRepository.buildMemoryContext(lastUser?.content.orEmpty()) else ""
+        val memoryContext = if (settings.memoryEnabled) memoryRepository.buildMemoryContext(lastUser?.content.orEmpty()) else ""
         val memoryInstruction = if (settings.memoryEnabled && !voiceMode) {
             "Long-term memory is active: facts the user shares about themselves (name, age, gender, work, interests, hobbies, ethnicity, where they live) and anything they ask you to remember are saved automatically. When you notice a new fact was shared, briefly acknowledge that you'll remember it."
         } else ""
@@ -298,11 +321,17 @@ class AgentExecutor(
         // Voice chat also gets the user's region: spoken answers to "what's the weather",
         // "any pharmacies nearby", etc. need local context just as much as text ones.
         val locationContext = runCatching { locationProvider?.promptContext().orEmpty() }.getOrDefault("")
-        // Chat mode has no tool calling, so interactive question cards travel as a fenced
+        // Chat answers in text, so interactive question cards travel as a fenced
         // kryzz-question block in the reply text (see InlineQuestionProtocol). Agent mode
         // gets the real ask_user tool instead, and voice stays text-only.
         val questionCardInstruction = if (!voiceMode && mode == AssistantMode.CHAT) {
             "\n\n${InlineQuestionProtocol.CHAT_PROTOCOL_PROMPT}"
+        } else ""
+        // v5.13.7: Talk has its tools on every turn (see AgentTurnPolicy), and is told so.
+        // Before, the file tool appeared only after a fixed phrase such as "make a pdf", so
+        // "make me a pdf" got "I can't create PDF files" back.
+        val talkToolsInstruction = if (!voiceMode && mode == AssistantMode.CHAT) {
+            "\n\n" + talkToolsPrompt(webTools = publicWeb != null)
         } else ""
         // v5.10: the Agent quality preset decides the model, reasoning, step budget, review
         // and cost cap of agent turns (AgentQualityPolicy). Chat and voice turns resolve as
@@ -321,14 +350,14 @@ class AgentExecutor(
             else -> turnSettings.model
         }
         val reasoningEffort = when {
-            voiceMode || provider == ChatProvider.MINIMAX -> null
+            voiceMode || provider != ChatProvider.OPENROUTER -> null
             agentTurn -> turnSettings.reasoning.apiValue
             else -> settings.modelReasoning[model]?.apiValue
         }
         // v5.10 prompt caching (PromptLayout): the system prompt holds only turn-stable text,
         // and what was retrieved for the latest message travels in its own message right
         // before it, so the system prompt and the history stay a cacheable prefix.
-        val systemPrompt = buildModePrompt(basePrompt, mode, capability) + questionCardInstruction +
+        val systemPrompt = buildModePrompt(basePrompt, mode, capability) + questionCardInstruction + talkToolsInstruction +
             (if (memoryInstruction.isNotBlank()) "\n\n$memoryInstruction" else "") +
             (if (pastChatInstruction.isNotBlank()) "\n\n$pastChatInstruction" else "") +
             (if (voiceAudio != null) "\n\n${VoiceHearing.INSTRUCTION}" else "")
@@ -341,11 +370,16 @@ class AgentExecutor(
             .filter { it.role == "ASSISTANT" && (it.citationsJson != "[]" || it.outputsJson != "[]") }
             .takeLast(TurnEvidence.MAX_ANNOTATED_REPLIES)
             .mapTo(mutableSetOf()) { it.id }
+        // v5.13.7: the latest reply that made files also carries their source, for edits.
+        val latestFileReplyId = if (voiceMode) null else history.lastOrNull { message ->
+            message.role == "ASSISTANT" && message.outputsJson != "[]" &&
+                decodeOutputs(message).any { it.kind in ArtifactKinds.fileKinds }
+        }?.id
         val working = PromptLayout.build(
             system = systemPrompt,
             history = history.map {
                 if (voiceAudio != null && it.id == voiceAudio.userMessageId) voiceAudioMessage(voiceAudio.file)
-                else apiMessageFor(it, withEvidence = it.id in evidenceReplies)
+                else apiMessageFor(it, withEvidence = it.id in evidenceReplies, withSource = it.id == latestFileReplyId)
             },
             turnContext = turnContext,
             cacheBreakpoints = provider == ChatProvider.OPENROUTER && PromptLayout.usesCacheBreakpoints(model)
@@ -454,6 +488,7 @@ class AgentExecutor(
                     recoverInlineToolCalls = offerArtifact,
                     // The draft is on screen; retry notices would overwrite it.
                     showRetryNotices = false,
+                    openRouter = provider == ChatProvider.OPENROUTER,
                     onText = { value ->
                         val visible = ToolCallXml.scrubToolBlocks(value.scrubThinkTags())
                         if (!revising && AnswerReview.classify(visible, complete = false) == AnswerReview.Verdict.REVISION) {
@@ -696,6 +731,7 @@ class AgentExecutor(
                             // tool calls there could resurrect a call the budget already ruled
                             // out and loop forever, so recovery is off for that one round.
                             recoverInlineToolCalls = !plan.terminal,
+                            openRouter = provider == ChatProvider.OPENROUTER,
                             onReasoning = onReasoning,
                             onText = onStreamText
                         )
@@ -769,7 +805,16 @@ class AgentExecutor(
                     AgentTurnPolicy.After.FINISH -> {
                         var finalText = activeText.ifBlank {
                             when {
-                                outputs.isNotEmpty() -> "Created ${outputs.first().title}. Use the output card below to save or open it."
+                                outputs.size > 1 -> "Created ${outputs.joinToString(", ") { it.fileName }}. " +
+                                    "Tap a file to open it, or its download button to save it on this phone."
+                                outputs.isNotEmpty() -> {
+                                    val file = outputs.first()
+                                    if (file.kind == OutputKind.CALENDAR) {
+                                        "Created ${file.title}. Tap the file to add it to your calendar, or the download button to save the .ics."
+                                    } else {
+                                        "Created ${file.title}. Tap the file to open it, or the download button to save it on this phone."
+                                    }
+                                }
                                 skillCreated -> "The reusable skill was created and saved locally."
                                 completedToolRounds > 0 -> {
                                     if (didSearch) {
@@ -816,6 +861,16 @@ class AgentExecutor(
                             totalGenerationTimeMs = totalGenerationTimeMs
                         )
                         dao.touchConversation(conversationId, System.currentTimeMillis())
+                        if (!skipAutoMemory && finalText.isNotBlank()) {
+                            val userTextForMemory = if (voiceAudio != null) {
+                                dao.messages(conversationId).firstOrNull { it.id == voiceAudio.userMessageId }?.content.orEmpty()
+                            } else {
+                                lastUser?.content.orEmpty()
+                            }
+                            if (userTextForMemory.isNotBlank()) {
+                                onTurnCompleted(conversationId, userTextForMemory, finalText)
+                            }
+                        }
                         return finalText
                     }
                     AgentTurnPolicy.After.RUN_CALLS -> Unit // fall through to tool execution
@@ -982,11 +1037,20 @@ class AgentExecutor(
                             val args = validateSimplePromptArgs(call.function.arguments, "generate_image")
                             val output = produceImageOutput(args.prompt)
                             outputs += output
+                            val embedName = output.localPath?.let { File(it).name } ?: output.fileName
                             val result = buildJsonObject {
                                 put("status", "created_locally")
                                 put("type", "image")
                                 put("title", output.title)
-                                put("file_name", output.fileName)
+                                put("file_name", embedName)
+                                put(
+                                    "embed_in_pdf",
+                                    "![${output.title}]($embedName)"
+                                )
+                                put(
+                                    "note",
+                                    "The picture is saved. To put it in a PDF, call create_artifact with a .pdf and the embed_in_pdf line on its own. Do not create a .png or .jpg file."
+                                )
                             }.toString()
                             saveToolMessage(conversationId, call, result)
                             working += ApiMessage("tool", result, call.id, call.function.name)
@@ -1274,6 +1338,8 @@ class AgentExecutor(
                 }
                 }
             }
+        } catch (handoff: TalkCommandInterrupt) {
+            throw handoff
         } catch (cancelled: CancellationException) {
             // NonCancellable: the turn is already cancelled, so a plain suspend write would be
             // skipped and leave the answer marked as streaming for good.
@@ -1312,9 +1378,14 @@ class AgentExecutor(
         )
         toolActivity.tryEmit(ToolActivity(conversationId, TOOL_IMAGE_CREATION, started = true))
         try {
-            val output = produceImageOutput(media?.style?.styled(prompt) ?: prompt, media?.aspectRatio)
+            val output = produceImageOutput(
+                media?.style?.styled(prompt) ?: prompt,
+                media?.aspectRatio,
+                media?.sources.orEmpty(),
+            )
+            val lead = if (media?.sources.isNullOrEmpty()) "Created your image" else "Created your image from what you added"
             dao.finishMessage(
-                id, "Created your image with ${preferences.state.first().imageModel}.", MessageStatus.COMPLETE.name, "[]",
+                id, "$lead with ${preferences.state.first().imageModel}.", MessageStatus.COMPLETE.name, "[]",
                 null, null, null, null,
                 json.encodeToString(listOf(output))
             )
@@ -1333,7 +1404,11 @@ class AgentExecutor(
     /** Core image generation, factored out so the AUTO agent's `generate_image` tool and the
      *  dedicated Image capability share one path. Returns the materialised output; the caller
      *  is responsible for attaching it to a message. */
-    private suspend fun produceImageOutput(prompt: String, aspectRatio: String? = null): GeneratedOutput {
+    private suspend fun produceImageOutput(
+        prompt: String,
+        aspectRatio: String? = null,
+        sources: List<MakeSource> = emptyList(),
+    ): GeneratedOutput {
         val settings = preferences.state.first()
         val model = settings.imageModel
         if (model.isBlank()) throw AssistantApiException(ErrorKind.MODEL_UNAVAILABLE, "Choose an Image model on the Models screen before using Image generation.")
@@ -1345,7 +1420,8 @@ class AgentExecutor(
                 else "Add an OpenRouter API key in Settings before generating an image."
             )
         val (file, mime, extension) = if (useMiniMax) {
-            val result = minimax.generateImage(key, miniMaxImageRequest(model, prompt, aspectRatio ?: DEFAULT_MEDIA_RATIO))
+            val subject = imageDataUrls(sources.take(1)).firstOrNull()
+            val result = minimax.generateImage(key, miniMaxImageRequest(model, prompt, aspectRatio ?: DEFAULT_MEDIA_RATIO, subject))
             when (val payload = result.requireImagePayload()) {
                 is MiniMaxImagePayload.Base64 -> {
                     val bytes = Base64.decode(payload.value, Base64.DEFAULT)
@@ -1369,7 +1445,10 @@ class AgentExecutor(
                 }
             }
         } else {
-            val result = openRouter.generateImage(key, ImageGenerationRequest(model, prompt))
+            val references = imageDataUrls(sources).map { url ->
+                OpenRouterInputReference(type = "image_url", imageUrl = OpenRouterMediaUrl(url))
+            }
+            val result = openRouter.generateImage(key, ImageGenerationRequest(model, prompt, inputReferences = references))
             val image = result.data.firstOrNull() ?: throw AssistantApiException(ErrorKind.UNKNOWN, "The image model returned no image.")
             val imgMime = image.mediaType ?: "image/png"
             val ext = when (imgMime) { "image/jpeg" -> "jpg"; "image/webp" -> "webp"; "image/svg+xml" -> "svg"; else -> "png" }
@@ -1385,11 +1464,17 @@ class AgentExecutor(
         )
         toolActivity.tryEmit(ToolActivity(conversationId, TOOL_VIDEO_CREATION, started = true))
         try {
-            val output = produceVideoOutput(media?.style?.styled(prompt) ?: prompt, id, media?.aspectRatio) { status ->
+            val output = produceVideoOutput(
+                media?.style?.styled(prompt) ?: prompt,
+                id,
+                media?.aspectRatio,
+                media?.sources.orEmpty(),
+            ) { status ->
                 mediaStatus.value = MediaJobStatus(conversationId, status, System.currentTimeMillis())
             }
+            val lead = if (media?.sources.isNullOrEmpty()) "Created your video" else "Created your video from what you added"
             dao.finishMessage(
-                id, "Created your video with ${preferences.state.first().videoModel}.", MessageStatus.COMPLETE.name, "[]",
+                id, "$lead with ${preferences.state.first().videoModel}.", MessageStatus.COMPLETE.name, "[]",
                 null, null, null, null,
                 json.encodeToString(listOf(output))
             )
@@ -1415,6 +1500,7 @@ class AgentExecutor(
         prompt: String,
         heartbeatMessageId: String? = null,
         aspectRatio: String? = null,
+        sources: List<MakeSource> = emptyList(),
         onStatus: (String) -> Unit = {}
     ): GeneratedOutput {
         val settings = preferences.state.first()
@@ -1428,15 +1514,16 @@ class AgentExecutor(
                 else "Add an OpenRouter API key in Settings before generating a video."
             )
         onStatus(MediaJobStatus.SENDING)
+        val ratio = aspectRatio ?: DEFAULT_MEDIA_RATIO
         val (localPath, mime, remote) = if (useMiniMax) {
             val submit = minimax.submitVideo(
                 key,
                 MiniMaxVideoRequest(
                     model = bareMiniMaxModel(model),
-                    content = listOf(MiniMaxVideoContentItem(type = "text", text = prompt)),
+                    content = miniMaxVideoContent(prompt, sources),
                     duration = MINIMAX_VIDEO_SECONDS,
                     resolution = MINIMAX_VIDEO_RESOLUTION,
-                    ratio = aspectRatio ?: DEFAULT_MEDIA_RATIO
+                    ratio = ratio
                 )
             )
             val taskId = submit.taskId ?: throw AssistantApiException(ErrorKind.UNKNOWN, "MiniMax did not return a video task ID.")
@@ -1474,7 +1561,7 @@ class AgentExecutor(
             }
             Triple(file.absolutePath, downloadedMime ?: "video/mp4", url)
         } else {
-            var job = openRouter.submitVideo(key, VideoGenerationRequest(model, prompt, aspectRatio = aspectRatio ?: DEFAULT_MEDIA_RATIO))
+            var job = openRouter.submitVideo(key, openRouterVideoRequest(model, prompt, ratio, sources))
             val startedAt = System.currentTimeMillis()
             while (job.status.lowercase() !in setOf("completed", "failed", "cancelled")) {
                 onStatus(job.status.lowercase())
@@ -1502,6 +1589,113 @@ class AgentExecutor(
         }
         if (localPath == null && remote == null) throw AssistantApiException(ErrorKind.NETWORK, "The video finished, but it could not be downloaded.")
         return GeneratedOutput(UUID.randomUUID().toString(), OutputKind.VIDEO, "Generated video", "kryzz-video.mp4", mime, localPath = localPath, remoteUrl = remote)
+    }
+
+    /** Photos stay as photos. A clip becomes its first frame, which is what an image model can edit. */
+    private suspend fun imageDataUrls(sources: List<MakeSource>): List<String> {
+        val urls = mutableListOf<String>()
+        for (source in sources.filter { it.usable }) {
+            urls += if (source.image) sourceDataUrl(source) else stillDataUrl(source)
+        }
+        return urls
+    }
+
+    private suspend fun miniMaxVideoContent(prompt: String, sources: List<MakeSource>): List<MiniMaxVideoContentItem> =
+        buildList {
+            add(MiniMaxVideoContentItem(type = "text", text = prompt))
+            MakeSources.placeForVideo(sources).forEach { place ->
+                val url = sourceDataUrl(place.source)
+                if (place.role == SourceRole.REFERENCE_VIDEO) {
+                    add(MiniMaxVideoContentItem(type = "video_url", videoUrl = MiniMaxImageUrl(url), role = place.role.wire))
+                } else {
+                    add(MiniMaxVideoContentItem(type = "image_url", imageUrl = MiniMaxImageUrl(url), role = place.role.wire))
+                }
+            }
+        }
+
+    private suspend fun openRouterVideoRequest(
+        model: String,
+        prompt: String,
+        aspectRatio: String,
+        sources: List<MakeSource>,
+    ): VideoGenerationRequest {
+        val placed = MakeSources.placeForVideo(sources)
+        if (placed.isEmpty()) return VideoGenerationRequest(model, prompt, aspectRatio = aspectRatio)
+        val frames = placed.all { it.role == SourceRole.FIRST_FRAME || it.role == SourceRole.LAST_FRAME }
+        return if (frames) {
+            VideoGenerationRequest(
+                model,
+                prompt,
+                aspectRatio = aspectRatio,
+                frameImages = placed.map { place ->
+                    OpenRouterFrameImage(
+                        type = "image_url",
+                        imageUrl = OpenRouterMediaUrl(sourceDataUrl(place.source)),
+                        frameType = place.role.wire,
+                    )
+                },
+            )
+        } else {
+            VideoGenerationRequest(
+                model,
+                prompt,
+                aspectRatio = aspectRatio,
+                inputReferences = placed.map { place ->
+                    val url = OpenRouterMediaUrl(sourceDataUrl(place.source))
+                    if (place.source.video) OpenRouterInputReference(type = "video_url", videoUrl = url)
+                    else OpenRouterInputReference(type = "image_url", imageUrl = url)
+                },
+            )
+        }
+    }
+
+    /** A data URL the provider can fetch without a public link. */
+    private suspend fun sourceDataUrl(source: MakeSource): String {
+        val file = File(source.localPath)
+        if (!file.isFile) throw AssistantApiException(ErrorKind.VALIDATION, "${source.name} is no longer on this phone.")
+        if (file.length() > MakeSources.MAX_BYTES) {
+            throw AssistantApiException(ErrorKind.VALIDATION, "${source.name} is too large to send. Use a file under 20 MB.")
+        }
+        val encoded = attachmentStore.base64(
+            ChatAttachment(source.id, source.name, source.mimeType.ifBlank { "application/octet-stream" }, file.length(), source.localPath)
+        )
+        val mime = source.mimeType.substringBefore(';').lowercase().ifBlank { "application/octet-stream" }
+        return "data:$mime;base64,$encoded"
+    }
+
+    private suspend fun stillDataUrl(source: MakeSource): String = withContext(Dispatchers.IO) {
+        val still = videoStill(source.localPath)
+        try {
+            "data:image/jpeg;base64," + Base64.encodeToString(still.readBytes(), Base64.NO_WRAP)
+        } finally {
+            still.delete()
+        }
+    }
+
+    private fun videoStill(path: String): File {
+        if (!File(path).isFile) throw AssistantApiException(ErrorKind.VALIDATION, "That clip is no longer on this phone.")
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(path)
+            val frame = retriever.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 1280, 1280)
+                ?: throw AssistantApiException(ErrorKind.VALIDATION, "Couldn't read a frame from that clip.")
+            val out = outputStore.newFile("jpg")
+            val wrote = out.outputStream().use { frame.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+            frame.recycle()
+            if (!wrote) {
+                out.delete()
+                throw AssistantApiException(ErrorKind.VALIDATION, "Couldn't read a frame from that clip.")
+            }
+            return out
+        } catch (error: AssistantApiException) {
+            throw error
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            throw AssistantApiException(ErrorKind.VALIDATION, "Couldn't read a frame from that clip.")
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     private suspend fun generateAudio(conversationId: String, input: String) {
@@ -1635,18 +1829,20 @@ class AgentExecutor(
         allowEmpty: Boolean = false,
         recoverInlineToolCalls: Boolean = true,
         showRetryNotices: Boolean = true,
+        openRouter: Boolean = false,
         onReasoning: (suspend (String) -> Unit)? = null,
         onText: suspend (String) -> Unit
     ): StreamedResult {
         var attempt = 0
         var accumulatedUsage: Usage? = null
+        var outbound = request
         while (true) {
             val calls = mutableMapOf<Int, MutableCall>()
             var text = ""
             var reasoning = ""
             var usage: Usage? = null
             var failure: AssistantApiException? = null
-            client.stream(key, request).collect { event ->
+            client.stream(key, outbound).collect { event ->
                 when (event) {
                     is StreamEvent.Delta -> {
                         if (event.reasoning.isNotEmpty() && onReasoning != null) {
@@ -1669,11 +1865,26 @@ class AgentExecutor(
             }
             accumulatedUsage = mergeUsage(accumulatedUsage, usage)
             val error = failure
-            val wait = error?.retryAfterSeconds
-            if (error?.kind == ErrorKind.RATE_LIMIT && text.isEmpty() && attempt == 0 && wait != null && wait <= 60) {
-                if (showRetryNotices) dao.updateMessageContent(messageId, "Waiting ${wait}s for the provider rate limit…", MessageStatus.STREAMING.name)
-                delay(wait * 1_000)
-                if (showRetryNotices) dao.updateMessageContent(messageId, "", MessageStatus.STREAMING.name)
+            // A provider 429 often arrives mid-stream, after HTTP 200, so there is no
+            // Retry-After header and the old check never retried. Talk then showed
+            // "Rate limit reached" on every message. Retry briefly, and on OpenRouter
+            // skip the route that just refused so the next try can land elsewhere.
+            val waitMs = if (error?.kind == ErrorKind.RATE_LIMIT && text.isEmpty() && calls.isEmpty()) {
+                rateLimitRetryDelayMs(attempt, error.retryAfterSeconds)
+            } else null
+            if (error != null && waitMs != null) {
+                val slug = error.saturatedProvider
+                if (openRouter && !slug.isNullOrBlank()) {
+                    val ignored = (outbound.provider?.ignore.orEmpty() + slug).distinct()
+                    outbound = outbound.copy(provider = (outbound.provider ?: ProviderPreferences()).copy(ignore = ignored))
+                }
+                if (showRetryNotices && waitMs >= 2_000L) {
+                    dao.updateMessageContent(messageId, "The provider is busy. Trying again…", MessageStatus.STREAMING.name)
+                }
+                delay(waitMs)
+                if (showRetryNotices && waitMs >= 2_000L) {
+                    dao.updateMessageContent(messageId, "", MessageStatus.STREAMING.name)
+                }
                 attempt++
                 continue
             }
@@ -1742,9 +1953,12 @@ class AgentExecutor(
     private fun decodeOutputs(message: MessageEntity): List<GeneratedOutput> =
         runCatching { json.decodeFromString<List<GeneratedOutput>>(message.outputsJson) }.getOrDefault(emptyList())
 
-    private suspend fun apiMessageFor(message: MessageEntity, withEvidence: Boolean = false): ApiMessage {
-        if (withEvidence && message.role == "ASSISTANT") {
-            return ApiMessage("assistant", TurnEvidence.annotate(message.content, decodeCitations(message), decodeOutputs(message)))
+    private suspend fun apiMessageFor(message: MessageEntity, withEvidence: Boolean = false, withSource: Boolean = false): ApiMessage {
+        if ((withEvidence || withSource) && message.role == "ASSISTANT") {
+            return ApiMessage(
+                "assistant",
+                TurnEvidence.annotate(message.content, decodeCitations(message), decodeOutputs(message), withSource)
+            )
         }
         val attachments = runCatching { json.decodeFromString<List<ChatAttachment>>(message.attachmentsJson) }.getOrDefault(emptyList())
         if (message.role != "USER" || attachments.isEmpty()) return ApiMessage(message.role.lowercase(), message.content)
@@ -1882,14 +2096,24 @@ class AgentExecutor(
             else -> null
         }
         val content = if (kind != null) ArtifactKinds.normalizeContent(kind, raw.content) else raw.content.trim()
-        if (kind == null || raw.title.isBlank() || content.isBlank() || content.length > 500_000) {
-            throw AssistantApiException(ErrorKind.VALIDATION, "The model supplied an invalid or oversized artifact.")
+        if (kind == null || raw.title.isBlank() || content.isBlank() || content.length > 500_000 ||
+            (kind == OutputKind.CALENDAR && !ArtifactKinds.calendarIsUsable(content))
+        ) {
+            throw AssistantApiException(
+                ErrorKind.VALIDATION,
+                if (kind == OutputKind.CALENDAR) {
+                    "A calendar file needs BEGIN:VCALENDAR, a VEVENT with SUMMARY and DTSTART, and END:VCALENDAR."
+                } else {
+                    "The model supplied an invalid or oversized artifact."
+                }
+            )
         }
         val (extension, mime) = when (kind) {
             OutputKind.DOCUMENT -> "md" to "text/markdown"
             OutputKind.SPREADSHEET -> "csv" to "text/csv"
             OutputKind.DATABASE -> "sql" to "application/sql"
             OutputKind.PDF -> "txt" to "text/plain"
+            OutputKind.CALENDAR -> "ics" to "text/calendar"
             else -> throw AssistantApiException(ErrorKind.VALIDATION, "Unsupported local artifact type.")
         }
         val title = raw.title.trim().take(120)
@@ -2027,7 +2251,7 @@ class AgentExecutor(
     private fun generateImageTool() = ToolDefinition(
         function = FunctionDefinition(
             name = "generate_image",
-            description = "Generate an image from a text prompt using the configured image model and attach it to the reply. Use this whenever the user asks for a picture, illustration, or photo instead of describing how to make one.",
+            description = "Generate an image from a text prompt and attach it to the reply. Use this when the user asks for a picture, including a picture inside a PDF. The result's embed_in_pdf line goes on its own line in the PDF markdown. Do not write a .png or .jpg with create_artifact.",
             parameters = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -2071,37 +2295,64 @@ class AgentExecutor(
         )
     )
 
+    /**
+     * v5.13.7: the file tool for Talk and Auto. Like a command line writing a file, the model
+     * names it and the extension picks the format (see [FileFormats]).
+     */
     private fun artifactToolAuto() = ToolDefinition(
         function = FunctionDefinition(
             name = "create_artifact",
-            description = "Return a finished local file the user can save on this phone: a document (Markdown, saved as DOCX), spreadsheet (CSV, saved as XLSX), database (SQL, saved as SQLite), or pdf (Markdown, saved as PDF). Use it only when the user wants a file, download, or export, not for ordinary answers. Call it exactly once with the complete deliverable. $ARTIFACT_FORMAT_GUIDE",
+            description = FILE_TOOL_DESCRIPTION,
             parameters = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("type") {
+                    putJsonObject("file_name") {
                         put("type", "string")
-                        put("enum", buildJsonArray {
-                            add(JsonPrimitive("document"))
-                            add(JsonPrimitive("spreadsheet"))
-                            add(JsonPrimitive("database"))
-                            add(JsonPrimitive("pdf"))
-                        })
+                        put("description", "File name with its extension, which sets the format, e.g. trip-plan.pdf, budget.xlsx, pitch.pptx, letter.docx, index.html, data.json, script.py, logo.svg, dentist.ics, site.zip")
                     }
-                    putJsonObject("title") { put("type", "string") }
+                    putJsonObject("title") { put("type", "string"); put("description", "Short title shown on the file card") }
                     putJsonObject("content") {
                         put("type", "string")
-                        put("description", "The complete deliverable with no code fences: Markdown for document/pdf, CSV with a header row (never a Markdown table) for spreadsheet, or SQL for database. For several spreadsheet sheets, start each sheet with a line `### Sheet: Name`.")
+                        put("description", "The complete file, never a summary or placeholder, with no wrapping code fence. Markdown for .pdf, .docx and .pptx; CSV with a header row (never a Markdown table) for .xlsx; SQL for .sqlite; iCalendar text for .ics; the exact text for every other format. For a .zip, one line describing the bundle.")
+                    }
+                    putJsonObject("files") {
+                        put("type", "array"); put("maxItems", FileFormats.MAX_ZIP_FILES)
+                        put("description", "Only for a .zip: the files inside it. Each follows the same extension rules, so a .pdf or .xlsx inside becomes a real file.")
+                        putJsonObject("items") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("path") { put("type", "string"); put("description", "Relative path with extension, e.g. src/app.js") }
+                                putJsonObject("content") { put("type", "string"); put("description", "Complete file content") }
+                            }
+                            put("required", buildJsonArray { add(JsonPrimitive("path")); add(JsonPrimitive("content")) })
+                            put("additionalProperties", false)
+                        }
                     }
                 }
                 put("required", buildJsonArray {
-                    add(JsonPrimitive("type"))
-                    add(JsonPrimitive("title"))
+                    add(JsonPrimitive("file_name"))
                     add(JsonPrimitive("content"))
                 })
                 put("additionalProperties", false)
             }
         )
     )
+
+    /** v5.13.7: what Talk is told about its tools (the list itself is in AgentTurnPolicy). */
+    private fun talkToolsPrompt(webTools: Boolean): String = buildString {
+        append(
+            "You have tools; use them instead of saying you can't. create_artifact makes a real file on this phone " +
+                "in any format: PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx), a web page (.html), code, JSON, CSV, " +
+                "SVG, a calendar event (.ics), a contact card (.vcf), a ZIP of several files, or any other text format. " +
+                "When the user asks for a file, document, slides, export or download, call it with the complete content " +
+                "instead of pasting the file into the chat, then say in one sentence to tap the card to open it or the " +
+                "download button to save it. A picture inside a PDF is a line ![caption](file_name) after generate_image, " +
+                "not a separate picture file. To change a file you made, call it again with the same file_name and the " +
+                "full new content. Do not make files nobody asked for. Call get_current_time before anything that " +
+                "depends on today and calculate for arithmetic."
+        )
+        if (webTools) append(" Call get_weather for forecasts and fetch_url to read a link the user shares.")
+    }
 
     private fun datetimeTool() = ToolDefinition(
         function = FunctionDefinition(
@@ -2463,6 +2714,83 @@ class AgentExecutor(
         return SimplePromptArgs(prompt)
     }
     /**
+     * Pictures a PDF can draw: images made this turn or earlier in the chat, plus https
+     * pictures named in the markdown. A missing picture does not fail the file.
+     */
+    private suspend fun pictureBytesFor(
+        conversationId: String,
+        markdown: String,
+        made: List<GeneratedOutput>
+    ): Map<String, ByteArray> = withContext(Dispatchers.IO) {
+        val refs = Regex("""!\[[^\]\n]*]\(([^)\s]+)\)""")
+            .findAll(markdown).map { it.groupValues[1] }.distinct().take(6).toList()
+        if (refs.isEmpty()) return@withContext emptyMap()
+        val local = buildList {
+            addAll(made.filter { it.kind == OutputKind.IMAGE })
+            dao.messages(conversationId).forEach { message ->
+                addAll(
+                    runCatching { json.decodeFromString<List<GeneratedOutput>>(message.outputsJson) }
+                        .getOrDefault(emptyList())
+                        .filter { it.kind == OutputKind.IMAGE }
+                )
+            }
+        }
+        fun fileBytes(output: GeneratedOutput): ByteArray? {
+            val path = output.localPath ?: return null
+            val file = File(path)
+            if (!file.isFile || file.length() !in 1..MAX_PICTURE_BYTES) return null
+            return runCatching { file.readBytes() }.getOrNull()?.takeIf { looksLikeImage(it) }
+        }
+        val resolved = linkedMapOf<String, ByteArray>()
+        refs.forEach { src ->
+            val name = src.substringAfterLast('/').substringBefore('?')
+            val match = local.lastOrNull { output ->
+                output.fileName.equals(src, ignoreCase = true) ||
+                    output.fileName.equals(name, ignoreCase = true) ||
+                    output.localPath?.let { path ->
+                        val localName = File(path).name
+                        localName.equals(name, ignoreCase = true) || localName.equals(src, ignoreCase = true)
+                    } == true
+            }
+            val bytes = match?.let { fileBytes(it) } ?: src.takeIf { it.startsWith("https://") }?.let { downloadPicture(it) }
+            if (bytes != null) resolved[src] = bytes
+        }
+        resolved
+    }
+
+    private fun downloadPicture(url: String): ByteArray? {
+        if (url.length > 500) return null
+        return runCatching {
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 8_000
+            conn.setRequestProperty("User-Agent", "KryzzAI")
+            if (conn.responseCode !in 200..299) return null
+            conn.inputStream.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(16 * 1024)
+                var total = 0
+                while (true) {
+                    val read = input.read(chunk)
+                    if (read < 0) break
+                    total += read
+                    if (total > MAX_PICTURE_BYTES) return null
+                    out.write(chunk, 0, read)
+                }
+                out.toByteArray().takeIf { looksLikeImage(it) }
+            }
+        }.getOrNull()
+    }
+
+    private fun looksLikeImage(bytes: ByteArray): Boolean {
+        if (bytes.size < 32) return false
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        return bounds.outWidth > 0 && bounds.outHeight > 0
+    }
+
+    /**
      * Runs a create_artifact call: materialises the file, makes it the turn's only file output
      * (a new call replaces the earlier file) and saves the tool row. Returns the tool result.
      */
@@ -2472,14 +2800,55 @@ class AgentExecutor(
         capability: AgentCapability,
         outputs: MutableList<GeneratedOutput>
     ): String {
-        val output = outputStore.materialize(validateArtifact(call.function.arguments, capability))
-        outputs.clear()
-        outputs += output
+        // The Document, Spreadsheet and Database makers keep their one typed deliverable.
+        if (capability.outputKind() != null) {
+            val output = outputStore.materialize(validateArtifact(call.function.arguments, capability))
+            outputs.clear()
+            outputs += output
+            val result = buildJsonObject {
+                put("status", "created_locally")
+                put("type", output.kind.name.lowercase())
+                put("title", output.title)
+                put("file_name", output.fileName)
+            }.toString()
+            saveToolMessage(conversationId, call, result)
+            return result
+        }
+        // v5.13.7: Talk and Auto name the file and its extension picks the format. A turn may
+        // make several files; a second call with the same name replaces that file only.
+        val request = try {
+            FileFormats.request(call.function.arguments)
+        } catch (invalid: IllegalArgumentException) {
+            throw AssistantApiException(ErrorKind.VALIDATION, invalid.message ?: "The model supplied an invalid file.")
+        }
+        val replaced = outputs.indexOfFirst { it.kind in ArtifactKinds.fileKinds && it.fileName.equals(request.fileName, ignoreCase = true) }
+        if (replaced < 0 && outputs.count { it.kind in ArtifactKinds.fileKinds } >= FileFormats.MAX_FILES_PER_TURN) {
+            throw AssistantApiException(
+                ErrorKind.VALIDATION,
+                "This turn already made ${FileFormats.MAX_FILES_PER_TURN} files. Put more files in one .zip, or reuse a file_name to replace a file."
+            )
+        }
+        val pictures = if (request.format == FileFormats.PDF) pictureBytesFor(conversationId, request.content, outputs) else emptyMap()
+        val output = try {
+            outputStore.writeFile(request, pictures)
+        } catch (invalid: IllegalArgumentException) {
+            throw AssistantApiException(ErrorKind.VALIDATION, invalid.message ?: "The file could not be written.")
+        }
+        if (replaced >= 0) outputs[replaced] = output else outputs += output
+        val size = output.localPath?.let { path -> withContext(Dispatchers.IO) { File(path).length() } }
         val result = buildJsonObject {
             put("status", "created_locally")
             put("type", output.kind.name.lowercase())
             put("title", output.title)
             put("file_name", output.fileName)
+            size?.let { put("size_bytes", it) }
+            if (replaced >= 0) put("replaced_earlier_file", true)
+            if (output.kind == OutputKind.ARCHIVE) put("file_count", request.entries.size)
+            if (request.format == FileFormats.PDF && pictures.isNotEmpty()) put("pictures_embedded", pictures.size)
+            if (!output.fileName.equals(request.fileName, ignoreCase = true)) {
+                put("note", "The ${request.format.extension} conversion failed, so the source was saved as ${output.fileName}.")
+            }
+            FileFormats.warning(request.format, request.content)?.let { put("warning", it) }
         }.toString()
         saveToolMessage(conversationId, call, result)
         return result
@@ -2545,6 +2914,7 @@ class AgentExecutor(
         /** v5.9: the review pass over a draft answer (see [AnswerReview]). */
         const val TOOL_REVIEWING = "reviewing_answer"
         const val TOOL_IMAGE_CREATION = "image_creation"
+        private const val MAX_PICTURE_BYTES = 3_000_000
         const val TOOL_VIDEO_CREATION = "video_creation"
         const val TOOL_AUDIO_CREATION = "audio_creation"
         const val MINIMAX_MAX_COMPLETION_TOKENS = 8_192
@@ -2557,12 +2927,34 @@ class AgentExecutor(
          * structure the generators turn into real styles, lists, tables and sheets.
          */
         private const val DOCUMENT_FORMAT_GUIDE = "Headings (#, ##, ###), **bold**, *italic*, `code`, [links](https://...), " +
+            "and a picture on its own line as ![caption](file_name) using the file_name from generate_image " +
+            "(or an https image address). " +
             "- bullets and 1. numbered lists (indent two spaces for one sub-level), | tables | with a header row, " +
             "``` code blocks, > quotes and --- rules all become real formatting."
         private const val SPREADSHEET_FORMAT_GUIDE = "Plain numbers (1234.5), percentages (12%), TRUE/FALSE and formulas (=SUM(B2:B9)) " +
             "become typed cells; keep IDs with leading zeros as they are. For several sheets, start each sheet with a line " +
             "`### Sheet: Name` followed by its own header row."
-        private const val ARTIFACT_FORMAT_GUIDE = "Documents and PDFs: $DOCUMENT_FORMAT_GUIDE Spreadsheets: $SPREADSHEET_FORMAT_GUIDE"
+        private const val CALENDAR_FORMAT_GUIDE = "Calendar: one VCALENDAR, VERSION:2.0, PRODID:-//Kryzz AI//EN, and a VEVENT per event " +
+            "with SUMMARY, DTSTART and DTEND in UTC (YYYYMMDDTHHMMSSZ) or local (YYYYMMDDTHHMMSS), plus a DESCRIPTION when useful."
+        private const val PRESENTATION_FORMAT_GUIDE = "Slides (.pptx): start each slide with a ## heading, or separate slides with " +
+            "a line ---; a single # heading first, with an optional one-line subtitle, becomes the cover. Use 3-6 short - bullets " +
+            "per slide (two spaces before a sub-bullet), **bold** and small | tables |. Kryzz sizes the text and continues a long slide."
+        private const val ARTIFACT_FORMAT_GUIDE = "Documents and PDFs: $DOCUMENT_FORMAT_GUIDE Spreadsheets: $SPREADSHEET_FORMAT_GUIDE " +
+            "$PRESENTATION_FORMAT_GUIDE $CALENDAR_FORMAT_GUIDE"
+
+        /** v5.13.7: create_artifact for Talk and Auto (file name decides the format). */
+        private const val FILE_TOOL_DESCRIPTION = "Create a real file on this phone that the user can open, save or share. " +
+            "Any file type works: the extension in file_name picks the format. Kryzz converts Markdown into .pdf, .docx " +
+            "(Word) and .pptx (PowerPoint), CSV into .xlsx (Excel), SQL into .sqlite, iCalendar text into an .ics event, " +
+            "and the files list into a .zip. Every other extension is saved exactly as written: .txt .md .html .css .js " +
+            ".ts .json .csv .xml .yaml .svg .py .kt .java .c .sh .sql .tex .rtf .vcf .gpx and any other text or code. " +
+            "Pictures, audio and video cannot be written as their own .png, .jpg, .mp3 or .mp4 files. " +
+            "For a picture in a PDF, call generate_image first and paste its embed_in_pdf line into the PDF markdown. " +
+            "Use generate_audio or generate_video when offered, or an .svg for icons, diagrams and charts. " +
+            "Use this whenever the user wants a file, document, " +
+            "export, download, slides, page or calendar event, not for ordinary answers. One call per file with the " +
+            "complete content; a second call with the same file_name replaces that file. For a date that depends on " +
+            "today, call get_current_time first. $ARTIFACT_FORMAT_GUIDE"
 
         /** Network-bound tools whose calls in one round run concurrently (see [lookup]). */
         private val LOOKUP_TOOLS = setOf(
@@ -2571,6 +2963,22 @@ class AgentExecutor(
             AgentTurnPolicy.GET_WEATHER
         )
     }
+}
+
+/**
+ * How long to wait before another try after a rate limit, or null when the chat should
+ * surface the error instead. Two short tries cover a mid-stream 429 that named no wait.
+ * A Retry-After longer than 15s is a real lockout: waiting it out freezes the reply.
+ */
+internal fun rateLimitRetryDelayMs(attempt: Int, retryAfterSeconds: Long?): Long? {
+    if (attempt >= 2) return null
+    val header = retryAfterSeconds
+    if (header != null) {
+        if (header <= 0L) return 400L
+        if (header > 15L) return null
+        return header * 1_000L
+    }
+    return if (attempt == 0) 800L else 1_600L
 }
 
 internal fun shouldRetryEmptyResponse(

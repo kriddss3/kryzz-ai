@@ -117,7 +117,7 @@ fun InkwellScreen(
     }
 
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-        TunePageHeader("Inkwell", onBack)
+        TunePageHeader("Inkwell", onBack, mark = R.drawable.kz_led_inkwell)
         if (items.isNotEmpty()) {
             Text(
                 InkwellModel.summary(items),

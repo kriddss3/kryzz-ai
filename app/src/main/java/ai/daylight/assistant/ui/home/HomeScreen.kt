@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,7 +47,8 @@ fun HomeScreen(
     onAsk: (String) -> Unit,
     onMake: (String, AgentCapability) -> Unit,
     onVoice: () -> Unit,
-    onInkwell: () -> Unit
+    onInkwell: () -> Unit,
+    onOpenArmAt: ((Arm, Offset?) -> Unit)? = null,
 ) {
     val threads by vm.threads.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -133,7 +135,8 @@ fun HomeScreen(
             monthCaption = HomeBoard.monthCaption(now, zone),
             status = HomeBoard.status(snapshot),
             onOpen = onOpenArm,
-            modifier = Modifier.weight(1f).fillMaxWidth()
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            onOpenAt = onOpenArmAt,
         )
         HomeComposer(
             value = draft,

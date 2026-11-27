@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.DotType
 import ai.daylight.assistant.ui.dot.effects.DotToggle
@@ -46,7 +47,12 @@ import java.util.Locale
 
 /** A section heading: Space Mono caps in textSecondary, 30dp tall (kit `.sh`). */
 @Composable
-fun TuneSection(title: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
+fun TuneSection(
+    title: String,
+    modifier: Modifier = Modifier,
+    @DrawableRes mark: Int? = null,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     Row(
         modifier
             .fillMaxWidth()
@@ -54,6 +60,9 @@ fun TuneSection(title: String, modifier: Modifier = Modifier, trailing: (@Compos
             .padding(bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (mark != null) {
+            KryzzGlyph(mark, Modifier.padding(end = 8.dp).size(16.dp), tint = DotTheme.c.textSecondary)
+        }
         Text(
             title.uppercase(Locale.US),
             Modifier.weight(1f).semantics { heading() },
@@ -137,7 +146,7 @@ fun TuneRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (icon != null) {
-                Icon(painterResource(icon), null, Modifier.size(20.dp), tint = if (dim) c.textDisabled else c.textSecondary)
+                KryzzGlyph(icon, Modifier.size(20.dp), tint = if (dim) c.textDisabled else c.textSecondary)
                 Spacer(Modifier.width(14.dp))
             }
             Column(Modifier.weight(1f)) {
@@ -226,7 +235,7 @@ fun DotSegments(options: List<SegmentOption>, selected: Int, onSelect: (Int) -> 
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (option.icon != null) Icon(painterResource(option.icon), null, Modifier.size(14.dp), tint = fg)
+                    if (option.icon != null) KryzzGlyph(option.icon, Modifier.size(14.dp), tint = fg)
                     Text(option.label.uppercase(Locale.US), style = DotType.Label, color = fg, maxLines = 1)
                 }
             }

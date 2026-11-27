@@ -161,7 +161,7 @@ internal fun KryzzChatAiControlsSheet(
 
         TuneSection(purpose.kryzzPickerLabel())
         TuneRow(
-            R.drawable.ic_kz_model,
+            purpose.controlGlyph(),
             activeModel?.name ?: activeModelId.kryzzCompactModel(),
             when {
                 modelsLoading && options.isEmpty() -> "Loading models"
@@ -184,7 +184,7 @@ internal fun KryzzChatAiControlsSheet(
                     value = query,
                     onValueChange = { query = it },
                     placeholder = "Search models…",
-                    leadingIcon = R.drawable.ic_kz_search,
+                    leadingIcon = R.drawable.kz_led_web_search,
                     trailing = if (query.isNotEmpty()) {
                         { DotIconButton(R.drawable.ic_kz_close, "Clear search", { query = "" }, tint = c.textTertiary, iconSize = 18.dp) }
                     } else null,
@@ -231,13 +231,13 @@ internal fun KryzzChatAiControlsSheet(
             }
         }
         TuneRow(
-            R.drawable.ic_kz_log,
+            R.drawable.kz_led_model_catalog,
             "Open catalog",
             "${settings.chatProvider.label} · every model your key can use",
             onClick = { onDismiss(); onOpenModels() }
         )
         TuneRow(
-            R.drawable.ic_kz_sliders,
+            R.drawable.kz_led_settings,
             "Advanced",
             "Depth, width, context and tool bounds",
             TuneTrailing.Expand(showAdvanced),
@@ -286,13 +286,13 @@ internal fun KryzzChatAiControlsSheet(
                     Modifier.padding(top = 10.dp, bottom = 14.dp)
                 )
                 TuneRow(
-                    R.drawable.ic_kz_memory,
+                    R.drawable.kz_led_chat_memory,
                     "Chat memory",
                     "Remembers facts you share across chats",
                     TuneTrailing.Switch(memoryEnabled, onMemoryEnabled)
                 )
                 TuneRow(
-                    R.drawable.ic_kz_agent,
+                    R.drawable.kz_led_agent,
                     "Agent swarm",
                     "A planner and helpers split big tasks",
                     TuneTrailing.Switch(agentSwarmEnabled, onAgentSwarmEnabled)
@@ -373,6 +373,16 @@ private fun NoticeAction(label: String, onClick: () -> Unit) {
         style = DotType.Label,
         color = DotTheme.c.textPrimary
     )
+}
+
+private fun ModelPurpose.controlGlyph(): Int = when (this) {
+    ModelPurpose.CHAT -> R.drawable.kz_led_chat_model
+    ModelPurpose.AGENT -> R.drawable.kz_led_agent
+    ModelPurpose.RESEARCH -> R.drawable.kz_led_research
+    ModelPurpose.MAX -> R.drawable.kz_led_max
+    ModelPurpose.IMAGE -> R.drawable.kz_led_image
+    ModelPurpose.VIDEO -> R.drawable.kz_led_video
+    ModelPurpose.AUDIO -> R.drawable.kz_led_audio
 }
 
 private fun ModelPurpose.kryzzPickerLabel(): String = when (this) {

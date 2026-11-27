@@ -3,6 +3,8 @@ package ai.daylight.assistant.ui.find
 import ai.daylight.assistant.domain.FindSize
 import ai.daylight.assistant.domain.FindState
 import ai.daylight.assistant.domain.FindStatus
+import ai.daylight.assistant.domain.FindWebState
+import ai.daylight.assistant.domain.FindWebStatus
 import ai.daylight.assistant.domain.FoundImage
 import ai.daylight.assistant.domain.LicenceFilter
 import ai.daylight.assistant.ui.shell.InkLine
@@ -24,6 +26,20 @@ internal object FindModel {
             InkLine("FIND $count ${state.filters.kind.noun(count)}".uppercase(), live = state.loadingMore)
         }
         else -> InkLine("FIND READY")
+    }
+
+    /** The strip for Web browsing mode. */
+    fun webInkLine(state: FindWebState, off: Boolean): InkLine = when {
+        off -> InkLine("FIND OFF")
+        state.status == FindWebStatus.SEARCHING -> InkLine("FIND SEARCHING", live = true)
+        state.status == FindWebStatus.SYNTHESIZING -> InkLine("FIND SYNTHESIZING", live = true)
+        state.status == FindWebStatus.FAILED -> InkLine("FIND FAILED")
+        state.status == FindWebStatus.DONE -> {
+            val count = state.result?.sources?.size ?: 0
+            if (count == 0) InkLine("FIND NO SOURCES")
+            else InkLine("FIND $count ${if (count == 1) "SOURCE" else "SOURCES"}")
+        }
+        else -> InkLine("FIND WEB READY")
     }
 
     /** "12 shown" beside the filters (set in mono caps). */

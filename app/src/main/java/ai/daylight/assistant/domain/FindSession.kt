@@ -12,6 +12,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** Which Find mode is active. */
+enum class FindMode(val label: String) {
+    IMAGES("Images"),
+    WEB("Web"),
+}
+
 /** What Find looks for. Commons calls these file types "bitmap" and "drawing". */
 enum class FindKind(val label: String, val detail: String) {
     IMAGES("Images", "Photos, paintings and scans"),

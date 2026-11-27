@@ -75,9 +75,32 @@ class TuneModelTest {
     }
 
     @Test fun theKeyCaptionNamesTheActiveProvider() {
-        val keys = TuneKeys(openRouterTail = "4F2A", minimaxTail = null)
+        val keys = TuneKeys(
+            openRouterTail = "4F2A",
+            minimaxTail = null,
+            providerTails = mapOf(ChatProvider.DEEPSEEK to "9C1E"),
+        )
         assertThat(TuneModel.keyCaption(ChatProvider.OPENROUTER, keys)).isEqualTo("OpenRouter in Keystore, ends 4F2A")
-        assertThat(TuneModel.keyCaption(ChatProvider.MINIMAX, keys)).isEqualTo("No MiniMax key yet")
+        assertThat(TuneModel.keyCaption(ChatProvider.MINIMAX, keys)).isEqualTo("No MiniMax (token plan only) key yet")
+        assertThat(TuneModel.keyCaption(ChatProvider.DEEPSEEK, keys)).isEqualTo("DeepSeek in Keystore, ends 9C1E")
+        assertThat(TuneModel.keyCaption(ChatProvider.OPENCODE, keys)).isEqualTo("No OpenCode key yet")
+    }
+
+    @Test fun tuneKeysTailForPrefersProviderTailsAndFallsBackToLegacyFields() {
+        val legacy = TuneKeys(openRouterTail = "1111", minimaxTail = "2222")
+        assertThat(legacy.tailFor(ChatProvider.OPENROUTER)).isEqualTo("1111")
+        assertThat(legacy.tailFor(ChatProvider.MINIMAX)).isEqualTo("2222")
+        assertThat(legacy.tailFor(ChatProvider.DEEPSEEK)).isNull()
+
+        val overridden = legacy.copy(
+            providerTails = mapOf(
+                ChatProvider.OPENROUTER to "AAAA",
+                ChatProvider.OPENCODE to "BBBB",
+            )
+        )
+        assertThat(overridden.tailFor(ChatProvider.OPENROUTER)).isEqualTo("AAAA")
+        assertThat(overridden.tailFor(ChatProvider.OPENCODE)).isEqualTo("BBBB")
+        assertThat(overridden.tailFor(ChatProvider.MINIMAX)).isEqualTo("2222")
     }
 
     @Test fun modelCaptionsUseShortNamesAndRunFollowsTheMode() {

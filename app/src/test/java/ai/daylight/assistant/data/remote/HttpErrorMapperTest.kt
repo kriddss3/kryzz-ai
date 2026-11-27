@@ -11,5 +11,8 @@ class HttpErrorMapperTest {
         val limited = HttpErrorMapper.fromHttp(429, "slow down", "17")
         assertThat(limited.retryAfterSeconds).isEqualTo(17)
         assertThat(limited.message).contains("17 seconds")
+        assertThat(HttpErrorMapper.fromHttp(429, "slow down", providerName = "OpenAI").saturatedProvider).isEqualTo("openai")
+        assertThat(providerSlug("Google AI Studio")).isNull()
+        assertThat(providerSlug(" ")).isNull()
     }
 }

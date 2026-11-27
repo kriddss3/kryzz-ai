@@ -35,9 +35,9 @@ internal data class SensitivityProfile(
 ) {
     companion object {
         fun of(sensitivity: VoiceSensitivity): SensitivityProfile = when (sensitivity) {
-            VoiceSensitivity.LOW -> SensitivityProfile(1.6f, 0.58f, 260L, 450L, 420L, 1_200L)
-            VoiceSensitivity.NORMAL -> SensitivityProfile(1.15f, 0.48f, 180L, 320L, 300L, 900L)
-            VoiceSensitivity.HIGH -> SensitivityProfile(0.85f, 0.38f, 100L, 220L, 220L, 700L)
+            VoiceSensitivity.LOW -> SensitivityProfile(1.6f, 0.58f, 260L, 450L, 300L, 600L)
+            VoiceSensitivity.NORMAL -> SensitivityProfile(1.15f, 0.48f, 180L, 320L, 200L, 420L)
+            VoiceSensitivity.HIGH -> SensitivityProfile(0.85f, 0.38f, 100L, 220L, 140L, 300L)
         }
     }
 }

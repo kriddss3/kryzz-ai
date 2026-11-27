@@ -66,7 +66,7 @@ class MainActivity : FragmentActivity() {
                         LockScreen(unlockMethod, lockMessage, ::authenticate, ::openSecuritySettings)
                     }
                 } else {
-                    AppNavigation(container, settings.onboardingComplete, settings.dotBackground)
+                    AppNavigation(container, settings.onboardingComplete, settings.dotBackground, settings.secondaryColorId)
                 }
             }
         }

@@ -1,5 +1,6 @@
 package ai.daylight.assistant.ui.make
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import ai.daylight.assistant.AppContainer
@@ -7,9 +8,14 @@ import ai.daylight.assistant.data.preferences.SettingsState
 import ai.daylight.assistant.data.remote.MediaModel
 import ai.daylight.assistant.domain.MakeKind
 import ai.daylight.assistant.domain.MakeRender
+import ai.daylight.assistant.domain.MakeSource
+import ai.daylight.assistant.domain.MakeSources
 import ai.daylight.assistant.domain.MakeStyle
 import ai.daylight.assistant.domain.MediaJobStatus
+import ai.daylight.assistant.domain.OutputKind
 import ai.daylight.assistant.domain.RecentOutput
+import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -40,6 +46,8 @@ class MakeViewModel(private val container: AppContainer) : ViewModel() {
     val kind: StateFlow<MakeKind> = studio.kind
     val prompt: StateFlow<String> = studio.draft
     val ratios: StateFlow<Map<MakeKind, String>> = studio.ratios
+    val sources: StateFlow<List<MakeSource>> = studio.sources
+    val composeRequests: StateFlow<Int> = studio.composeRequests
     val openRouterVideoModels: StateFlow<List<MediaModel>?> = studio.openRouterVideoModels
     val miniMaxImageModels: List<MediaModel> = container.minimax.imageModels()
     val miniMaxVideoModels: List<MediaModel> = container.minimax.videoModels()
@@ -52,6 +60,9 @@ class MakeViewModel(private val container: AppContainer) : ViewModel() {
 
     /** The last failed or stopped render whose notice the user has moved past. */
     val dismissedSerial = MutableStateFlow(0)
+
+    /** Why the last photo or clip could not be added, until the next change. */
+    val sourceNote = MutableStateFlow<String?>(null)
 
     /** Outputs saved to the gallery during this visit, so Save can say "Saved". */
     val savedIds = MutableStateFlow<Set<String>>(emptySet())
@@ -83,7 +94,8 @@ class MakeViewModel(private val container: AppContainer) : ViewModel() {
         if (text.isEmpty()) return
         viewModelScope.launch {
             val settings = container.preferences.state.first()
-            if (studio.start(kind, text, ratio, settings.makeModel(kind), style = settings.makeStyle)) {
+            if (studio.start(kind, text, ratio, settings.makeModel(kind), style = settings.makeStyle, sources = studio.sources.value)) {
+                sourceNote.value = null
                 selected.value = null
                 composing.value = false
             }
@@ -124,8 +136,100 @@ class MakeViewModel(private val container: AppContainer) : ViewModel() {
         dismissNotice()
     }
 
+    /** Shows the composer with externally staged sources instead of a previously finished render. */
+    fun enterComposeFromExternal() {
+        selected.value = null
+        composing.value = true
+        sourceNote.value = null
+    }
+
     fun markSaved(outputId: String) {
         savedIds.update { it + outputId }
+    }
+
+    /** Copies photos and clips from the gallery onto the draft, up to [MakeSources.MAX]. */
+    fun addMedia(uris: List<Uri>) {
+        if (uris.isEmpty() || render.value?.running == true) return
+        viewModelScope.launch {
+            val room = MakeSources.MAX - studio.sources.value.size
+            if (room <= 0) {
+                sourceNote.value = "You can add ${MakeSources.MAX} photos or clips."
+                return@launch
+            }
+            val imported = runCatching { container.attachments.importUris(uris.distinct().take(room)) }
+            val files = imported.getOrElse { error ->
+                val raw = error.message.orEmpty()
+                sourceNote.value = if (raw.contains("larger", ignoreCase = true) || raw.contains("limited", ignoreCase = true)) {
+                    "Each photo or clip has to be under 20 MB."
+                } else {
+                    raw.take(160).ifBlank { "That file couldn't be added." }
+                }
+                return@launch
+            }
+            val accepted = mutableListOf<MakeSource>()
+            var skipped = false
+            files.forEach { file ->
+                val path = file.localPath
+                val source = MakeSource(file.id, file.name, file.mimeType, path.orEmpty())
+                val length = path?.let { File(it).length() } ?: 0L
+                if (source.usable && length in 1..MakeSources.MAX_BYTES) {
+                    accepted += source
+                } else {
+                    container.attachments.discardCopy(path)
+                    skipped = true
+                }
+            }
+            if (accepted.isEmpty()) {
+                sourceNote.value = "Photos and clips only, each under 20 MB."
+                return@launch
+            }
+            studio.sources.update { current ->
+                (current + accepted).distinctBy { it.localPath }.takeLast(MakeSources.MAX)
+            }
+            sourceNote.value = if (skipped || uris.distinct().size > room) {
+                "Some files were left out. Photos and clips only, up to ${MakeSources.MAX}, each under 20 MB."
+            } else {
+                null
+            }
+        }
+    }
+
+    fun removeSource(id: String) {
+        if (studio.sources.value.none { it.id == id }) return
+        studio.sources.update { it.filterNot { source -> source.id == id } }
+        sourceNote.value = null
+    }
+
+    /**
+     * Puts a finished image or clip on the draft and opens the prompt, so the next render
+     * edits it or uses it as the start of a new one.
+     */
+    fun useMade(result: RecentOutput) {
+        if (render.value?.running == true) return
+        val output = result.output
+        val file = output.localPath?.let(::File)?.takeIf { it.isFile }
+        if (file == null) {
+            sourceNote.value = "That file isn't on this phone."
+            edit(result)
+            return
+        }
+        if (file.length() > MakeSources.MAX_BYTES) {
+            sourceNote.value = "That file is too large to send. Use one under 20 MB."
+            edit(result)
+            return
+        }
+        val mime = output.mimeType.substringBefore(';').ifBlank {
+            if (output.kind == OutputKind.VIDEO) "video/mp4" else "image/jpeg"
+        }
+        val source = MakeSource(UUID.randomUUID().toString(), output.fileName, mime, file.absolutePath)
+        if (source.usable) {
+            studio.sources.update { current ->
+                if (current.any { it.localPath == source.localPath }) current
+                else (current + source).takeLast(MakeSources.MAX)
+            }
+            sourceNote.value = null
+        }
+        edit(result)
     }
 
     /** OpenRouter lists each video model's ratios; fetched once per app run (no key needed). */

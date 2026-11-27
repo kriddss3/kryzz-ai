@@ -17,6 +17,7 @@ import ai.daylight.assistant.data.GeneratedOutputStore
 import ai.daylight.assistant.data.preferences.AppPreferences
 import ai.daylight.assistant.data.SkillRepository
 import ai.daylight.assistant.data.MemoryRepository
+import ai.daylight.assistant.data.remote.OpenAiCompatibleClient
 import ai.daylight.assistant.data.remote.OpenRouterClient
 import ai.daylight.assistant.data.remote.ParallelClient
 import ai.daylight.assistant.data.remote.SpeechGenerationRequest
@@ -29,10 +30,15 @@ import ai.daylight.assistant.data.remote.ErrorKind
 import ai.daylight.assistant.data.remote.PublicWebClient
 import ai.daylight.assistant.data.remote.CommonsImageClient
 import ai.daylight.assistant.domain.AgentExecutor
+import ai.daylight.assistant.domain.AutoMemoryExtractor
+import ai.daylight.assistant.domain.AutoMemoryModelTarget
+import ai.daylight.assistant.domain.ChatAttachment
+import ai.daylight.assistant.domain.CheapModelTarget
 import ai.daylight.assistant.domain.CrewDesk
 import ai.daylight.assistant.domain.AssistantMode
 import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.domain.FindSession
+import ai.daylight.assistant.domain.FindWebSession
 import ai.daylight.assistant.domain.MakeStudio
 import ai.daylight.assistant.domain.SwarmOrchestrator
 import ai.daylight.assistant.security.SecureCredentialStore
@@ -41,6 +47,7 @@ import ai.daylight.assistant.voice.TtsProvider
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoicePlayer
 import ai.daylight.assistant.voice.VoiceRecorder
+import ai.daylight.assistant.voice.VoiceRoute
 import ai.daylight.assistant.voice.audioMimeType
 import ai.daylight.assistant.voice.coerceVoiceSttModel
 import ai.daylight.assistant.voice.trimWavSilence
@@ -101,6 +108,7 @@ class AppContainer(private val application: Application) {
     val fish = FishAudioClient(http, json)
     val voiceRecorder = VoiceRecorder(application)
     val voicePlayer = VoicePlayer(application)
+    val voiceRoute = VoiceRoute(application)
     val conversations = ConversationRepository(database.dao(), json)
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val conversationTitles = ConversationTitleGenerator(conversations, openRouter, credentials, applicationScope)
@@ -110,13 +118,69 @@ class AppContainer(private val application: Application) {
     val location = LocationProvider(application, preferences)
     val outputs = GeneratedOutputStore(application)
     val attachments = AttachmentStore(application)
-    fun textProvider(provider: ChatProvider): TextProviderClient =
-        if (provider == ChatProvider.MINIMAX) minimax else openRouter
+    private val publicWeb = PublicWebClient()
+    private val compatibleClients: Map<ChatProvider, OpenAiCompatibleClient> = ChatProvider.entries
+        .filter { it != ChatProvider.OPENROUTER && it != ChatProvider.MINIMAX }
+        .associateWith { OpenAiCompatibleClient(http, json, it) }
 
-    fun textProviderKey(provider: ChatProvider): String? = when (provider) {
-        ChatProvider.OPENROUTER -> credentials.openRouterKey()
-        ChatProvider.MINIMAX -> credentials.minimaxKey()
+    fun textProvider(provider: ChatProvider): TextProviderClient = when (provider) {
+        ChatProvider.OPENROUTER -> openRouter
+        ChatProvider.MINIMAX -> minimax
+        else -> compatibleClients.getValue(provider)
     }
+
+    fun textProviderKey(provider: ChatProvider): String? = credentials.providerKey(provider)
+
+    private suspend fun resolveCheapTextProvider(): Triple<ChatProvider, TextProviderClient, Pair<String, String>>? {
+        val active = preferences.state.first().chatProvider
+        val order = (listOf(active) + CHEAP_PROVIDER_ORDER).distinct()
+        for (provider in order) {
+            val key = textProviderKey(provider)?.takeIf(String::isNotBlank) ?: continue
+            return Triple(provider, textProvider(provider), key to provider.cheapModel)
+        }
+        return null
+    }
+
+    val findWeb = FindWebSession(
+        scope = applicationScope,
+        parallel = parallel,
+        publicWeb = publicWeb,
+        parallelKey = credentials::parallelKey,
+        resolveCheapModel = {
+            resolveCheapTextProvider()?.let { (provider, client, keyAndModel) ->
+                CheapModelTarget(
+                    providerLabel = provider.label,
+                    modelId = keyAndModel.second,
+                    apiKey = keyAndModel.first,
+                    client = client,
+                    useOpenRouterPriceSort = provider == ChatProvider.OPENROUTER
+                )
+            }
+        },
+        maxSearchChars = { preferences.state.first().maxSearchChars },
+        json = json
+    )
+
+    val autoMemory: AutoMemoryExtractor = AutoMemoryExtractor(
+        scope = applicationScope,
+        memories = memories,
+        isEnabled = {
+            val s = preferences.state.first()
+            s.memoryEnabled && s.autoMemoryEnabled
+        },
+        resolveCheapModel = {
+            resolveCheapTextProvider()?.let { (provider, client, keyAndModel) ->
+                AutoMemoryModelTarget(
+                    modelId = keyAndModel.second,
+                    apiKey = keyAndModel.first,
+                    client = client,
+                    useOpenRouterPriceSort = provider == ChatProvider.OPENROUTER
+                )
+            }
+        },
+        json = json,
+        onMemorySaved = { conversationId -> agent.emitMemorySaved(conversationId) }
+    )
 
     fun mediaProvider(modelId: String): MediaProvider = when {
         modelId.startsWith("image-", ignoreCase = true) -> MediaProvider.MINIMAX
@@ -127,17 +191,23 @@ class AppContainer(private val application: Application) {
 
     enum class MediaProvider { OPENROUTER, MINIMAX }
 
-    val agent = AgentExecutor(
+    val agent: AgentExecutor = AgentExecutor(
         database.dao(), preferences, credentials, openRouter, minimax, parallel, outputs, attachments, memories, json,
         locationProvider = location,
-        publicWeb = PublicWebClient(),
+        publicWeb = publicWeb,
         cronScheduler = cron,
         conversations = conversations,
-        onFirstUserMessage = conversationTitles::request
+        onFirstUserMessage = conversationTitles::request,
+        textProvider = ::textProvider,
+        textProviderKey = ::textProviderKey,
+        onTurnCompleted = { id, userText, assistantText -> autoMemory.onTurnCompleted(id, userText, assistantText) }
     )
-    val swarm = SwarmOrchestrator(
+    val swarm: SwarmOrchestrator = SwarmOrchestrator(
         database.dao(), preferences, credentials, openRouter, minimax, memories, json,
-        onFirstUserMessage = conversationTitles::request
+        onFirstUserMessage = conversationTitles::request,
+        textProvider = ::textProvider,
+        textProviderKey = ::textProviderKey,
+        onTurnCompleted = { id, userText, assistantText -> autoMemory.onTurnCompleted(id, userText, assistantText) }
     )
 
     /** Make's renders (C7) run here, in the app's scope, so leaving the screen doesn't stop them. */
@@ -145,7 +215,16 @@ class AppContainer(private val application: Application) {
         scope = applicationScope,
         newConversation = conversations::createConversation,
         render = { id, prompt, kind, options ->
-            agent.send(id, prompt, AssistantMode.AGENT, kind.capability, media = options)
+            val files = options.sources.map { source ->
+                ChatAttachment(
+                    source.id,
+                    source.name,
+                    source.mimeType,
+                    runCatching { File(source.localPath).length() }.getOrDefault(0L),
+                    source.localPath,
+                )
+            }
+            agent.send(id, prompt, AssistantMode.AGENT, kind.capability, attachments = files, media = options)
         }
     )
 
@@ -287,5 +366,26 @@ class AppContainer(private val application: Application) {
         attachments.clear()
         memories.clearAll()
         File(application.filesDir, "voice-cache").deleteRecursively()
+    }
+
+    private companion object {
+        val CHEAP_PROVIDER_ORDER = listOf(
+            ChatProvider.GEMINI,
+            ChatProvider.GROQ,
+            ChatProvider.DEEPSEEK,
+            ChatProvider.OPENCODE,
+            ChatProvider.OPENROUTER,
+            ChatProvider.OPENAI,
+            ChatProvider.MISTRAL,
+            ChatProvider.CEREBRAS,
+            ChatProvider.QWEN,
+            ChatProvider.ZHIPU,
+            ChatProvider.MOONSHOT,
+            ChatProvider.TOGETHER,
+            ChatProvider.FIREWORKS,
+            ChatProvider.XAI,
+            ChatProvider.PERPLEXITY,
+            ChatProvider.MINIMAX
+        )
     }
 }

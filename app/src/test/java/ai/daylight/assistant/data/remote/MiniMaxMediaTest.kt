@@ -40,6 +40,29 @@ class MiniMaxMediaTest {
         assertThat(encoded).contains("\"aspect_ratio\":\"3:4\"")
     }
 
+    @Test fun imageRequestCarriesASubjectPhotoWhenOneWasAdded() {
+        val encoded = appJson.encodeToString(
+            miniMaxImageRequest(model = "image-01", prompt = "make it night", subjectImage = "data:image/jpeg;base64,abc")
+        )
+        assertThat(encoded).contains("\"subject_reference\"")
+        assertThat(encoded).contains("\"type\":\"character\"")
+        assertThat(encoded).contains("\"image_file\":\"data:image/jpeg;base64,abc\"")
+    }
+
+    @Test fun videoContentCanCarryAClipAsAReference() {
+        val encoded = appJson.encodeToString(
+            MiniMaxVideoContentItem(
+                type = "video_url",
+                videoUrl = MiniMaxImageUrl("data:video/mp4;base64,abc"),
+                role = "reference_video",
+            )
+        )
+        assertThat(encoded).contains("\"type\":\"video_url\"")
+        assertThat(encoded).contains("\"video_url\"")
+        assertThat(encoded).contains("\"role\":\"reference_video\"")
+        assertThat(encoded).doesNotContain("image_url")
+    }
+
     @Test fun imageResponseAcceptsUrlOnlyPayload() {
         val parsed = appJson.decodeFromString<MiniMaxImageResponse>(
             """{"data":{"image_urls":["https://cdn.example.com/fox.jpg"]},"base_resp":{"status_code":0,"status_msg":"success"}}"""

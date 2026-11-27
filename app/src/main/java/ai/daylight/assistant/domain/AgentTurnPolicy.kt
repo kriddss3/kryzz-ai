@@ -257,7 +257,9 @@ internal object AgentTurnPolicy {
             if (c.codeCapability) add(CREATE_CODE_PROJECT)
             // AUTO media tools: keyword-gated in the context so generate_video is never
             // offered on a plain text question (it would poll the provider for minutes).
-            val autoMedia = c.agentMode && c.capabilityAuto
+            // v5.13.7: Talk follows the same gates.
+            val talk = !c.agentMode
+            val autoMedia = (c.agentMode && c.capabilityAuto) || talk
             if (autoMedia && c.offerMediaImage) add(GENERATE_IMAGE)
             if (autoMedia && c.offerMediaVideo) add(GENERATE_VIDEO)
             if (autoMedia && c.offerMediaAudio) add(GENERATE_AUDIO)
@@ -275,6 +277,20 @@ internal object AgentTurnPolicy {
                 if (c.publicWebAvailable && (c.offerFetch || c.searchAvailable)) add(FETCH_URL)
                 if (c.offerSchedule) add(SCHEDULE_TASK)
                 add(ASK_USER)
+                add(CREATE_ARTIFACT)
+                if (c.offerSkillAuto) add(CREATE_SKILL)
+                if (c.offerCodeAuto) add(CREATE_CODE_PROJECT)
+            }
+            // v5.13.7: Talk gets the everyday tools on every turn, not only after a file
+            // keyword matched. Before, "make me a pdf" had no tool to call and the model said
+            // it could not make PDFs. The plan, ask_user and memory tools stay Run's (Talk
+            // asks with question cards and saves memories on its own).
+            if (talk) {
+                add(GET_CURRENT_TIME)
+                add(CALCULATE)
+                if (c.publicWebAvailable) add(GET_WEATHER)
+                if (c.publicWebAvailable && (c.offerFetch || c.searchAvailable)) add(FETCH_URL)
+                if (c.offerSchedule) add(SCHEDULE_TASK)
                 add(CREATE_ARTIFACT)
                 if (c.offerSkillAuto) add(CREATE_SKILL)
                 if (c.offerCodeAuto) add(CREATE_CODE_PROJECT)
@@ -314,10 +330,11 @@ internal object AgentTurnPolicy {
 
     /**
      * v5.10: whether the terminal round keeps the tool list and sends tool_choice "none".
-     * OpenRouter documents "none" ("the model will not call any tool and instead generates a
-     * message"); MiniMax does not, so it keeps the terminal round without tools.
+     * OpenRouter and OpenAI-compatible providers document "none" ("the model will not call any
+     * tool and instead generates a message"); MiniMax does not, so it keeps the terminal round
+     * without tools.
      */
-    fun keepsToolsOnTerminalRound(provider: ChatProvider): Boolean = provider == ChatProvider.OPENROUTER
+    fun keepsToolsOnTerminalRound(provider: ChatProvider): Boolean = provider != ChatProvider.MINIMAX
 
     /**
      * v5.9 step budget from Settings. [stored] is the new "agent_step_budget" value; when it

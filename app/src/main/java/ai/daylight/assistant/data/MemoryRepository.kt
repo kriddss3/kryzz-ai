@@ -50,10 +50,10 @@ class MemoryRepository(private val dao: AssistantDao) {
      * system-prompt block. Touches usage tracking for the memories it returns.
      * Returns "" when nothing is relevant, so callers can gate on [settings.memoryEnabled].
      */
-    suspend fun buildMemoryContext(userText: String, limit: Int = 4): String {
+    suspend fun buildMemoryContext(userText: String, limit: Int = 6): String {
         val enabled = dao.enabledMemories()
         if (enabled.isEmpty()) return ""
-        val relevant = MemoryEngine.retrieve(userText, enabled, limit = limit)
+        val relevant = MemoryEngine.retrieveWithCore(userText, enabled, limit = limit)
         if (relevant.isEmpty()) return ""
         val now = System.currentTimeMillis()
         relevant.forEach { dao.touchMemory(it.id, now) }
@@ -62,6 +62,53 @@ class MemoryRepository(private val dao: AssistantDao) {
             relevant.forEach { appendLine("- ${it.content}") }
             append("</memory context>")
         }
+    }
+
+    /** Stores a durable memory produced by automatic turn extraction after safety and dedup checks. */
+    suspend fun addFromAuto(content: String, category: MemoryEngine.Category, conversationId: String?): Boolean {
+        val clean = content.replace(Regex("""\s+"""), " ").trim()
+        if (clean.length !in MemoryEngine.MIN_MEMORY_CHARS..MemoryEngine.MAX_MEMORY_CHARS) return false
+        if (MemoryEngine.containsSecretPattern(clean)) return false
+        val existing = dao.allMemories()
+        if (existing.size >= MAX_MEMORIES) return false
+        if (MemoryEngine.looksDuplicate(clean, existing.map { it.content })) return false
+        val now = System.currentTimeMillis()
+        dao.upsertMemory(
+            MemoryEntity(
+                id = UUID.randomUUID().toString(),
+                content = clean,
+                category = category.name,
+                sourceConversationId = conversationId,
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+        return true
+    }
+
+    /** Updates an existing memory's text and category while preserving usage and pin metadata. */
+    suspend fun updateContent(
+        id: String,
+        content: String,
+        category: MemoryEngine.Category,
+        conversationId: String? = null
+    ): Boolean {
+        val all = dao.allMemories()
+        val existing = all.firstOrNull { it.id == id } ?: return false
+        val clean = content.replace(Regex("""\s+"""), " ").trim()
+        if (clean.length !in MemoryEngine.MIN_MEMORY_CHARS..MemoryEngine.MAX_MEMORY_CHARS) return false
+        if (MemoryEngine.containsSecretPattern(clean)) return false
+        val otherContents = all.filter { it.id != id }.map { it.content }
+        if (MemoryEngine.looksDuplicate(clean, otherContents)) return false
+        dao.upsertMemory(
+            existing.copy(
+                content = clean,
+                category = category.name,
+                updatedAt = System.currentTimeMillis(),
+                sourceConversationId = conversationId ?: existing.sourceConversationId
+            )
+        )
+        return true
     }
 
     suspend fun add(content: String, category: MemoryEngine.Category): Boolean {

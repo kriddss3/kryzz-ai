@@ -40,6 +40,9 @@ import ai.daylight.assistant.domain.ConversationUsage
 import ai.daylight.assistant.domain.FontStyle
 import ai.daylight.assistant.domain.GradientPalette
 import ai.daylight.assistant.domain.InlineQuestionProtocol
+import ai.daylight.assistant.domain.TalkCommand
+import ai.daylight.assistant.domain.TalkCommandInterrupt
+import ai.daylight.assistant.domain.TalkCommands
 import ai.daylight.assistant.domain.TextPalette
 import ai.daylight.assistant.domain.ActivityChipCounter
 import ai.daylight.assistant.domain.ToolActivityDetail
@@ -47,11 +50,14 @@ import ai.daylight.assistant.domain.WorkLog
 import ai.daylight.assistant.domain.WorkLogBuilder
 import ai.daylight.assistant.domain.WorkLogRow
 import ai.daylight.assistant.voice.TtsProvider
+import ai.daylight.assistant.voice.BargeKind
+import ai.daylight.assistant.voice.EchoAwareBarge
 import ai.daylight.assistant.voice.AdaptiveEndOfSpeechDetector
 import ai.daylight.assistant.voice.MicReading
 import ai.daylight.assistant.voice.SensitivityProfile
 import ai.daylight.assistant.voice.VoiceHearing
 import ai.daylight.assistant.voice.trimWavSilence
+import ai.daylight.assistant.voice.trimWavTail
 import ai.daylight.assistant.voice.VoiceConfig
 import ai.daylight.assistant.voice.VoicePhase
 import ai.daylight.assistant.voice.patchWavHeader
@@ -83,6 +89,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -119,6 +126,12 @@ private sealed interface VoiceTurnOutcome {
 
     /** The model answered with nothing to say. */
     data object Empty : VoiceTurnOutcome
+
+    /**
+     * The words were a Talk command. [keepGenerating] stays true when an image or video
+     * was started in this chat and the voice overlay should close without clearing it.
+     */
+    data class HandOff(val keepGenerating: Boolean) : VoiceTurnOutcome
 
     data class Answer(val text: String) : VoiceTurnOutcome
 }
@@ -420,6 +433,8 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ConversationUsage())
     val title = MutableStateFlow("Conversation")
     val composer = MutableStateFlow(restoredDraft.composer)
+    /** A "find …" from Talk: the shell opens Find and runs this photo search. */
+    val findRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val editingFrom = MutableStateFlow(restoredDraft.editingFrom)
     val generating = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
@@ -519,13 +534,28 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
                 supervisorScope {
                     val text = async { runCatching { container.textProvider(provider).models(container.textProviderKey(provider)) } }
                     val image = async { runCatching {
-                        if (provider == ChatProvider.MINIMAX) container.minimax.imageModels() else container.openRouter.imageModels(container.credentials.openRouterKey())
+                        when {
+                            provider == ChatProvider.MINIMAX -> container.minimax.imageModels()
+                            provider == ChatProvider.OPENROUTER || container.credentials.hasOpenRouterKey() ->
+                                container.openRouter.imageModels(container.credentials.openRouterKey())
+                            else -> emptyList()
+                        }
                     } }
                     val video = async { runCatching {
-                        if (provider == ChatProvider.MINIMAX) container.minimax.videoModels() else container.openRouter.videoModels(container.credentials.openRouterKey())
+                        when {
+                            provider == ChatProvider.MINIMAX -> container.minimax.videoModels()
+                            provider == ChatProvider.OPENROUTER || container.credentials.hasOpenRouterKey() ->
+                                container.openRouter.videoModels(container.credentials.openRouterKey())
+                            else -> emptyList()
+                        }
                     } }
                     val audio = async { runCatching {
-                        if (provider == ChatProvider.MINIMAX) container.minimax.audioModels() else container.openRouter.audioModels(container.credentials.openRouterKey())
+                        when {
+                            provider == ChatProvider.MINIMAX -> container.minimax.audioModels()
+                            provider == ChatProvider.OPENROUTER || container.credentials.hasOpenRouterKey() ->
+                                container.openRouter.audioModels(container.credentials.openRouterKey())
+                            else -> emptyList()
+                        }
                     } }
 
                     val textResult = text.await()
@@ -664,6 +694,17 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         pendingAttachments.value = emptyList()
         editingFrom.value = null
         persistDraft()
+        // "find …" opens the photo search. "make …" stays in this chat and is generated below.
+        if (mode.value == AssistantMode.CHAT && files.isEmpty()) {
+            val command = TalkCommands.parse(text)
+            if (command is TalkCommand.Find) {
+                if (editTimestamp != null) {
+                    viewModelScope.launch { container.conversations.deleteFrom(conversationId, editTimestamp) }
+                }
+                findRequests.tryEmit(command.query)
+                return
+            }
+        }
         startGeneration {
             if (editTimestamp != null) container.conversations.deleteFrom(conversationId, editTimestamp)
             // The swarm only applies to text agent work: media capabilities and sends
@@ -766,16 +807,18 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
      * a barge can keep using the same instance (already seeded), and so the soft-barge detector
      * survives between barge-in attempts.
      */
-    private val bargeDetector = AdaptiveEndOfSpeechDetector(allowImmediateSpeechDuringCalibration = false)
-    private val softBargeDetector = AdaptiveEndOfSpeechDetector(allowImmediateSpeechDuringCalibration = false)
+    private val bargeDetector = AdaptiveEndOfSpeechDetector(calibrationMs = 120L, allowImmediateSpeechDuringCalibration = true)
+    private val softBargeDetector = AdaptiveEndOfSpeechDetector(calibrationMs = 120L, allowImmediateSpeechDuringCalibration = true)
+    /** Separates the user's voice from Kryzz's own voice coming back through the speaker. */
+    private val echoBarge = EchoAwareBarge()
     /** v2.1: the user's Voice sensitivity, applied to the detectors and the mic's voice check. */
     private var voiceProfile = SensitivityProfile.of(ai.daylight.assistant.voice.VoiceSensitivity.NORMAL)
 
     private fun applyVoiceSensitivity(sensitivity: ai.daylight.assistant.voice.VoiceSensitivity) {
         voiceProfile = SensitivityProfile.of(sensitivity)
         voiceEndDetector.configure(voiceProfile)
-        bargeDetector.configure(voiceProfile)
-        softBargeDetector.configure(voiceProfile)
+        bargeDetector.configureBarge(voiceProfile)
+        softBargeDetector.configureBarge(voiceProfile)
         container.voiceRecorder.minPeriodicity = voiceProfile.minPeriodicity
     }
 
@@ -805,6 +848,9 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
      *  user's mute choice survives across reply cycles; a fresh start always begins unmuted. */
     fun beginVoice(preserveMute: Boolean = false) {
         if (voicePhase.value != VoicePhase.IDLE || generating.value) return
+        // Voice-communication mode first, so the recorder opens on a path the echo
+        // canceller can actually subtract the speaker from.
+        container.voiceRoute.enter()
         if (!preserveMute) voiceMicMuted.value = false
         voiceTranscript.value = ""
         voiceLevel.value = 0f
@@ -812,6 +858,7 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
         voiceEndDetector.reset(voiceStartedAt)
         container.warmOpenRouter()
         container.voiceRecorder.start().onFailure {
+            container.voiceRoute.leave()
             error.value = it.message ?: "Could not open the microphone."
             return
         }
@@ -859,10 +906,12 @@ class ChatViewModel(private val container: AppContainer, val conversationId: Str
             VoicePhase.SPEAKING -> {
                 voiceJob?.cancel()
                 voiceJob = null
+                // Set before cancel. speakAnswer handles cancellation inline and must
+                // not also restart the session.
                 intentionalVoiceCancel = true
+                container.voicePlayer.stop()
                 voicePipelineJob?.cancel()
                 voicePipelineJob = null
-                container.voicePlayer.stop()
                 container.voiceRecorder.cancel()
                 rearmVoice()
             }
@@ -1015,6 +1064,7 @@ voiceLevel.value = 0f
         voicePhase.value = VoicePhase.IDLE
         voiceLevel.value = 0f
         voiceSearching.value = false
+        container.voiceRoute.leave()
     }
 
     /**
@@ -1044,6 +1094,7 @@ voiceLevel.value = 0f
     }
 
     private fun processVoiceClip(file: File) {
+        var keepGenerating = false
         generation = viewModelScope.launch {
             generating.value = true
             try {
@@ -1082,7 +1133,17 @@ voiceLevel.value = 0f
                     VoiceTurnOutcome.Empty -> {
                         runCatching { container.voicePlayer.stop() }
                         voicePhase.value = VoicePhase.IDLE
+                        container.voiceRoute.leave()
                         error.value = "The model returned no usable reply. Try again."
+                        return@launch
+                    }
+                    is VoiceTurnOutcome.HandOff -> {
+                        keepGenerating = outcome.keepGenerating
+                        runCatching { container.voicePlayer.stop() }
+                        voicePhase.value = VoicePhase.IDLE
+                        voiceLevel.value = 0f
+                        voiceSearching.value = false
+                        container.voiceRoute.leave()
                         return@launch
                     }
                     is VoiceTurnOutcome.Answer -> outcome.text
@@ -1096,13 +1157,15 @@ voiceLevel.value = 0f
                 file.delete()
                 runCatching { container.voicePlayer.stop() }
                 voicePhase.value = VoicePhase.IDLE
+                container.voiceRoute.leave()
             } catch (t: Throwable) {
                 file.delete()
                 runCatching { container.voicePlayer.stop() }
                 voicePhase.value = VoicePhase.IDLE
+                container.voiceRoute.leave()
                 error.value = t.message ?: "Voice chat failed."
             } finally {
-                generating.value = false
+                if (!keepGenerating) generating.value = false
             }
         }
     }
@@ -1111,6 +1174,27 @@ voiceLevel.value = 0f
     private fun voiceReplyModelOf(settings: SettingsState): String = settings.voiceReplyModel.ifBlank {
         if (settings.chatProvider == ChatProvider.OPENROUTER) settings.defaultModel else VoiceConfig.DEFAULT_LLM_MODEL
     }.ifBlank { VoiceConfig.DEFAULT_LLM_MODEL }
+
+    /**
+     * "make …" starts the image or video in this chat. "find …" opens the photo search.
+     * Either way the voice overlay closes.
+     */
+    private fun handOffSpoken(text: String): VoiceTurnOutcome {
+        val command = TalkCommands.parse(text) ?: return VoiceTurnOutcome.Unclear
+        return when (command) {
+            is TalkCommand.Find -> {
+                findRequests.tryEmit(command.query)
+                VoiceTurnOutcome.HandOff(keepGenerating = false)
+            }
+            is TalkCommand.Make -> {
+                startGeneration {
+                    container.agent.send(conversationId, text, AssistantMode.CHAT, AgentCapability.AUTO)
+                    title.value = container.conversations.conversation(conversationId)?.title ?: title.value
+                }
+                VoiceTurnOutcome.HandOff(keepGenerating = true)
+            }
+        }
+    }
 
     /**
      * v2.1 direct hearing: the clip goes to the reply model as audio. Returns null when the
@@ -1125,6 +1209,9 @@ voiceLevel.value = 0f
             container.agent.sendVoiceAudio(conversationId, prepared) { heard ->
                 if (heard.isNotBlank()) voiceTranscript.value = heard.take(200)
             }
+        } catch (handoff: TalkCommandInterrupt) {
+            voiceTranscript.value = handoff.text.take(200)
+            return handOffSpoken(handoff.text)
         } catch (_: VoiceAudioUnsupported) {
             return null
         } finally {
@@ -1143,6 +1230,7 @@ voiceLevel.value = 0f
         val text = container.transcribeVoice(file, settings.voiceSttModel).trim()
         if (text.isBlank()) return VoiceTurnOutcome.Unclear
         voiceTranscript.value = text.take(200)
+        if (TalkCommands.parse(text) != null) return handOffSpoken(text)
         val fillerJob = startVoiceFillerListener(settings, provider)
         val answer = try {
             container.agent.send(conversationId, text, AssistantMode.CHAT, AgentCapability.AUTO, voiceMode = true)
@@ -1211,13 +1299,13 @@ voiceLevel.value = 0f
             )
             // Play and wait for completion (or cancellation) so two fillers don't overlap.
             suspendCancellableCoroutine<Unit> { cont ->
-                container.voicePlayer.play(clip, {}, { failure ->
+                container.voicePlayer.play(clip, {}, duplex = true) { failure ->
                     runCatching { clip.delete() }
                     if (cont.isActive) {
                         if (failure == null) cont.resume(Unit)
                         else cont.resumeWithException(failure)
                     }
-                })
+                }
                 cont.invokeOnCancellation { runCatching { clip.delete() } }
             }
         }
@@ -1244,12 +1332,14 @@ voiceLevel.value = 0f
                 }
                 container.voiceRecorder.stop()?.delete()
                 voicePhase.value = VoicePhase.IDLE
+                container.voiceRoute.leave()
                 return@launch
             }
             val fishVoiceId = settings.fishVoiceId.ifBlank { null }
             val spoken = answer.toSpeechText()
             if (spoken.isBlank()) {
                 voicePhase.value = VoicePhase.IDLE
+                container.voiceRoute.leave()
                 error.value = "The voice reply did not contain anything that could be spoken."
                 return@launch
             }
@@ -1366,20 +1456,26 @@ voiceLevel.value = 0f
                 pendingClip.getOrNull()?.delete()
             }
             val heard = playedAny || playbackStarted
-            if (voicePhase.value == VoicePhase.SPEAKING && heard) {
-                // The TTS switches itself off as soon as the reply ends; the session then
-                // re-arms the microphone instead of dropping back to normal chatting.
-                error.value = null
-                rearmVoice()
-            } else if (!intentionalVoiceCancel && !heard &&
-                (voicePhase.value == VoicePhase.PROCESSING || voicePhase.value == VoicePhase.SPEAKING)
-            ) {
-                // Nothing was ever heard: report only genuine generation failures here.
-                // Intentional interrupts (barge-in, orb tap, close) skip this branch, and
-                // playback errors after audio started are not generation failures.
-                container.voiceRecorder.stop()?.delete()
-                voicePhase.value = VoicePhase.IDLE
-                error.value = firstSegmentError?.message ?: "The voice reply could not be generated."
+            when {
+                // Barge-in and the stop button already own the next state. Restarting
+                // here used to run inside their cancel() and start a second microphone
+                // while the first recorder was still being swapped, which crashed.
+                intentionalVoiceCancel -> Unit
+                voicePhase.value == VoicePhase.SPEAKING && heard -> {
+                    // The TTS switches itself off as soon as the reply ends; the session then
+                    // re-arms the microphone instead of dropping back to normal chatting.
+                    error.value = null
+                    rearmVoice()
+                }
+                !heard && (voicePhase.value == VoicePhase.PROCESSING || voicePhase.value == VoicePhase.SPEAKING) -> {
+                    // Nothing was ever heard: report only genuine generation failures here.
+                    // Intentional interrupts (barge-in, orb tap, close) skip this branch, and
+                    // playback errors after audio started are not generation failures.
+                    container.voiceRecorder.stop()?.delete()
+                    voicePhase.value = VoicePhase.IDLE
+                    container.voiceRoute.leave()
+                    error.value = firstSegmentError?.message ?: "The voice reply could not be generated."
+                }
             }
         }
     }
@@ -1390,6 +1486,7 @@ voiceLevel.value = 0f
         // Reset both barge detectors so a previous barge doesn't leak into this reply.
         bargeDetector.reset(SystemClock.elapsedRealtime())
         softBargeDetector.reset(SystemClock.elapsedRealtime())
+        echoBarge.reset()
         pendingBargePrefix = null
         pendingBargePrefixLength = 0L
         voiceJob = viewModelScope.launch {
@@ -1404,51 +1501,73 @@ voiceLevel.value = 0f
                 val micLevel = (micRaw / 32_767f).coerceIn(0f, 1f)
 
                 if (phaseNow == VoicePhase.SPEAKING) {
-                    // Two barge-in gates run in parallel:
-                    //   1. "outshouts reply" — mic > player * margin + floor. Fast (BARGE_TRIGGER_MS).
-                    //      Catches normal voices on a quiet phone speaker.
-                    //   2. "soft barge" — mic sustains above absolute floor for longer. Catches the
-                    //      case where the speaker is loud and the user's voice can't outshout it
-                    //      after echo cancellation (the previously broken case).
-                    // v2.1: both gates also need the mic to sound like a voice, so wind or a
-                    // bump on the phone no longer cuts Kryzz off.
-                    val micOutshoutsReply = recorderLive && reading.voiceLike &&
-                        micLevel > maxOf(playerLevel * BARGE_MIC_MARGIN + BARGE_MIC_FLOOR, BARGE_MIC_MIN)
-                    val micSustainedSoft = recorderLive && reading.voiceLike && micLevel >= BARGE_SOFT_MIN
+                    if (recorderLive && reading.frames == 0) {
+                        voiceLevel.value = playerLevel
+                        delay(VOICE_POLL_MS)
+                        continue
+                    }
+                    // Speaker bleed is itself speech, so a voice-like mic is not enough to
+                    // cut Kryzz off. The echo model only passes energy that rises above the
+                    // leak it has heard from this reply. Samples that fail that test are fed
+                    // as silence so a run of Kryzz's own words cannot accumulate into a barge.
+                    val kind = if (recorderLive && !container.voiceRecorder.muted) {
+                        echoBarge.classify(
+                            micLevel = micLevel,
+                            playerLevel = playerLevel,
+                            playing = container.voicePlayer.isPlaying(),
+                            voiceLike = reading.voiceLike
+                        )
+                    } else {
+                        BargeKind.NONE
+                    }
+                    val isHard = kind == BargeKind.OUTSHOUT
+                    val isSoftOrHard = kind == BargeKind.OUTSHOUT || kind == BargeKind.SOFT
+                    val hardSample = bargeDetector.observe(
+                        if (isHard) micRaw else 0,
+                        now,
+                        voiceLike = isHard
+                    )
+                    val softSample = softBargeDetector.observe(
+                        if (isSoftOrHard) micRaw else 0,
+                        now,
+                        voiceLike = isSoftOrHard
+                    )
                     val activity = when {
-                        micOutshoutsReply -> bargeDetector.observe(micRaw, now)
-                        micSustainedSoft -> softBargeDetector.observe(micRaw, now)
+                        isHard -> hardSample
+                        isSoftOrHard -> softSample
                         else -> null
                     }
                     voiceLevel.value = maxOf(playerLevel, activity?.level ?: 0f)
-                    val hardTrigger = activity != null && activity.hasSpeech &&
-                        activity.voicedDurationMs >= voiceProfile.bargeTriggerMs
-                    val softTrigger = micSustainedSoft &&
-                        activity != null && activity.hasSpeech &&
-                        activity.voicedDurationMs >= voiceProfile.bargeSoftTriggerMs
+                    val hardTrigger = isHard && hardSample.hasSpeech &&
+                        hardSample.voicedDurationMs >= voiceProfile.bargeTriggerMs
+                    val softTrigger = isSoftOrHard && softSample.hasSpeech &&
+                        softSample.voicedDurationMs >= voiceProfile.bargeSoftTriggerMs
                     if (!bargeArmed && (hardTrigger || softTrigger)) {
                         bargeArmed = true
                         val voicedMs = activity?.voicedDurationMs ?: 0L
+                        // Claim the session before the fade suspends. speakAnswer's
+                        // cancellation runs inline and would restart listening itself
+                        // if it still saw SPEAKING.
+                        intentionalVoiceCancel = true
+                        voicePhase.value = VoicePhase.LISTENING
                         fadePlayerOut()
                         container.voicePlayer.setVolume(0f)
                         container.voicePlayer.stop()
-                        intentionalVoiceCancel = true
                         voicePipelineJob?.cancel()
                         voicePipelineJob = null
 
                         // KEEP the monitor file: it contains the user's cut-off speech up to this
-                        // point. Discarding it (the old behaviour) meant STT never heard the words
-                        // that triggered the barge. We rename it so a subsequent stop() doesn't
-                        // delete it, and we re-use it as the start of the new LISTENING clip.
-                        val bargeFile = container.voiceRecorder.stop()
+                        // point. Trim older earlier-playback audio so STT hears the barge utterance.
+                        val rawBarge = container.voiceRecorder.stop()
+                        val bargeFile = rawBarge?.let {
+                            runCatching { trimWavTail(it, (voicedMs + 600L).coerceIn(800L, 2_000L)) }.getOrDefault(it)
+                        }
                         val bargeStartAt = now - voicedMs
-                        // Start a fresh recorder so additional speech appends to a new clip,
-                        // then concatenate the barge prefix + new clip when the user finishes.
-                        val newClip = container.newVoiceFile()
                         val prefixLength = bargeFile?.length() ?: 0L
                         if (container.voiceRecorder.start().isFailure) {
                             bargeFile?.delete()
                             voicePhase.value = VoicePhase.IDLE
+                            container.voiceRoute.leave()
                             error.value = "The microphone could not restart after interruption."
                             break
                         }
@@ -1461,7 +1580,6 @@ voiceLevel.value = 0f
                         voiceEndDetector.seedSpeech(now, voicedMs)
                         softBargeDetector.reset(now)
                         bargeDetector.reset(now)
-                        voicePhase.value = VoicePhase.LISTENING
                     }
                 } else if (reading.frames > 0 || !recorderLive) {
                     val activity = voiceEndDetector.observe(micRaw, now, reading.voiceLike)
@@ -1490,7 +1608,7 @@ voiceLevel.value = 0f
         clip: File,
         onStarted: () -> Unit = {}
     ) = suspendCancellableCoroutine { continuation ->
-        container.voicePlayer.play(clip, onStarted) { failure ->
+        container.voicePlayer.play(clip, onStarted, duplex = true) { failure ->
             clip.delete()
             if (continuation.isActive) {
                 if (failure == null) continuation.resume(Unit)
@@ -1519,6 +1637,7 @@ voiceLevel.value = 0f
                     fishVoiceId = fishVoiceId,
                     emotions = settings.voiceEmotions
                 ),
+                duplex = true,
                 onStarted = {
                     started = true
                     onStarted()
@@ -1641,6 +1760,7 @@ voiceLevel.value = 0f
         speakMessageJob = null
         container.voiceRecorder.cancel()
         container.voicePlayer.stop()
+        container.voiceRoute.leave()
         super.onCleared()
     }
 
@@ -1649,28 +1769,6 @@ voiceLevel.value = 0f
 
         /** How long the "Remembering that…" chip stays visible after a memory is saved. */
         const val MEMORY_CHIP_MS = 2_800L
-
-        /**
-         * Barge-in fires when the microphone level is at least this fraction of the speaker level.
-         * 0.7 was too aggressive in practice — with the device speaker at typical speech levels
-         * (PCM 0.4-0.7) and Android's echo canceller suppressing speaker leakage, the user's
-         * normal conversational voice never reached 1.0× of the player, so they had to talk very
-         * loudly. 0.5f means "the user's voice is clearly present", which matches the cue we want.
-         */
-        const val BARGE_MIC_MARGIN = 0.5f
-
-        /** Added to the scaled playback level so quiet replies still need a real voice. */
-        const val BARGE_MIC_FLOOR = 0.04f
-
-        /** Absolute mic floor (0..1) for the "must outshout reply" gate. */
-        const val BARGE_MIC_MIN = 0.05f
-
-        /**
-         * Soft barge-in: when the speaker is loud and the user can't outshout it, accept any
-         * sustained voice above [BARGE_SOFT_MIN] for [BARGE_SOFT_TRIGGER_MS]. The longer window
-         * is the "noise floor" defence — a single TV syllable won't arm; a sentence will.
-         */
-        const val BARGE_SOFT_MIN = 0.04f
     }
 
     fun setMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setMemoryEnabled(value) }
@@ -1728,13 +1826,28 @@ class ModelsViewModel(private val container: AppContainer) : ViewModel() {
                 supervisorScope {
                     val chat = async { runCatching { container.textProvider(provider).models(container.textProviderKey(provider)) } }
                     val image = async { runCatching {
-                        if (provider == ChatProvider.MINIMAX) container.minimax.imageModels() else container.openRouter.imageModels(container.credentials.openRouterKey())
+                        when {
+                            provider == ChatProvider.MINIMAX -> container.minimax.imageModels()
+                            provider == ChatProvider.OPENROUTER || container.credentials.hasOpenRouterKey() ->
+                                container.openRouter.imageModels(container.credentials.openRouterKey())
+                            else -> emptyList()
+                        }
                     } }
                     val video = async { runCatching {
-                        if (provider == ChatProvider.MINIMAX) container.minimax.videoModels() else container.openRouter.videoModels(container.credentials.openRouterKey())
+                        when {
+                            provider == ChatProvider.MINIMAX -> container.minimax.videoModels()
+                            provider == ChatProvider.OPENROUTER || container.credentials.hasOpenRouterKey() ->
+                                container.openRouter.videoModels(container.credentials.openRouterKey())
+                            else -> emptyList()
+                        }
                     } }
                     val audio = async { runCatching {
-                        if (provider == ChatProvider.MINIMAX) container.minimax.audioModels() else container.openRouter.audioModels(container.credentials.openRouterKey())
+                        when {
+                            provider == ChatProvider.MINIMAX -> container.minimax.audioModels()
+                            provider == ChatProvider.OPENROUTER || container.credentials.hasOpenRouterKey() ->
+                                container.openRouter.audioModels(container.credentials.openRouterKey())
+                            else -> emptyList()
+                        }
                     } }
 
                     val chatResult = chat.await()
@@ -1878,13 +1991,21 @@ class SkillsToolsViewModel(private val container: AppContainer) : ViewModel() {
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     val settings = container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsState())
-    val openRouterKey = MutableStateFlow("")
+    private val providerKeys: Map<ChatProvider, MutableStateFlow<String>> =
+        ChatProvider.entries.associateWith { MutableStateFlow("") }
+    private val providerChecks: Map<ChatProvider, MutableStateFlow<CheckState>> =
+        ChatProvider.entries.associateWith { MutableStateFlow<CheckState>(CheckState.Idle) }
+    val openRouterKey: MutableStateFlow<String> = providerKeys.getValue(ChatProvider.OPENROUTER)
     val parallelKey = MutableStateFlow("")
-    val minimaxKey = MutableStateFlow("")
-    val openRouterCheck = MutableStateFlow<CheckState>(CheckState.Idle)
+    val minimaxKey: MutableStateFlow<String> = providerKeys.getValue(ChatProvider.MINIMAX)
+    val openRouterCheck: MutableStateFlow<CheckState> = providerChecks.getValue(ChatProvider.OPENROUTER)
     val parallelCheck = MutableStateFlow<CheckState>(CheckState.Idle)
-    val minimaxCheck = MutableStateFlow<CheckState>(CheckState.Idle)
+    val minimaxCheck: MutableStateFlow<CheckState> = providerChecks.getValue(ChatProvider.MINIMAX)
     val notice = MutableStateFlow<String?>(null)
+
+    fun providerKeyFlow(provider: ChatProvider): MutableStateFlow<String> = providerKeys.getValue(provider)
+    fun providerCheckFlow(provider: ChatProvider): MutableStateFlow<CheckState> = providerChecks.getValue(provider)
+    fun hasProviderKey(provider: ChatProvider): Boolean = container.credentials.hasProviderKey(provider)
 
     // Voice chat
     val fishKey = MutableStateFlow("")
@@ -2070,19 +2191,27 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun hasOpenRouter() = container.credentials.hasOpenRouterKey()
+    fun hasOpenRouter() = hasProviderKey(ChatProvider.OPENROUTER)
     fun hasParallel() = container.credentials.hasParallelKey()
-    fun hasMinimax() = container.credentials.hasMinimaxKey()
+    fun hasMinimax() = hasProviderKey(ChatProvider.MINIMAX)
     fun setChatProvider(value: ChatProvider) = viewModelScope.launch { container.preferences.setChatProvider(value) }
-    fun saveAndTestOpenRouter() = viewModelScope.launch {
-        val key = openRouterKey.value.trim()
-        if (key.isEmpty()) { openRouterCheck.value = CheckState.Error("Enter a key first."); return@launch }
-        openRouterCheck.value = CheckState.Checking
-        container.openRouter.testKey(key).fold(
-            { container.credentials.setOpenRouterKey(key); openRouterKey.value = ""; openRouterCheck.value = CheckState.Success("Verified and saved.") },
-            { openRouterCheck.value = CheckState.Error(it.message ?: "Key test failed.") }
+    fun saveAndTestProvider(provider: ChatProvider) = viewModelScope.launch {
+        val keyFlow = providerKeyFlow(provider)
+        val checkFlow = providerCheckFlow(provider)
+        val key = keyFlow.value.trim()
+        if (key.isEmpty()) { checkFlow.value = CheckState.Error("Enter a key first."); return@launch }
+        checkFlow.value = CheckState.Checking
+        container.textProvider(provider).testKey(key).fold(
+            {
+                container.credentials.setProviderKey(provider, key)
+                keyFlow.value = ""
+                checkFlow.value = CheckState.Success("Verified and saved.")
+                refreshKeyTails()
+            },
+            { checkFlow.value = CheckState.Error(it.message ?: "Key test failed.") }
         )
     }
+    fun saveAndTestOpenRouter() = saveAndTestProvider(ChatProvider.OPENROUTER)
     fun saveAndTestParallel() = viewModelScope.launch {
         val key = parallelKey.value.trim()
         if (key.isEmpty()) { parallelCheck.value = CheckState.Error("Enter a key first."); return@launch }
@@ -2092,15 +2221,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             { parallelCheck.value = CheckState.Error(it.message ?: "Key test failed.") }
         )
     }
-    fun saveAndTestMiniMax() = viewModelScope.launch {
-        val key = minimaxKey.value.trim()
-        if (key.isEmpty()) { minimaxCheck.value = CheckState.Error("Enter a key first."); return@launch }
-        minimaxCheck.value = CheckState.Checking
-        container.minimax.testKey(key).fold(
-            { container.credentials.setMinimaxKey(key); minimaxKey.value = ""; minimaxCheck.value = CheckState.Success("Verified and saved.") },
-            { minimaxCheck.value = CheckState.Error(it.message ?: "Key test failed.") }
-        )
-    }
+    fun saveAndTestMiniMax() = saveAndTestProvider(ChatProvider.MINIMAX)
     fun setPersona(id: String, custom: String) = viewModelScope.launch { container.preferences.setPersona(id, custom) }
     fun setSearch(value: Boolean) = viewModelScope.launch { container.preferences.setSearchEnabled(value) }
     fun setSearchChars(value: Int) = viewModelScope.launch { container.preferences.setMaxSearchChars(value) }
@@ -2126,7 +2247,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
     fun hasLocationPermission() = container.location.hasPermission()
     fun setMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setMemoryEnabled(value) }
+    fun setAutoMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setAutoMemoryEnabled(value) }
     fun setDotBackground(value: Boolean) = viewModelScope.launch { container.preferences.setDotBackground(value) }
+    fun setSecondaryColor(id: String) = viewModelScope.launch { container.preferences.setSecondaryColor(id) }
     fun clearAll() = viewModelScope.launch { container.clearAllLocalData(); notice.value = "All local conversations, settings, and credentials were cleared." }
 
     /** Tune's key row. Only the last four characters of each key are kept (see [TuneModel.keyTail]). */
@@ -2135,13 +2258,17 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun refreshKeyTails() = viewModelScope.launch {
         keyTails.value = withContext(Dispatchers.IO) {
             val credentials = container.credentials
+            val providerTails = ChatProvider.entries.associateWith { provider ->
+                TuneModel.keyTail(runCatching { credentials.providerKey(provider) }.getOrNull())
+            }
             TuneKeys(
-                openRouterTail = TuneModel.keyTail(runCatching { credentials.openRouterKey() }.getOrNull()),
-                minimaxTail = TuneModel.keyTail(runCatching { credentials.minimaxKey() }.getOrNull()),
+                openRouterTail = providerTails[ChatProvider.OPENROUTER],
+                minimaxTail = providerTails[ChatProvider.MINIMAX],
                 hasParallel = credentials.hasParallelKey(),
                 hasFish = credentials.hasFishKey(),
                 parallelTail = TuneModel.keyTail(runCatching { credentials.parallelKey() }.getOrNull()),
-                fishTail = TuneModel.keyTail(runCatching { credentials.fishKey() }.getOrNull())
+                fishTail = TuneModel.keyTail(runCatching { credentials.fishKey() }.getOrNull()),
+                providerTails = providerTails
             )
         }
     }
@@ -2163,6 +2290,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class MemoryViewModel(private val container: AppContainer) : ViewModel() {
     val settings = container.preferences.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsState())
+    val autoMemoryEnabled: StateFlow<Boolean> = container.preferences.state
+        .map { it.autoMemoryEnabled }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
     val query = MutableStateFlow("")
     val memories: StateFlow<List<MemoryEntity>> = query
         .flatMapLatest { container.memories.observe(it.trim()) }
@@ -2172,6 +2302,8 @@ class MemoryViewModel(private val container: AppContainer) : ViewModel() {
     fun setQuery(value: String) { query.value = value }
 
     fun setMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setMemoryEnabled(value) }
+
+    fun setAutoMemoryEnabled(value: Boolean) = viewModelScope.launch { container.preferences.setAutoMemoryEnabled(value) }
 
     fun setEnabled(id: String, enabled: Boolean) = viewModelScope.launch {
         container.memories.setEnabled(id, enabled)
@@ -2192,6 +2324,19 @@ class MemoryViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val saved = container.memories.add(content, category)
             notice.value = if (saved) "Memory saved." else "Not saved — duplicate or too short."
+            onResult(saved)
+        }
+    }
+
+    fun update(
+        id: String,
+        content: String,
+        category: MemoryEngine.Category,
+        onResult: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val saved = container.memories.updateContent(id, content, category)
+            notice.value = if (saved) "Memory updated." else "Not saved — duplicate, invalid, or too short."
             onResult(saved)
         }
     }

@@ -1,5 +1,6 @@
 package ai.daylight.assistant.data.remote
 
+import ai.daylight.assistant.domain.ChatProvider
 import ai.daylight.assistant.voice.VoiceConfig
 import java.io.IOException
 import java.io.File
@@ -271,94 +272,18 @@ class OpenRouterClient(private val http: OkHttpClient, private val json: Json) :
         })
     }
 
-    override fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = callbackFlow {
-        val body = json.encodeToString(request).toRequestBody(JSON_MEDIA)
-        val call = http.newCall(
-            Request.Builder().url("https://openrouter.ai/api/v1/chat/completions")
-                .header("Authorization", "Bearer ${key.trim()}")
-                .header("Content-Type", "application/json")
-                .header("X-OpenRouter-Title", "Kryzz AI")
-                .post(body).build()
-        )
-        call.enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(e)))
-                close()
-            }
+    override fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = streamChatCompletions(
+        http = http,
+        json = json,
+        httpRequest = Request.Builder().url("https://openrouter.ai/api/v1/chat/completions")
+            .header("Authorization", "Bearer ${key.trim()}")
+            .header("Content-Type", "application/json")
+            .header("X-OpenRouter-Title", "Kryzz AI")
+            .post(json.encodeToString(request).toRequestBody(JSON_MEDIA)).build(),
+        errorFor = { parseOpenAiError(json, it) }
+    )
 
-            override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    if (!it.isSuccessful) {
-                        trySend(StreamEvent.Failure(errorFor(it)))
-                        close()
-                        return
-                    }
-                    if (!it.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)) {
-                        val payload = it.body?.string().orEmpty()
-                        if (payload.isNotBlank()) consumePayload(payload)
-                        trySend(StreamEvent.Done)
-                        close()
-                        return
-                    }
-                    val parser = SseParser()
-                    val source = it.body?.source()
-                    try {
-                        while (source != null && !source.exhausted() && !call.isCanceled()) {
-                            parser.accept(source.readUtf8Line()).forEach(::consumePayload)
-                        }
-                        parser.finish().forEach(::consumePayload)
-                    } catch (t: Throwable) {
-                        if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(t)))
-                    } finally {
-                        close()
-                    }
-                }
-            }
-
-            private fun consumePayload(payload: String) {
-                if (payload.isBlank()) return
-                if (payload == "[DONE]") {
-                    trySend(StreamEvent.Done)
-                    return
-                }
-                runCatching { json.decodeFromString<ChatChunk>(payload) }
-                    .onSuccess { chunk ->
-                        chunk.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
-                        minimaxBaseRespFailure(chunk.baseResp)?.let { trySend(it) }
-                        chunk.choices.firstOrNull()?.let { choice ->
-                            choice.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
-                            val text = extractResponseText(choice.delta.content ?: choice.message?.content ?: choice.text)
-                            val calls = choice.delta.toolCalls.orEmpty().ifEmpty {
-                                choice.message?.toolCalls.orEmpty().mapIndexed { index, call ->
-                                    ToolCallDelta(
-                                        index = index,
-                                        id = call.id,
-                                        function = FunctionCallDelta(call.function.name, call.function.arguments)
-                                    )
-                                }
-                            }
-                            val reasoning = choice.delta.reasoningText()
-                            if (text.isNotEmpty() || calls.isNotEmpty() || reasoning.isNotEmpty()) {
-                                trySend(StreamEvent.Delta(text, calls, reasoning))
-                            }
-                        }
-                        chunk.usage?.let { trySend(StreamEvent.UsageUpdate(it)) }
-                    }
-                    .onFailure {
-                        // Keep-alives, empty `data:` frames, and unknown vendor events are
-                        // not fatal. Emitting Failure here used to abort an otherwise good
-                        // voice reply and surface "unreadable stream event" in the overlay.
-                    }
-            }
-        })
-        awaitClose { call.cancel() }
-    }
-
-    private fun errorFor(response: Response): AssistantApiException {
-        val text = response.body?.string().orEmpty()
-        val message = runCatching { json.decodeFromString<ErrorEnvelope>(text).error?.message }.getOrNull() ?: text.take(500)
-        return HttpErrorMapper.fromHttp(response.code, message, response.header("Retry-After"))
-    }
+    private fun errorFor(response: Response): AssistantApiException = parseOpenAiError(json, response)
 
     private companion object { val JSON_MEDIA = "application/json; charset=utf-8".toMediaType() }
 }
@@ -589,6 +514,16 @@ class FishAudioClient(private val http: OkHttpClient, private val json: Json) {
 }
 
 /**
+ * A provider error carried inside an otherwise HTTP 200 stream. OpenRouter commits the
+ * status before the model starts, then reports a 429 in the chunk with no Retry-After
+ * header. [AssistantApiException.saturatedProvider] is the route to skip on the retry.
+ */
+internal fun failureForChunk(chunk: ChatChunk, error: ApiError): StreamEvent.Failure {
+    val named = (chunk.provider as? JsonPrimitive)?.contentOrNull ?: error.providerName()
+    return StreamEvent.Failure(HttpErrorMapper.fromHttp(error.code ?: 500, error.message, providerName = named))
+}
+
+/**
  * MiniMax streams vendor-internal errors inline as a top-level `base_resp` object
  * (e.g. status_code 2013 "invalid tool type") rather than an OpenAI-style `error`.
  * Those codes are not HTTP statuses, so map a non-zero one to a validation fault
@@ -627,83 +562,15 @@ class MiniMaxClient(private val http: OkHttpClient, private val json: Json) : Te
         }
     }
 
-    override fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = callbackFlow {
-        val body = json.encodeToString(request).toRequestBody(JSON_MEDIA)
-        val call = http.newCall(
-            Request.Builder().url("$BASE_URL/v1/chat/completions")
-                .header("Authorization", "Bearer ${key.trim()}")
-                .header("Content-Type", "application/json")
-                .post(body).build()
-        )
-        call.enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(e)))
-                close()
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    if (!it.isSuccessful) {
-                        trySend(StreamEvent.Failure(minimaxErrorFor(it)))
-                        close()
-                        return
-                    }
-                    if (!it.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)) {
-                        val payload = it.body?.string().orEmpty()
-                        if (payload.isNotBlank()) consumePayload(payload)
-                        trySend(StreamEvent.Done)
-                        close()
-                        return
-                    }
-                    val parser = SseParser()
-                    val source = it.body?.source()
-                    try {
-                        while (source != null && !source.exhausted() && !call.isCanceled()) {
-                            parser.accept(source.readUtf8Line()).forEach(::consumePayload)
-                        }
-                        parser.finish().forEach(::consumePayload)
-                    } catch (t: Throwable) {
-                        if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(t)))
-                    } finally {
-                        close()
-                    }
-                }
-            }
-
-            private fun consumePayload(payload: String) {
-                if (payload.isBlank()) return
-                if (payload == "[DONE]") {
-                    trySend(StreamEvent.Done)
-                    return
-                }
-                runCatching { json.decodeFromString<ChatChunk>(payload) }
-                    .onSuccess { chunk ->
-                        chunk.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
-                        minimaxBaseRespFailure(chunk.baseResp)?.let { trySend(it) }
-                        chunk.choices.firstOrNull()?.let { choice ->
-                            choice.error?.let { trySend(StreamEvent.Failure(HttpErrorMapper.fromHttp(it.code ?: 500, it.message))) }
-                            val text = extractResponseText(choice.delta.content ?: choice.message?.content ?: choice.text)
-                            val calls = choice.delta.toolCalls.orEmpty().ifEmpty {
-                                choice.message?.toolCalls.orEmpty().mapIndexed { index, call ->
-                                    ToolCallDelta(
-                                        index = index,
-                                        id = call.id,
-                                        function = FunctionCallDelta(call.function.name, call.function.arguments)
-                                    )
-                                }
-                            }
-                            val reasoning = choice.delta.reasoningText()
-                            if (text.isNotEmpty() || calls.isNotEmpty() || reasoning.isNotEmpty()) {
-                                trySend(StreamEvent.Delta(text, calls, reasoning))
-                            }
-                        }
-                        chunk.usage?.let { trySend(StreamEvent.UsageUpdate(it)) }
-                    }
-                    .onFailure { /* keep-alive / unknown events are non-fatal */ }
-            }
-        })
-        awaitClose { call.cancel() }
-    }
+    override fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = streamChatCompletions(
+        http = http,
+        json = json,
+        httpRequest = Request.Builder().url("$BASE_URL/v1/chat/completions")
+            .header("Authorization", "Bearer ${key.trim()}")
+            .header("Content-Type", "application/json")
+            .post(json.encodeToString(request).toRequestBody(JSON_MEDIA)).build(),
+        errorFor = ::minimaxErrorFor
+    )
 
     fun imageModels(): List<MediaModel> = listOf(
         MediaModel("image-01", "MiniMax Image 01", "Text-to-image generation", false, emptyList(), listOf("1:1", "16:9", "9:16", "4:3", "3:4")),
@@ -836,6 +703,194 @@ class MiniMaxClient(private val http: OkHttpClient, private val json: Json) : Te
         const val BASE_URL = "https://api.minimax.io"
         val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     }
+}
+
+/**
+ * OpenAI-compatible client used by DeepSeek, OpenCode, OpenAI, Gemini, Groq, xAI, Mistral,
+ * Together, Fireworks, Perplexity, Moonshot, Cerebras, Qwen, and Z.ai.
+ */
+class OpenAiCompatibleClient(
+    private val http: OkHttpClient,
+    private val json: Json,
+    val provider: ChatProvider,
+) : TextProviderClient {
+
+    private val baseUrl = provider.baseUrl.trimEnd('/')
+
+    internal fun sanitizeRequest(request: ChatRequest): ChatRequest =
+        request.copy(provider = null, reasoning = null)
+
+    fun fallbackModels(): List<OpenRouterModel> =
+        provider.fallbackModelIds.map { OpenRouterModel(id = it, name = it, supportedParameters = listOf("tools")) }
+
+    override suspend fun testKey(key: String): Result<Unit> {
+        val clean = key.trim()
+        if (clean.isBlank()) {
+            return Result.failure(AssistantApiException(ErrorKind.INVALID_KEY, "Enter a ${provider.label} API key first."))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                if (provider.supportsModelsEndpoint) {
+                    val request = Request.Builder().url("$baseUrl/models")
+                        .header("Authorization", "Bearer $clean")
+                        .get()
+                        .build()
+                    http.newCall(request).execute().use { response ->
+                        when {
+                            response.isSuccessful -> return@runCatching
+                            response.code == 401 || response.code == 403 -> throw parseOpenAiError(json, response)
+                            response.code == 404 || response.code == 405 -> Unit
+                            else -> throw parseOpenAiError(json, response)
+                        }
+                    }
+                }
+                pingChatCompletions(clean)
+            }
+        }
+    }
+
+    private fun pingChatCompletions(cleanKey: String) {
+        val pingRequest = ChatRequest(
+            model = provider.cheapModel.ifBlank { provider.defaultModel },
+            messages = listOf(ApiMessage(role = "user", text = "hi")),
+            stream = false,
+            maxTokens = 1,
+        )
+        val request = Request.Builder().url("$baseUrl/chat/completions")
+            .header("Authorization", "Bearer $cleanKey")
+            .header("Content-Type", "application/json")
+            .post(json.encodeToString(pingRequest).toRequestBody(JSON_MEDIA))
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw parseOpenAiError(json, response)
+        }
+    }
+
+    override suspend fun models(key: String?): List<OpenRouterModel> {
+        if (!provider.supportsModelsEndpoint || key.isNullOrBlank()) return fallbackModels()
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder().url("$baseUrl/models")
+                    .header("Authorization", "Bearer ${key.trim()}")
+                    .get()
+                    .build()
+                http.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw parseOpenAiError(json, response)
+                    val fetched = json.decodeFromString<ModelsEnvelope>(response.body?.string().orEmpty()).data
+                        .filter { it.id.isNotBlank() }
+                        .sortedBy { it.name.lowercase() }
+                    if (fetched.isEmpty()) {
+                        fallbackModels()
+                    } else {
+                        val seen = fetched.mapTo(HashSet()) { it.id }
+                        fetched + fallbackModels().filter { it.id !in seen }
+                    }
+                }
+            }.getOrElse { fallbackModels() }
+        }
+    }
+
+    override fun stream(key: String, request: ChatRequest): Flow<StreamEvent> = streamChatCompletions(
+        http = http,
+        json = json,
+        httpRequest = Request.Builder().url("$baseUrl/chat/completions")
+            .header("Authorization", "Bearer ${key.trim()}")
+            .header("Content-Type", "application/json")
+            .post(json.encodeToString(sanitizeRequest(request)).toRequestBody(JSON_MEDIA))
+            .build(),
+        errorFor = { parseOpenAiError(json, it) }
+    )
+
+    private companion object { val JSON_MEDIA = "application/json; charset=utf-8".toMediaType() }
+}
+
+internal fun parseOpenAiError(json: Json, response: Response): AssistantApiException {
+    val text = response.body?.string().orEmpty()
+    val parsed = runCatching { json.decodeFromString<ErrorEnvelope>(text).error }.getOrNull()
+    val message = parsed?.message ?: text.take(500)
+    return HttpErrorMapper.fromHttp(response.code, message, response.header("Retry-After"), parsed?.providerName())
+}
+
+internal fun streamChatCompletions(
+    http: OkHttpClient,
+    json: Json,
+    httpRequest: Request,
+    errorFor: (Response) -> AssistantApiException,
+): Flow<StreamEvent> = callbackFlow {
+    val call = http.newCall(httpRequest)
+    call.enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(e)))
+            close()
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            response.use {
+                if (!it.isSuccessful) {
+                    trySend(StreamEvent.Failure(errorFor(it)))
+                    close()
+                    return
+                }
+                val contentType = (it.header("Content-Type") ?: it.body?.contentType()?.toString()).orEmpty()
+                if (!contentType.contains("text/event-stream", ignoreCase = true)) {
+                    val payload = it.body?.string().orEmpty()
+                    if (payload.isNotBlank()) consumePayload(payload)
+                    trySend(StreamEvent.Done)
+                    close()
+                    return
+                }
+                val parser = SseParser()
+                val source = it.body?.source()
+                try {
+                    while (source != null && !source.exhausted() && !call.isCanceled()) {
+                        parser.accept(source.readUtf8Line()).forEach(::consumePayload)
+                    }
+                    parser.finish().forEach(::consumePayload)
+                } catch (t: Throwable) {
+                    if (!call.isCanceled()) trySend(StreamEvent.Failure(HttpErrorMapper.fromThrowable(t)))
+                } finally {
+                    close()
+                }
+            }
+        }
+
+        private fun consumePayload(payload: String) {
+            if (payload.isBlank()) return
+            if (payload == "[DONE]") {
+                trySend(StreamEvent.Done)
+                return
+            }
+            runCatching { json.decodeFromString<ChatChunk>(payload) }
+                .onSuccess { chunk ->
+                    chunk.error?.let { trySend(failureForChunk(chunk, it)) }
+                    minimaxBaseRespFailure(chunk.baseResp)?.let { trySend(it) }
+                    chunk.choices.firstOrNull()?.let { choice ->
+                        choice.error?.let { trySend(failureForChunk(chunk, it)) }
+                        val text = extractResponseText(choice.delta.content ?: choice.message?.content ?: choice.text)
+                        val calls = choice.delta.toolCalls.orEmpty().ifEmpty {
+                            choice.message?.toolCalls.orEmpty().mapIndexed { index, call ->
+                                ToolCallDelta(
+                                    index = index,
+                                    id = call.id,
+                                    function = FunctionCallDelta(call.function.name, call.function.arguments)
+                                )
+                            }
+                        }
+                        val reasoning = choice.delta.reasoningText()
+                        if (text.isNotEmpty() || calls.isNotEmpty() || reasoning.isNotEmpty()) {
+                            trySend(StreamEvent.Delta(text, calls, reasoning))
+                        }
+                    }
+                    chunk.usage?.let { trySend(StreamEvent.UsageUpdate(it)) }
+                }
+                .onFailure {
+                    // Keep-alives, empty `data:` frames, and unknown vendor events are
+                    // not fatal. Emitting Failure here used to abort an otherwise good
+                    // voice reply and surface "unreadable stream event" in the overlay.
+                }
+        }
+    })
+    awaitClose { call.cancel() }
 }
 
 /** Fish answered a PCM request with a non-PCM body; play the MP3 file path instead. */

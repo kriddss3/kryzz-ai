@@ -2,6 +2,7 @@ package ai.daylight.assistant.ui.tune
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -22,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -35,8 +38,11 @@ import ai.daylight.assistant.domain.ModelPurpose
 import ai.daylight.assistant.domain.ThemeMode
 import ai.daylight.assistant.ui.Routes
 import ai.daylight.assistant.ui.dot.DotRadius
+import ai.daylight.assistant.ui.dot.DotSecondaryColor
+import ai.daylight.assistant.ui.dot.KryzzGlyph
 import ai.daylight.assistant.ui.dot.DotTheme
 import ai.daylight.assistant.ui.dot.effects.DotMatrixText
+import ai.daylight.assistant.ui.dot.effects.LocalDotSplash
 import ai.daylight.assistant.ui.home.HomeBoard
 import ai.daylight.assistant.ui.shell.Arm
 import ai.daylight.assistant.ui.shell.InkLines
@@ -45,6 +51,7 @@ import ai.daylight.assistant.ui.talk.DotSheet
 import ai.daylight.assistant.ui.talk.OptionRow
 import ai.daylight.assistant.ui.talk.SheetLabel
 import ai.daylight.assistant.voice.TtsProvider
+import java.util.Locale
 
 /** Everything Tune shows: the saved settings plus a few facts read elsewhere. */
 data class TuneState(
@@ -67,6 +74,7 @@ class TuneActions(
     val onBiometric: (Boolean) -> Unit = {},
     val onTheme: (ThemeMode) -> Unit = {},
     val onDotBackground: (Boolean) -> Unit = {},
+    val onSecondaryColor: (String) -> Unit = {},
     val onExportChats: () -> Unit = {},
     val onImportChats: () -> Unit = {},
     /** v2.1: shows the first-run tour again, on Home. */
@@ -115,7 +123,10 @@ fun TuneScreen(
                 .padding(vertical = 8.dp),
             contentAlignment = Alignment.CenterStart
         ) {
-            DotMatrixText("TUNE", pitch = 4.2.dp, on = c.textPrimary, off = Color.Transparent)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                KryzzGlyph(R.drawable.kz_led_settings, Modifier.padding(end = 10.dp).size(28.dp), tint = c.textPrimary)
+                DotMatrixText("TUNE", pitch = 4.2.dp, on = c.textPrimary, off = Color.Transparent)
+            }
         }
         Spacer(Modifier.height(20.dp))
 
@@ -126,7 +137,7 @@ fun TuneScreen(
 
         val capCents = TuneModel.capCents(capIndex)
         val capSpoken = if (capCents <= 0) "Off" else HomeBoard.capLabel(capCents)
-        TuneSection("Cost cap per run") {
+        TuneSection("Cost cap per run", mark = R.drawable.kz_led_cost_cap) {
             DotMatrixText(
                 TuneModel.capValue(capCents),
                 pitch = 3.dp,
@@ -148,36 +159,36 @@ fun TuneScreen(
 
         TuneSection("Models and keys")
         TuneRow(
-            R.drawable.ic_kz_model, "Chat model",
+            R.drawable.kz_led_chat_model, "Chat model",
             TuneModel.chatModelCaption(s.defaultModel, TuneModel.runModel(s.agentQuality, s.agentModel, s.maxModel)),
             onClick = { onOpen(Routes.models(ModelPurpose.CHAT)) }
         )
         TuneRow(
-            R.drawable.ic_kz_key, "API keys", TuneModel.keyCaption(s.chatProvider, state.keys),
+            R.drawable.kz_led_api_keys, "API keys", TuneModel.keyCaption(s.chatProvider, state.keys),
             onClick = { onOpen(Routes.API) }
         )
         TuneRow(
-            R.drawable.ic_kz_image, "Image and video model", TuneModel.mediaCaption(s.imageModel, s.videoModel),
+            R.drawable.kz_led_image_video, "Image and video model", TuneModel.mediaCaption(s.imageModel, s.videoModel),
             onClick = { onOpen(Routes.models(ModelPurpose.IMAGE)) }
         )
         Spacer(Modifier.height(24.dp))
 
         TuneSection("Privacy")
-        TuneRow(R.drawable.ic_kz_phone_local, "Chats stay on this phone", "No cloud copy, no analytics", TuneTrailing.None)
+        TuneRow(R.drawable.kz_led_chats_on_phone, "Chats stay on this phone", "No cloud copy, no analytics", TuneTrailing.None)
         TuneRow(
-            R.drawable.ic_kz_web, "Allow web search", TuneModel.searchCaption(state.keys.hasParallel),
+            R.drawable.kz_led_web_search, "Allow web search", TuneModel.searchCaption(state.keys.hasParallel),
             TuneTrailing.Switch(s.searchEnabled, actions.onSearch)
         )
         TuneRow(
-            R.drawable.ic_kz_memory, "Chat memory", TuneModel.memoryCaption(s.memoryEnabled, state.memoryCount),
+            R.drawable.kz_led_chat_memory, "Chat memory", TuneModel.memoryCaption(s.memoryEnabled, state.memoryCount),
             TuneTrailing.Switch(s.memoryEnabled, actions.onMemory)
         )
         TuneRow(
-            R.drawable.ic_kz_location, "Approximate location", TuneModel.locationCaption(s.locationEnabled, s.locationLabel),
+            R.drawable.kz_led_location, "Approximate location", TuneModel.locationCaption(s.locationEnabled, s.locationLabel),
             TuneTrailing.Switch(s.locationEnabled, actions.onLocation)
         )
         TuneRow(
-            R.drawable.ic_kz_lock, "Lock the app", TuneModel.lockCaption(state.biometricAvailable),
+            R.drawable.kz_led_lock, "Lock the app", TuneModel.lockCaption(state.biometricAvailable),
             TuneTrailing.Switch(s.biometricLock, actions.onBiometric, enabled = state.biometricAvailable || s.biometricLock)
         )
         Spacer(Modifier.height(24.dp))
@@ -185,42 +196,47 @@ fun TuneScreen(
         TuneSection("Appearance")
         ThemeSegments(s.themeMode, actions.onTheme, Modifier.padding(bottom = 8.dp))
         TuneRow(
-            R.drawable.ic_kz_grid, "Dot background", "Talk, Run and Home",
+            R.drawable.kz_led_dot_background, "Dot background", "Talk, Run and Home",
             TuneTrailing.Switch(s.dotBackground, actions.onDotBackground)
         )
+        SecondaryColorSlider(
+            selectedId = s.secondaryColorId,
+            onSelect = actions.onSecondaryColor,
+            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
+        )
         TuneRow(
-            R.drawable.ic_kz_sliders, "Text and motion", "Text size, chat density, animations",
+            R.drawable.kz_led_text_motion, "Text and motion", "Text size, chat density, animations",
             onClick = { onOpen(Routes.APPEARANCE) }
         )
         Spacer(Modifier.height(24.dp))
 
         TuneSection("More")
-        TuneRow(R.drawable.ic_kz_user, "Persona", TuneModel.personaCaption(s.presetId), onClick = { onOpen(Routes.PERSONA) })
+        TuneRow(R.drawable.kz_led_persona, "Persona", TuneModel.personaCaption(s.presetId), onClick = { onOpen(Routes.PERSONA) })
         TuneRow(
-            R.drawable.ic_kz_tools, "Search and run limits",
+            R.drawable.kz_led_search_limits, "Search and run limits",
             "Step budget ${s.stepBudget}, review ${if (s.reviewAnswers) "on" else "off"}",
             onClick = { onOpen(Routes.TOOLS) }
         )
         TuneRow(
-            R.drawable.ic_kz_mic, "Voice", "Spoken by ${TtsProvider.from(s.ttsProvider).label}",
+            R.drawable.kz_led_voice, "Voice", "Spoken by ${TtsProvider.from(s.ttsProvider).label}",
             onClick = { onOpen(Routes.VOICE) }
         )
         TuneRow(
-            R.drawable.ic_kz_memory, "Memories",
+            R.drawable.kz_led_memories, "Memories",
             if (state.memoryCount == 1) "1 saved" else "${state.memoryCount} saved",
             onClick = { onOpen(Routes.MEMORY) }
         )
-        TuneRow(R.drawable.ic_kz_skill, "Skills", "Reusable skills and tools", onClick = onSkills)
+        TuneRow(R.drawable.kz_led_skills, "Skills", "Reusable skills and tools", onClick = onSkills)
         // C10: Routines used to open from the chat drawer's Cron button, which is gone.
-        TuneRow(R.drawable.ic_kz_routine, "Routines", "Prompts that run on a schedule", onClick = { onOpen(Routes.CRON) })
-        TuneRow(R.drawable.ic_kz_log, "Model catalog", "Every model your key can use", onClick = onModelCatalog)
-        TuneRow(R.drawable.ic_kz_shield, "Data and usage", "What is stored, clear local data", onClick = { onOpen(Routes.PRIVACY) })
+        TuneRow(R.drawable.kz_led_routines, "Routines", "Prompts that run on a schedule", onClick = { onOpen(Routes.CRON) })
+        TuneRow(R.drawable.kz_led_model_catalog, "Model catalog", "Every model your key can use", onClick = onModelCatalog)
+        TuneRow(R.drawable.kz_led_data_usage, "Data and usage", "What is stored, clear local data", onClick = { onOpen(Routes.PRIVACY) })
         TuneRow(
-            R.drawable.ic_kz_export, "Backup", state.backupNotice ?: "Export or import your chats",
+            R.drawable.kz_led_backup, "Backup", state.backupNotice ?: "Export or import your chats",
             onClick = { showBackup = true }
         )
-        TuneRow(R.drawable.ic_kz_squid, "Tour", "How Kryzz works, and where to get keys", onClick = actions.onTour)
-        TuneRow(R.drawable.ic_kz_info, "About", "Version ${BuildConfig.VERSION_NAME}", onClick = { onOpen(Routes.ABOUT) })
+        TuneRow(R.drawable.kz_led_tour, "Tour", "How Kryzz works, and where to get keys", onClick = actions.onTour)
+        TuneRow(R.drawable.kz_led_about, "About", "Version ${BuildConfig.VERSION_NAME}", onClick = { onOpen(Routes.ABOUT) })
         Spacer(Modifier.height(28.dp))
         TuneCaption(
             "Kryzz AI ${BuildConfig.VERSION_NAME}, created and coded by Kryzz",
@@ -244,6 +260,54 @@ fun TuneScreen(
     }
 }
 
+/** Secondary colour slider (Talk dot-grid ripple + Tune preview). */
+@Composable
+fun SecondaryColorSlider(
+    selectedId: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = DotTheme.c
+    val splash = LocalDotSplash.current
+    val colors = DotSecondaryColor.entries
+    var colorIndex by remember(selectedId) { mutableIntStateOf(DotSecondaryColor.indexOf(selectedId)) }
+    var thumbOrigin by remember { mutableStateOf<Offset?>(null) }
+    val chosen = colors[colorIndex]
+    val chosenTint = chosen.colorFor(c.dark)
+    Column(modifier.fillMaxWidth()) {
+        TuneSection("Secondary color") {
+            DotMatrixText(
+                chosen.label.uppercase(Locale.US),
+                pitch = 3.dp,
+                on = chosenTint,
+                off = Color.Transparent,
+                contentDescription = chosen.label
+            )
+        }
+        DotSlider(
+            index = colorIndex,
+            count = colors.size,
+            onIndexChange = { idx ->
+                val prev = colors[colorIndex].colorFor(c.dark)
+                colorIndex = idx
+                val next = colors[idx]
+                splash?.trigger(
+                    origin = thumbOrigin,
+                    targetColor = next.colorFor(c.dark),
+                    fromColor = prev,
+                    persistTint = false
+                )
+            },
+            onChangeFinished = { onSelect(colors[colorIndex].id) },
+            onThumbRootPosition = { thumbOrigin = it },
+            activeDotColor = chosenTint,
+            label = "Secondary color",
+            valueLabel = chosen.label
+        )
+        TuneCaption("Ripples across background dots in Talk mode", Modifier.padding(top = 2.dp))
+    }
+}
+
 /** Dark / Light / Auto, shared by Tune and Text and motion. */
 @Composable
 fun ThemeSegments(mode: ThemeMode, onTheme: (ThemeMode) -> Unit, modifier: Modifier = Modifier) {
@@ -252,9 +316,9 @@ fun ThemeSegments(mode: ThemeMode, onTheme: (ThemeMode) -> Unit, modifier: Modif
             SegmentOption(
                 TuneModel.themeLabel(option),
                 when (option) {
-                    ThemeMode.DARK -> R.drawable.ic_kz_moon
-                    ThemeMode.LIGHT -> R.drawable.ic_kz_sun
-                    ThemeMode.SYSTEM -> null
+                    ThemeMode.DARK -> R.drawable.kz_led_dark
+                    ThemeMode.LIGHT -> R.drawable.kz_led_light
+                    ThemeMode.SYSTEM -> R.drawable.kz_led_auto
                 }
             )
         },

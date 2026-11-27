@@ -14,8 +14,14 @@ const val MINIMAX_VIDEO_RESOLUTION = "2K"
  * Make's choices for one image or video render (C7). A null [aspectRatio] keeps the
  * provider default, so every caller outside Make behaves exactly as before. v2.1: [style]
  * dresses the prompt the provider gets; the prompt saved in the chat stays the user's own.
+ * [sources] are photos or clips the user added to edit or to guide the render. Empty keeps
+ * a text-only request.
  */
-data class MediaOptions(val aspectRatio: String? = null, val style: MakeStyle = MakeStyle.PLAIN)
+data class MediaOptions(
+    val aspectRatio: String? = null,
+    val style: MakeStyle = MakeStyle.PLAIN,
+    val sources: List<MakeSource> = emptyList(),
+)
 
 /** v2.1: Make's look. [NOTHING] asks for the Nothing OS feel: black, white, one red, dots and Glyph light. */
 enum class MakeStyle(val label: String, val caption: String) {

@@ -18,7 +18,14 @@ data class TuneKeys(
     val hasFish: Boolean = false,
     val parallelTail: String? = null,
     val fishTail: String? = null,
-)
+    val providerTails: Map<ChatProvider, String?> = emptyMap(),
+) {
+    fun tailFor(provider: ChatProvider): String? = providerTails[provider] ?: when (provider) {
+        ChatProvider.OPENROUTER -> openRouterTail
+        ChatProvider.MINIMAX -> minimaxTail
+        else -> null
+    }
+}
 
 /** Tune's words and numbers (kit settings.png). Pure, so it is unit tested. */
 object TuneModel {
@@ -73,10 +80,7 @@ object TuneModel {
 
     /** "OPENROUTER IN KEYSTORE, ENDS 4F2A" for the active provider's key. */
     fun keyCaption(provider: ChatProvider, keys: TuneKeys): String {
-        val tail = when (provider) {
-            ChatProvider.OPENROUTER -> keys.openRouterTail
-            ChatProvider.MINIMAX -> keys.minimaxTail
-        }
+        val tail = keys.tailFor(provider)
         return if (tail == null) "No ${provider.label} key yet" else "${provider.label} in Keystore, ends $tail"
     }
 

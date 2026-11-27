@@ -22,6 +22,7 @@ class ToolActivityDetailTest {
         assertThat(ToolActivityDetail.of("get_weather", "{}")).isNull()
         assertThat(ToolActivityDetail.chipLabel("get_weather", "Rīga")).isEqualTo("Weather: Rīga")
         assertThat(ToolActivityDetail.of("create_artifact", """{"type":"pdf","title":"Budget 2026","content":"x"}""")).isEqualTo("Budget 2026")
+        assertThat(ToolActivityDetail.of("create_artifact", """{"file_name":"pitch.pptx","title":"Pitch","content":"x"}""")).isEqualTo("pitch.pptx")
     }
 
     @Test fun longDetailsAreShortenedAndOtherToolsHaveNone() {

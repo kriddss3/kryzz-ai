@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -64,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ai.daylight.assistant.R
 import ai.daylight.assistant.domain.MakeKind
+import ai.daylight.assistant.domain.MakeSource
 import ai.daylight.assistant.domain.OutputKind
 import ai.daylight.assistant.domain.RecentOutput
 import ai.daylight.assistant.ui.dot.DotRadius
@@ -77,6 +80,7 @@ import ai.daylight.assistant.ui.run.FileCardModel
 import ai.daylight.assistant.ui.talk.DotSheet
 import ai.daylight.assistant.ui.talk.SheetLabel
 import ai.daylight.assistant.ui.tune.TuneChoiceRow
+import ai.daylight.assistant.domain.MakeSources
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -423,6 +427,114 @@ internal fun RoundIconButton(@DrawableRes icon: Int, label: String, onClick: () 
         contentAlignment = Alignment.Center
     ) {
         Icon(painterResource(icon), null, Modifier.size(20.dp), tint = if (enabled) c.textPrimary else c.textDisabled)
+    }
+}
+
+/**
+ * Photos and clips attached to the next render. Empty, it is one button. With files, each
+ * tile removes itself and another tile adds more, up to [MakeSources.MAX].
+ */
+@Composable
+internal fun SourceStrip(
+    sources: List<MakeSource>,
+    caption: String,
+    onAdd: () -> Unit,
+    onRemove: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = DotTheme.c
+    Column(modifier.fillMaxWidth()) {
+        Text("SOURCE", Modifier.padding(bottom = 8.dp), style = DotType.Label, color = c.textTertiary)
+        if (sources.isEmpty()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .clip(DotRadius.Tile)
+                    .dashedBorder(c.borderStrong, radius = 16.dp)
+                    .clickable(role = Role.Button, onClick = onAdd)
+                    .semantics { contentDescription = "Add a photo or clip" }
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(painterResource(R.drawable.ic_kz_plus), null, Modifier.size(20.dp), tint = c.textPrimary)
+                Text("Add a photo or clip", style = DotType.Body, color = c.textPrimary)
+            }
+        } else {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                sources.forEach { source -> SourceTile(source) { onRemove(source.id) } }
+                if (sources.size < MakeSources.MAX) {
+                    Box(
+                        Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .dashedBorder(c.borderStrong, radius = 12.dp)
+                            .clickable(role = Role.Button, onClick = onAdd)
+                            .semantics { contentDescription = "Add a photo or clip" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(painterResource(R.drawable.ic_kz_plus), null, Modifier.size(20.dp), tint = c.textPrimary)
+                    }
+                }
+            }
+        }
+        Text(caption, Modifier.padding(top = 8.dp), style = DotType.BodySmall, color = c.textTertiary)
+    }
+}
+
+@Composable
+private fun SourceTile(source: MakeSource, onRemove: () -> Unit) {
+    val c = DotTheme.c
+    val side = 64.dp
+    val px = with(LocalDensity.current) { (side * 2).roundToPx() }
+    var thumb by remember(source.id) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(source.id, source.localPath) {
+        thumb = withContext(Dispatchers.IO) { MakeMedia.preview(source.localPath, source.video, px) }
+    }
+    val noun = if (source.video) "clip" else "photo"
+    Box(
+        Modifier
+            .size(side)
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.surfaceRaised)
+            .clickable(role = Role.Button, onClick = onRemove)
+            .semantics { contentDescription = "Remove $noun, ${source.name}" },
+        contentAlignment = Alignment.Center,
+    ) {
+        val bitmap = thumb
+        if (bitmap != null) {
+            Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            Icon(
+                painterResource(if (source.video) R.drawable.ic_kz_video else R.drawable.ic_kz_image),
+                null,
+                Modifier.size(22.dp),
+                tint = c.textPrimary,
+            )
+        }
+        if (source.video) {
+            Icon(
+                painterResource(R.drawable.ic_kz_video),
+                null,
+                Modifier.align(Alignment.BottomStart).padding(5.dp).size(14.dp),
+                tint = Color.White,
+            )
+        }
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(3.dp)
+                .size(18.dp)
+                .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(painterResource(R.drawable.ic_kz_close), null, Modifier.size(10.dp), tint = Color.White)
+        }
     }
 }
 

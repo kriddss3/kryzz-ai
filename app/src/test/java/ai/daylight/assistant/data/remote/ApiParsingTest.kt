@@ -12,6 +12,20 @@ import org.junit.Test
 class ApiParsingTest {
     private val json = Json { ignoreUnknownKeys = true }
 
+    @Test fun midStreamRateLimitNamesTheProviderToSkip() {
+        val chunk = json.decodeFromString<ChatChunk>(
+            """{"provider":"OpenAI","error":{"code":429,"message":"Rate limit exceeded","metadata":{"error_type":"rate_limit_exceeded","provider_name":"OpenAI"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}"""
+        )
+        val failure = failureForChunk(chunk, chunk.error!!)
+        assertThat(failure.error.kind).isEqualTo(ErrorKind.RATE_LIMIT)
+        assertThat(failure.error.saturatedProvider).isEqualTo("openai")
+        assertThat(failure.error.retryAfterSeconds).isNull()
+        val routingObject = json.decodeFromString<ChatChunk>(
+            """{"provider":{"sort":"latency"},"choices":[{"delta":{"content":"Hi"}}]}"""
+        )
+        assertThat(extractResponseText(routingObject.choices.single().delta.content)).isEqualTo("Hi")
+    }
+
     @Test fun parsesStreamedContentToolFragmentsAndUsage() {
         val chunk = json.decodeFromString<ChatChunk>(
             """{"choices":[{"delta":{"content":"Hi","tool_calls":[{"index":0,"id":"call_1","function":{"name":"parallel_search","arguments":"{\"objective\":\"now\"}"}}]},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":6},"cost":0.0001}}"""

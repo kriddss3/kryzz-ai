@@ -60,6 +60,14 @@ class AttachmentStore(private val context: Context) {
         directory.listFiles()?.forEach(File::delete)
     }
 
+    /** Deletes a file this store copied in. A made file that lives elsewhere is left alone. */
+    fun discardCopy(path: String?) {
+        if (path.isNullOrBlank()) return
+        val root = directory.canonicalFile
+        val target = runCatching { File(path).canonicalFile }.getOrNull() ?: return
+        if (target.isFile && target.path.startsWith(root.path + File.separator)) target.delete()
+    }
+
     suspend fun base64(attachment: ChatAttachment): String = withContext(Dispatchers.IO) {
         val path = attachment.localPath ?: throw IllegalArgumentException("${attachment.name} is no longer available on this device.")
         val file = File(path)

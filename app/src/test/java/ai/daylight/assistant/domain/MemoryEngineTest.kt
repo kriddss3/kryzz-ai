@@ -15,9 +15,10 @@ class MemoryEngineTest {
         pinned: Boolean = false,
         usageCount: Int = 0,
         lastUsedAt: Long = 0L,
-        updatedAt: Long = System.currentTimeMillis()
+        updatedAt: Long = System.currentTimeMillis(),
+        category: String = "PREFERENCE"
     ) = MemoryEntity(
-        id = id, content = content, category = "PREFERENCE",
+        id = id, content = content, category = category,
         sourceConversationId = null, createdAt = updatedAt, updatedAt = updatedAt,
         lastUsedAt = lastUsedAt, usageCount = usageCount, enabled = enabled, pinned = pinned
     )
@@ -185,5 +186,53 @@ class MemoryEngineTest {
         val facts = MemoryEngine.extract("I like cats and dogs")
         assertEquals(1, facts.size)
         assertEquals("I like cats and dogs", facts[0].content)
+    }
+
+    @Test
+    fun containsSecretPatternDetectsKeysTokensAndPrivateBlocks() {
+        assertTrue(MemoryEngine.containsSecretPattern("My OpenAI key is sk-proj-1234567890abcdef"))
+        assertTrue(MemoryEngine.containsSecretPattern("Google key AIzaSyD1234567890abcdef"))
+        assertTrue(MemoryEngine.containsSecretPattern("GitHub token ghp_1234567890abcdefghij"))
+        assertTrue(MemoryEngine.containsSecretPattern("Slack bot xoxb-1234567890-abcdef"))
+        assertTrue(MemoryEngine.containsSecretPattern("Header: Bearer abcdef123456"))
+        assertTrue(MemoryEngine.containsSecretPattern("-----BEGIN RSA PRIVATE KEY-----"))
+        assertTrue(MemoryEngine.containsSecretPattern("Token is a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"))
+
+        assertFalse(MemoryEngine.containsSecretPattern("I prefer task-oriented workflows"))
+        assertFalse(MemoryEngine.containsSecretPattern("I live in Gilly and work on Android apps"))
+        assertFalse(MemoryEngine.containsSecretPattern("Word supercalifragilisticexpialidocious here"))
+    }
+
+    @Test
+    fun retrieveWithCoreAddsPinnedAndCoreProfileWithoutDuplicating() {
+        val memories = listOf(
+            memory("match1", "I like osu rhythm games", category = "PREFERENCE", updatedAt = 10L),
+            memory("pinnedGoal", "Ship Kryzz v2 release", category = "GOAL", pinned = true, usageCount = 1, updatedAt = 20L),
+            memory("userTop", "My name is Alex", category = "USER", usageCount = 5, updatedAt = 30L),
+            memory("userOlder", "I live in Gilly", category = "USER", usageCount = 1, updatedAt = 15L),
+            memory("unpinnedGoal", "Learn Rust this winter", category = "GOAL", usageCount = 9, updatedAt = 50L),
+            memory("disabledPinned", "Disabled secret note", category = "USER", enabled = false, pinned = true)
+        )
+
+        val result = MemoryEngine.retrieveWithCore("recommend an osu map", memories, limit = 6, coreProfileLimit = 2)
+        assertEquals(listOf("match1", "pinnedGoal", "userTop"), result.map { it.id })
+        assertTrue(result.none { it.id == "disabledPinned" })
+        assertTrue(result.none { it.id == "unpinnedGoal" })
+    }
+
+    @Test
+    fun retrieveWithCoreRespectsLimitAndDeduplicatesMatchedCoreFacts() {
+        val memories = listOf(
+            memory("coreMatch", "I prefer Kotlin for Android", category = "PREFERENCE", pinned = true, updatedAt = 100L),
+            memory("m1", "I build Android apps daily", category = "PROJECT", updatedAt = 90L),
+            memory("m2", "I test Android Compose layouts", category = "PROJECT", updatedAt = 80L),
+            memory("coreExtra", "My name is Alex", category = "USER", usageCount = 3, updatedAt = 70L)
+        )
+
+        val result = MemoryEngine.retrieveWithCore("Android Compose apps", memories, limit = 3, coreProfileLimit = 2)
+        assertEquals(3, result.size)
+        assertEquals(result.distinctBy { it.id }.size, result.size)
+        assertTrue(result.any { it.id == "coreExtra" })
+        assertTrue(result.any { it.id == "coreMatch" })
     }
 }

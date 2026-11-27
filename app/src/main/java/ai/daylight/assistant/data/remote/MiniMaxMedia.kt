@@ -6,14 +6,25 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 
-/** [aspectRatio] is Make's Ratio dial (C7); everything else keeps the default 16:9. */
-internal fun miniMaxImageRequest(model: String, prompt: String, aspectRatio: String = "16:9"): MiniMaxImageRequest =
+/**
+ * [aspectRatio] is Make's Ratio dial (C7); everything else keeps the default 16:9.
+ * [subjectImage] is a data URL or public URL of a photo to keep as the subject.
+ */
+internal fun miniMaxImageRequest(
+    model: String,
+    prompt: String,
+    aspectRatio: String = "16:9",
+    subjectImage: String? = null,
+): MiniMaxImageRequest =
     MiniMaxImageRequest(
         model = bareMiniMaxModel(model),
         prompt = prompt,
         aspectRatio = aspectRatio,
         responseFormat = "url",
-        n = 1
+        n = 1,
+        subjectReference = subjectImage?.takeIf { it.isNotBlank() }
+            ?.let { listOf(MiniMaxSubjectReference(type = "character", imageFile = it)) }
+            .orEmpty()
     )
 
 internal sealed class MiniMaxImagePayload {
